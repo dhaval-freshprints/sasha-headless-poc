@@ -8,6 +8,7 @@ No business rules in the system prompt — the CRM, quoter and forms already enf
 
 import base64
 import json
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -105,6 +106,23 @@ class RunResult:
     input_tokens: int = 0
     output_tokens: int = 0
     cached_tokens: int = 0
+    seconds: float = 0.0
+    model_seconds: float = 0.0    # time spent waiting on the LLM
+    browser_seconds: float = 0.0  # time spent in browser actions + snapshots
+
+    @property
+    def uncached_tokens(self) -> int:
+        return self.input_tokens - self.cached_tokens
+
+    def summary(self) -> str:
+        """One line: what this turn cost in time and tokens."""
+        return (
+            f"{len(self.steps)} steps · {self.seconds:.0f}s "
+            f"(model {self.model_seconds:.0f}s, browser {self.browser_seconds:.0f}s) · "
+            f"tokens in {self.input_tokens:,} "
+            f"({self.cached_tokens:,} cached, {self.uncached_tokens:,} fresh) · "
+            f"out {self.output_tokens:,}"
+        )
 
 
 class Brain:
@@ -118,11 +136,14 @@ class Brain:
         messages.append({"role": "user", "content": self._build_turn_text(deal_id, client_message)})
 
         result = RunResult(reply="")
+        turn_started = time.monotonic()
 
         for step_index in range(config.MAX_STEPS):
+            model_started = time.monotonic()
             response = self.client.chat.completions.create(
                 model=config.MODEL, max_tokens=2048, tools=TOOLS, messages=messages,
             )
+            result.model_seconds += time.monotonic() - model_started
             result.input_tokens += response.usage.prompt_tokens
             result.output_tokens += response.usage.completion_tokens
             result.cached_tokens += self._cached_tokens(response.usage)
@@ -148,9 +169,11 @@ class Brain:
                     finished = True
                     continue
 
+                browser_started = time.monotonic()
                 output = self._execute(name, args)
                 tree = self.browser.snapshot()
                 shot_path = self.browser.save_screenshot(self.run_dir / f"step_{step_index:02d}.png")
+                result.browser_seconds += time.monotonic() - browser_started
                 result.steps.append(Step(
                     step_index, name, args, output, str(shot_path),
                     tree_chars=len(tree), tree_head="\n".join(tree.splitlines()[:12]),
@@ -161,6 +184,7 @@ class Brain:
             if finished:
                 break
 
+        result.seconds = time.monotonic() - turn_started
         memory.append_transcript(deal_id, client_message, result.reply)
         self._write_run_json(deal_id, client_message, result)
         return result
@@ -237,8 +261,12 @@ class Brain:
             "deal_id": deal_id,
             "client_message": client_message,
             "reply": result.reply,
+            "seconds": round(result.seconds, 1),
+            "model_seconds": round(result.model_seconds, 1),
+            "browser_seconds": round(result.browser_seconds, 1),
             "input_tokens": result.input_tokens,
             "cached_tokens": result.cached_tokens,
+            "uncached_tokens": result.uncached_tokens,
             "output_tokens": result.output_tokens,
             "steps": [step.__dict__ for step in result.steps],
         }

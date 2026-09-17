@@ -11,7 +11,6 @@ Memory per deal is the transcript only (runs/deal_<id>/transcript.md). Each turn
 Run:  uvicorn api:app --port 8100
 """
 
-import time
 from datetime import datetime
 
 from fastapi import FastAPI
@@ -54,15 +53,18 @@ def simulate(request: SimulateRequest) -> dict:
     run_dir = config.RUNS_DIR / f"deal_{request.deal_id}" / f"turn_{datetime.now():%Y%m%d_%H%M%S}"
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    started = time.time()
     result = Brain(_browser, run_dir).run(request.deal_id, request.client_message)
 
     return {
         "reply": result.reply,
-        "seconds": round(time.time() - started, 1),
+        "summary": result.summary(),
+        "seconds": round(result.seconds, 1),
+        "model_seconds": round(result.model_seconds, 1),
+        "browser_seconds": round(result.browser_seconds, 1),
         "step_count": len(result.steps),
         "input_tokens": result.input_tokens,
         "cached_tokens": result.cached_tokens,
+        "uncached_tokens": result.uncached_tokens,
         "output_tokens": result.output_tokens,
         "run_dir": str(run_dir),
         "steps": [step.__dict__ for step in result.steps],
