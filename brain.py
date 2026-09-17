@@ -12,9 +12,11 @@ from pathlib import Path
 from openai import OpenAI
 
 import config
+import memory
 from browser import Browser
 
 OUTREACH_GUIDE = (config.ROOT / "prompts" / "initial_outreach.md").read_text()
+REPLY_GUIDE = (config.ROOT / "prompts" / "client_reply.md").read_text()
 
 SYSTEM_PROMPT = """You are Sasha, a sales representative at Fresh Prints (custom apparel).
 
@@ -125,8 +127,8 @@ class Brain:
         self.run_dir = run_dir
         self.client = OpenAI(base_url=config.LLM_BASE_URL, api_key=config.LLM_API_KEY)
 
-    def run(self, deal_id: int, client_message: str | None, history: list[dict]) -> RunResult:
-        messages = list(history)
+    def run(self, deal_id: int, client_message: str | None) -> RunResult:
+        messages = memory.load_history(deal_id)
         if not messages:
             messages.append({"role": "system", "content": SYSTEM_PROMPT})
         messages.append({"role": "user", "content": self._build_turn_text(deal_id, client_message)})
@@ -174,7 +176,8 @@ class Brain:
             if finished:
                 break
 
-        history[:] = messages
+        memory.save_history(deal_id, messages)
+        memory.append_transcript(deal_id, client_message, result.reply)
         self._write_run_json(deal_id, client_message, result)
         return result
 
@@ -189,7 +192,12 @@ class Brain:
                 "the guide below exactly.\n\n"
                 f"{OUTREACH_GUIDE}"
             )
-        return f"Deal: {url}\n\nThe client just sent this message:\n\n\"{client_message}\"\n\nHandle it and reply."
+        return (
+            f"Deal: {url}\n\n"
+            f"The client just replied:\n\n\"{client_message}\"\n\n"
+            "Work out what they need, do it in the CRM, then reply. Follow the guide below.\n\n"
+            f"{REPLY_GUIDE}"
+        )
 
     def _execute(self, tool: str, args: dict) -> str:
         try:
