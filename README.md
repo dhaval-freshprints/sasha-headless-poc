@@ -97,6 +97,8 @@ found into `workplace.md`. Policy does not go in prompts; it goes in the CRM's o
 | 303675 | "change the text to Welcome" → revision request with the instruction in it, verified | claude-opus-5 | 5 | 185K | 59s |
 | 303675 | "30 as embroidery?" — quoter unmapped: explored it, one price | claude-opus-5 | 11 | 1.1M (88% cached) | 2m 24s |
 | 303675 | same, quoter mapped: both embroidery sizes + screen print baseline, all read from the quoter | claude-opus-5 | 15 | 1.0M (90% cached) | 3m 06s |
+| 303675 | "green polos for an office event" — catalog unmapped: guessed styles in the quoter, one pick (Acid Green) | claude-opus-5 | 16 | 2.4M (92% cached) | 5m 02s |
+| 303675 | same, catalog mapped: one filtered URL → 27 results → priced two (Forest Green, Gorge Green) with stock | claude-opus-5 | 15 | 1.2M (91% cached) | 4m 19s |
 
 ## Why hybrid
 

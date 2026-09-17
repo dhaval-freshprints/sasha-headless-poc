@@ -13,6 +13,7 @@ If a line needs the words "always", "never" or "prefer", it belongs in playbook.
 | Quoter | `/dashboard/quoter` | Price any product / print method / quantity without touching a proof |
 | Stock checker | `/dashboard/stock-checker` | Live stock by style, color, size |
 | Proofs list | `/dashboard/proofs` | Search proofs by deal id or title when a deal page hides them |
+| Product catalog | `https://www.freshprints.com/products` | Find products by type, colour, brand. Public, no login |
 | Public help | `https://www.freshprints.com/help-center/` | Client-facing policies (samples, budget guidance) |
 
 ## Deal page
@@ -40,6 +41,17 @@ If a line needs the words "always", "never" or "prefer", it belongs in playbook.
 - "Change Product Info" (left) changes style code and color. "Change Licensing Info" (right) changes collegiate marks and organization.
 - "Estimate Quantity" is at the bottom.
 - "Submit Revision Request" (blue, bottom right) submits. After submit the proof shows a new "Revision N" chip and the page returns to the proof.
+
+## Product catalog (freshprints.com/products)
+
+The place to find products when the client asks for something not on the deal ("green polos", "a hoodie", "hats"). The quoter cannot search by colour; this page can.
+
+- Go straight to a filtered URL: `/products?search=<word>&mainColorGroup=<Colour>`. Example: `/products?search=polo&mainColorGroup=Green`. Colour groups: White, Grey, Black, Red, Brown, Orange, Yellow, Green, Blue, Purple, Pink.
+- Or use the page: textbox "Try “T-Shirt”" is the search box (type, press Enter); the colour swatches are buttons named by hex (#0CA80C is green, #2049C3 blue, #FF2B2B red, #000000 black, #FFFFFF white); category links are named "filter for Shirts", "filter for Hoodies", etc.
+- Results are product cards. In the tree each card shows as `link "Color Palette <Product Name>"` followed by `button "color tag for <Colour>"` for each colour it comes in. "mto" after a colour means made-to-order (longer lead time).
+- Each card's link href contains the style code: `/products/nike-nkdc1963-dri-fit-micro-pique-20-polo?color=Gorge%20Green` means brand Nike, style NKDC1963, colour Gorge Green. That style code is what the quoter's Style Code box wants.
+- The page has no prices. To price a product from here, take its style code and colour to the quoter.
+- Pick 2–3 candidates that fit the ask, then price them. Don't price all 27.
 
 ## Quoter page
 
