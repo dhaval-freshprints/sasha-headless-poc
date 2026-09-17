@@ -6,17 +6,15 @@ screenshot (layout, canvas). It acts by name when it can, by coordinates when it
 No business rules in the system prompt — the CRM, quoter and forms already enforce them.
 """
 
-import base64
 import json
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from openai import OpenAI
-
 import config
 import memory
 from browser import Browser, VIEWPORT
+from llm import make_llm
 
 WORKPLACE = (config.ROOT / "prompts" / "workplace.md").read_text()
 PLAYBOOK = (config.ROOT / "prompts" / "playbook.md").read_text()
@@ -42,13 +40,9 @@ work. PLAYBOOK is how you work and write. When you're done, call `reply_to_clien
 the message to the client.
 """
 
-# One system message, three sections, one cache marker at the end. Identical across every
-# turn and every deal, so the whole block is a cache hit after the first call.
+# One system prompt, three sections. Identical across every turn and every deal, so the
+# whole block is a cache hit after the first call. Each provider marks it for caching its own way.
 SYSTEM_PROMPT = f"{IDENTITY}\n\n---\n\n{WORKPLACE}\n\n---\n\n{PLAYBOOK}"
-SYSTEM_MESSAGE = {
-    "role": "system",
-    "content": [{"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}],
-}
 
 NUDGE = (
     "You stopped without replying. Call `reply_to_client` now with your message to the client. "
@@ -84,8 +78,6 @@ TOOL_SPECS = [
     {"name": "reply_to_client", "description": "Finish: send this message to the client. Call exactly once, at the end.",
      "parameters": {"type": "object", "properties": {"message": {"type": "string"}}, "required": ["message"]}},
 ]
-
-TOOLS = [{"type": "function", "function": spec} for spec in TOOL_SPECS]
 
 
 @dataclass
@@ -134,49 +126,47 @@ class Brain:
         self.browser = browser
         self.run_dir = run_dir
         self.on_event = on_event or (lambda kind, payload: None)
-        self.client = OpenAI(base_url=config.LLM_BASE_URL, api_key=config.LLM_API_KEY)
+        self.llm = make_llm()
 
     def run(self, deal_id: int, client_message: str | None) -> RunResult:
         messages = self._start_messages(deal_id)
-        messages.append({"role": "user", "content": self._build_turn_text(deal_id, client_message)})
+        messages.append(self.llm.user_message(self._build_turn_text(deal_id, client_message)))
 
         result = RunResult(reply="")
         turn_started = time.monotonic()
+        nudged = False
 
         for step_index in range(config.MAX_STEPS):
             self.on_event("thinking", step_index)
             model_started = time.monotonic()
-            response = self.client.chat.completions.create(
-                model=config.MODEL, max_tokens=2048, tools=TOOLS, messages=messages,
-            )
+            reply = self.llm.send(SYSTEM_PROMPT, messages, TOOL_SPECS)
             result.model_seconds += time.monotonic() - model_started
-            result.input_tokens += response.usage.prompt_tokens
-            result.output_tokens += response.usage.completion_tokens
-            result.cached_tokens += self._cached_tokens(response.usage)
-            assistant = response.choices[0].message
-            messages.append(self._assistant_as_dict(assistant))
+            result.input_tokens += reply.input_tokens
+            result.output_tokens += reply.output_tokens
+            result.cached_tokens += reply.cached_tokens
+            messages.append(self.llm.assistant_message(reply))
 
-            tool_calls = assistant.tool_calls or []
-            if not tool_calls:
-                if not result.reply and not self._nudged(messages):
-                    messages.append({"role": "user", "content": NUDGE})
+            if not reply.tool_calls:
+                if not result.reply and not nudged:
+                    messages.append(self.llm.user_message(NUDGE))
+                    nudged = True
                     continue
-                result.reply = assistant.content or ""
+                result.reply = reply.text
                 break
 
             finished = False
-            for tool_call in tool_calls:
-                name = tool_call.function.name
-                args = self._parse_args(tool_call.function.arguments)
+            for tool_call in reply.tool_calls:
+                name = tool_call.name
+                args = tool_call.args
 
                 if name == "reply_to_client":
-                    reply = self._reply_text(args)
-                    if not reply:
-                        messages.append(self._tool_result(
+                    text = self._reply_text(args)
+                    if not text:
+                        messages.append(self.llm.tool_result(
                             tool_call.id, "The message was empty. Call reply_to_client again with the full email text in `message`."))
                         continue
-                    result.reply = reply
-                    messages.append(self._tool_result(tool_call.id, "Reply sent."))
+                    result.reply = text
+                    messages.append(self.llm.tool_result(tool_call.id, "Reply sent."))
                     finished = True
                     continue
 
@@ -191,8 +181,8 @@ class Brain:
                 )
                 result.steps.append(step)
                 self.on_event("step", step)
-                messages.append(self._tool_result(tool_call.id, f"{output}\n\n{tree}"))
-                messages.append(self._screenshot_message(shot_path))
+                messages.append(self.llm.tool_result(tool_call.id, f"{output}\n\n{tree}"))
+                messages.append(self.llm.screenshot_message(shot_path))
 
             if finished:
                 break
@@ -210,11 +200,11 @@ class Brain:
         No tool calls, page trees or screenshots from earlier turns. Sasha re-reads the CRM
         each time, like a rep opening the thread and then the deal.
         """
-        messages = [SYSTEM_MESSAGE]
+        messages: list[dict] = []
         transcript = memory.load_transcript(deal_id)
         if transcript:
-            messages.append({"role": "user", "content": f"Conversation so far with this client:\n\n{transcript}"})
-            messages.append({"role": "assistant", "content": "Understood. I have the conversation so far."})
+            messages.append(self.llm.user_message(f"Conversation so far with this client:\n\n{transcript}"))
+            messages.append(self.llm.plain_assistant_message("Understood. I have the conversation so far."))
         return messages
 
     def _build_turn_text(self, deal_id: int, client_message: str | None) -> str:
@@ -258,17 +248,6 @@ class Brain:
         except Exception as error:
             return f"ERROR: {type(error).__name__}: {str(error)[:300]}"
 
-    @staticmethod
-    def _screenshot_message(path: Path) -> dict:
-        data = base64.b64encode(path.read_bytes()).decode()
-        return {
-            "role": "user",
-            "content": [
-                {"type": "text", "text": "Screenshot:"},
-                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{data}"}},
-            ],
-        }
-
     def _write_run_json(self, deal_id: int, client_message: str | None, result: RunResult) -> None:
         log = {
             "deal_id": deal_id,
@@ -286,11 +265,6 @@ class Brain:
         (self.run_dir / "run.json").write_text(json.dumps(log, indent=2))
 
     @staticmethod
-    def _cached_tokens(usage) -> int:
-        details = getattr(usage, "prompt_tokens_details", None)
-        return int(getattr(details, "cached_tokens", 0) or 0)
-
-    @staticmethod
     def _reply_text(args: dict) -> str:
         """The email text, or empty string if the model sent nothing usable."""
         if "message" in args:
@@ -300,27 +274,3 @@ class Brain:
                 return value.strip()
         return ""
 
-    @staticmethod
-    def _nudged(messages: list[dict]) -> bool:
-        return any(m.get("content") == NUDGE for m in messages)
-
-    @staticmethod
-    def _tool_result(tool_call_id: str, content: str) -> dict:
-        return {"role": "tool", "tool_call_id": tool_call_id, "content": content}
-
-    @staticmethod
-    def _assistant_as_dict(message) -> dict:
-        entry: dict = {"role": "assistant", "content": message.content or ""}
-        if message.tool_calls:
-            entry["tool_calls"] = [
-                {"id": c.id, "type": "function", "function": {"name": c.function.name, "arguments": c.function.arguments}}
-                for c in message.tool_calls
-            ]
-        return entry
-
-    @staticmethod
-    def _parse_args(raw: str) -> dict:
-        try:
-            return json.loads(raw) if raw else {}
-        except json.JSONDecodeError:
-            return {"_raw": raw}

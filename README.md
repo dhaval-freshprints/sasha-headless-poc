@@ -24,6 +24,7 @@ deal_id (+ optional client message)
 |---|---|
 | `config.py` | settings from `.env` |
 | `browser.py` | Browser Hands — hybrid tools (by name first, by coordinate as fallback) |
+| `llm/` | new — provider layer: `base.py` (interface), `openai_llm.py`, `anthropic_llm.py`, `make_llm()` switch on `LLM_PROVIDER` |
 | `brain.py` | Sasha Brain — the loop + system prompt |
 | `prompts/workplace.md` | the map: pages, URLs, how each form works. Facts only, no opinions |
 | `prompts/playbook.md` | how Sasha works and writes: judgment, voice, outreach, client reply |
@@ -133,6 +134,22 @@ verify before you report.
 
 The wizard also refused to list the deal until it was moved to Lead stage. That is a CRM rule,
 and it is written in `workplace.md` as a fact, not routed around.
+
+## Model providers
+
+`LLM_PROVIDER` picks the API shape: `openai` (api.openai.com), `anthropic` (api.anthropic.com),
+or `gateway` (an OpenAI-compatible proxy in front of Claude; needs `LLM_BASE_URL`). The brain
+calls five methods on an `LLM` object and never sees a vendor SDK. All three verified on the
+same turn shape (set quantity on a proof, read the price, Cancel, reply):
+
+| Provider | Model | Steps | Time | Model time |
+|---|---|---|---|---|
+| gateway | claude-opus-5 | 4 | 39s | 22s |
+| openai | gpt-5.6-terra | 4 | 26s | 11s |
+| anthropic | claude | 4 | verified, numbers not recorded | |
+
+OpenAI direct needed two shape fixes: `max_completion_tokens` instead of `max_tokens`, and
+`reasoning_effort: "none"` (reasoning models refuse function tools on chat-completions otherwise).
 
 ## Memory: transcript only
 

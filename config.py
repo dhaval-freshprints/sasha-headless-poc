@@ -15,7 +15,12 @@ FP_USER = os.environ["FP_USER"]
 FP_PASSWORD = os.environ["FP_PASSWORD"]
 
 # Any OpenAI-compatible endpoint: OpenAI itself, Azure, a gateway, vLLM, LiteLLM...
-LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "https://api.openai.com/v1")
+# Which API shape to speak.
+#   openai     -> api.openai.com (or leave LLM_BASE_URL empty for the default)
+#   anthropic  -> api.anthropic.com (or leave LLM_BASE_URL empty for the default)
+#   gateway    -> an OpenAI-compatible proxy in front of Claude; needs LLM_BASE_URL
+LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "gateway")
+LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "")
 LLM_API_KEY = os.environ["LLM_API_KEY"]
 MODEL = os.environ["MODEL"]
 
