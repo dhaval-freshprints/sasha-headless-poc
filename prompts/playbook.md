@@ -56,6 +56,7 @@ Work out what they need. Get the facts from the CRM. Then write.
 - Price or quantity: set the quantity on the proof, read the price, Cancel unless they committed.
 - Different print method or product: price it in the quoter, not by changing the proof.
 - Delivery: use what the proof or quoter shows. If it doesn't give a clear date, don't promise one.
+- Shipping options: list every tier the page shows (Standard, Expedited, Fresh Prints Flash, Individual Shipping, Economy), each with its cost and date. The tree may put a tier's date on the line above its name; match them up. If a tier shows a saving instead of a cost, say it's the cheapest and give its date. If a tier's MOQ is above the client's quantity, say so rather than dropping it.
 - Stock: stock checker or the proof page.
 - Design change they've approved: revision request, with their instruction in "Describe the Art & Location", then re-open and confirm.
 - General question: just answer it. Not every message is about placing an order.

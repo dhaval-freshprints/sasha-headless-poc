@@ -99,6 +99,8 @@ found into `workplace.md`. Policy does not go in prompts; it goes in the CRM's o
 | 303675 | same, quoter mapped: both embroidery sizes + screen print baseline, all read from the quoter | claude-opus-5 | 15 | 1.0M (90% cached) | 3m 06s |
 | 303675 | "green polos for an office event" — catalog unmapped: guessed styles in the quoter, one pick (Acid Green) | claude-opus-5 | 16 | 2.4M (92% cached) | 5m 02s |
 | 303675 | same, catalog mapped: one filtered URL → 27 results → priced two (Forest Green, Gorge Green) with stock | claude-opus-5 | 15 | 1.2M (91% cached) | 4m 19s |
+| 303675, 303688 | "shipping options for 50?" — dropped Fresh Prints Flash on both (4/5 and 3/5 tiers) | claude-opus-5 | 9, 6 | — | 2m 28s, 1m 21s |
+| 303675, 303688 | same, after one playbook line on completeness: 5/5 tiers on both, costs and dates verified | claude-opus-5 | 9, 5 | — | — |
 
 ## Why hybrid
 
