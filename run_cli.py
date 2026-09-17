@@ -70,9 +70,9 @@ def run_turn(browser: Browser, deal_id: int, client_message: str | None) -> RunR
 
     label = "client reply" if client_message else "outreach"
     print(f"\n[deal {deal_id} · {label}] working...")
-    result = Brain(browser, run_dir).run(deal_id, client_message)
+    result = Brain(browser, run_dir, on_event=show_progress).run(deal_id, client_message)
 
-    print_steps(result)
+    print(" " * 40, end="\r")      # clear the last "thinking..." line
     print(f"\n--- Sasha ---")
     print(result.reply)
     print(f"\n[{result.summary()}]")
@@ -80,11 +80,15 @@ def run_turn(browser: Browser, deal_id: int, client_message: str | None) -> RunR
     return result
 
 
-def print_steps(result: RunResult) -> None:
-    for step in result.steps:
-        short_args = {k: (v[:50] if isinstance(v, str) else v) for k, v in step.args.items()}
-        short_result = step.result[:70].replace("\n", " ")
-        print(f"  [{step.index:02d}] {step.tool} {short_args} -> {short_result}  [tree {step.tree_chars // 1000}K]")
+def show_progress(kind: str, payload) -> None:
+    """Print each step as it happens, and a marker while the model is deciding the next one."""
+    if kind == "thinking":
+        print(f"  [{payload:02d}] thinking...", end="\r", flush=True)
+        return
+    step = payload
+    short_args = {k: (v[:50] if isinstance(v, str) else v) for k, v in step.args.items()}
+    short_result = step.result[:70].replace("\n", " ")
+    print(f"  [{step.index:02d}] {step.tool} {short_args} -> {short_result}  [tree {step.tree_chars // 1000}K]")
 
 
 if __name__ == "__main__":

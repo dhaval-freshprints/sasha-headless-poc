@@ -126,9 +126,14 @@ class RunResult:
 
 
 class Brain:
-    def __init__(self, browser: Browser, run_dir: Path):
+    def __init__(self, browser: Browser, run_dir: Path, on_event=None):
+        """
+        on_event(kind, payload) is called as the turn progresses, so a caller can show
+        progress. kind is "thinking" (payload: step index) or "step" (payload: Step).
+        """
         self.browser = browser
         self.run_dir = run_dir
+        self.on_event = on_event or (lambda kind, payload: None)
         self.client = OpenAI(base_url=config.LLM_BASE_URL, api_key=config.LLM_API_KEY)
 
     def run(self, deal_id: int, client_message: str | None) -> RunResult:
@@ -139,6 +144,7 @@ class Brain:
         turn_started = time.monotonic()
 
         for step_index in range(config.MAX_STEPS):
+            self.on_event("thinking", step_index)
             model_started = time.monotonic()
             response = self.client.chat.completions.create(
                 model=config.MODEL, max_tokens=2048, tools=TOOLS, messages=messages,
@@ -179,10 +185,12 @@ class Brain:
                 tree = self.browser.snapshot()
                 shot_path = self.browser.save_screenshot(self.run_dir / f"step_{step_index:02d}.png")
                 result.browser_seconds += time.monotonic() - browser_started
-                result.steps.append(Step(
+                step = Step(
                     step_index, name, args, output, str(shot_path),
                     tree_chars=len(tree), tree_head="\n".join(tree.splitlines()[:12]),
-                ))
+                )
+                result.steps.append(step)
+                self.on_event("step", step)
                 messages.append(self._tool_result(tool_call.id, f"{output}\n\n{tree}"))
                 messages.append(self._screenshot_message(shot_path))
 
