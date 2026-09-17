@@ -115,7 +115,8 @@ Decorating Methods (centre, below): Custom Names, Custom Numbers, Cover Stitches
 
 Delivery (right):
 - "Order On" / "Need By" toggle with a date box.
-- Shipping tiers, one selectable card each, showing Est. Delivery By, Item Shipping Total and MOQ: Standard (free), Expedited, Fresh Prints Flash, Individual Shipping. The chosen tier drives the top-bar Item Shipping Total.
+- Shipping tiers, one selectable card each, showing Est. Delivery By, Item Shipping Total and MOQ: Standard (free), Expedited, Fresh Prints Flash, Individual Shipping. The chosen tier drives the top-bar Item Shipping Total. Individual Shipping is internal; it is never shown to clients.
+- Colour names ending in " mto" are made to order, minimum 50.
 
 Reading the answer: after qty, style, color and a print method are set, the top bar shows Unit Price and Item Total. `read_text` returns them exactly. Before that they show as "— —".
 

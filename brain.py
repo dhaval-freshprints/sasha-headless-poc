@@ -164,7 +164,12 @@ class Brain:
                 args = self._parse_args(tool_call.function.arguments)
 
                 if name == "reply_to_client":
-                    result.reply = self._reply_text(args)
+                    reply = self._reply_text(args)
+                    if not reply:
+                        messages.append(self._tool_result(
+                            tool_call.id, "The message was empty. Call reply_to_client again with the full email text in `message`."))
+                        continue
+                    result.reply = reply
                     messages.append(self._tool_result(tool_call.id, "Reply sent."))
                     finished = True
                     continue
@@ -211,7 +216,7 @@ class Brain:
         return (
             f"Deal: {url}\n\n"
             f"Turn: client reply. The client just said:\n\n\"{client_message}\"\n\n"
-            "Follow the playbook's Client reply section."
+            "Follow the playbook."
         )
 
     def _execute(self, tool: str, args: dict) -> str:
@@ -279,12 +284,13 @@ class Brain:
 
     @staticmethod
     def _reply_text(args: dict) -> str:
+        """The email text, or empty string if the model sent nothing usable."""
         if "message" in args:
-            return str(args["message"])
+            return str(args["message"]).strip()
         for value in args.values():
             if isinstance(value, str) and value.strip():
-                return value
-        return json.dumps(args)
+                return value.strip()
+        return ""
 
     @staticmethod
     def _nudged(messages: list[dict]) -> bool:
