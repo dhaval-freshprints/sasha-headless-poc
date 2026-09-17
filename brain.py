@@ -251,6 +251,8 @@ class Brain:
     def _write_run_json(self, deal_id: int, client_message: str | None, result: RunResult) -> None:
         log = {
             "deal_id": deal_id,
+            "provider": config.LLM_PROVIDER,
+            "model": config.MODEL,
             "client_message": client_message,
             "reply": result.reply,
             "seconds": round(result.seconds, 1),

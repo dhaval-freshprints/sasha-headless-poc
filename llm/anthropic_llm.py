@@ -4,6 +4,7 @@ results are content blocks; images are base64 sources.
 """
 
 import base64
+import copy
 from pathlib import Path
 
 from anthropic import Anthropic
@@ -25,7 +26,7 @@ class AnthropicLLM(LLM):
                 {"name": t["name"], "description": t["description"], "input_schema": t["parameters"]}
                 for t in tools
             ],
-            messages=messages,
+            messages=self._with_cache_breakpoint(messages),
         )
         text = "".join(block.text for block in response.content if block.type == "text")
         tool_calls = [
@@ -43,6 +44,23 @@ class AnthropicLLM(LLM):
             output_tokens=usage.output_tokens,
             cached_tokens=cached,
         )
+
+    @staticmethod
+    def _with_cache_breakpoint(messages: list[dict]) -> list[dict]:
+        """
+        Anthropic caches everything up to the last cache_control marker. The system prompt
+        carries one, but that only covers ~5K tokens; the transcript, tool results and
+        screenshots after it would be re-sent fresh every call. Marking the last message
+        makes the whole conversation so far a cache hit on the next call.
+        """
+        if not messages:
+            return messages
+        marked = copy.deepcopy(messages)
+        last = marked[-1]
+        if isinstance(last["content"], str):
+            last["content"] = [{"type": "text", "text": last["content"]}]
+        last["content"][-1]["cache_control"] = {"type": "ephemeral"}
+        return marked
 
     def assistant_message(self, reply: Reply) -> dict:
         blocks: list[dict] = []
