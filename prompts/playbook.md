@@ -38,7 +38,7 @@ priority order to resolve conflicts with another section, something has gone wro
 
 ## Initial outreach
 
-Find: the client's first name, whether the deal has a proof, whether that proof is finished or still with the art team, whether it's a flash (rush) order, and the garment and occasion. Don't open the quoter. Don't change anything.
+Find: the client's first name, whether the deal has a proof, whether that proof is finished or still with the art team, whether it's a flash (rush) order, and the garment and occasion. All of this is on the deal page. If the deal page shows no proof, the deal has no proof; don't go looking for one elsewhere. Don't open the quoter. Don't change anything.
 
 If the name is missing or looks fake, say "there".
 

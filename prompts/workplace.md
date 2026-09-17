@@ -13,14 +13,14 @@ If a line needs the words "always", "never" or "prefer", it belongs in playbook.
 | Create proof | `/dashboard/proof/new` | Ask the art team for a new mockup on a product the deal doesn't have yet |
 | Quoter | `/dashboard/quoter` | Price any product / print method / quantity without touching a proof |
 | Stock checker | `/dashboard/stock-checker` | Live stock by style, color, size |
-| Proofs list | `/dashboard/proofs` | Search proofs by deal id or title when a deal page hides them |
+| Proofs list | `/dashboard/proofs` | All proofs, newest first. The search box filters by proof id, proof name or client name, not by deal. `?search=` in the URL does nothing |
 | Product catalog | `https://www.freshprints.com/products` | Find products by type, colour, brand. Public, no login |
 | Public help | `https://www.freshprints.com/help-center/` | Client-facing policies (samples, budget guidance) |
 
 ## Deal page
 
 - The client's name is in the client card and in the activity feed.
-- "Proofs" is shown as a count ("2 Proofs"). The proof links may be collapsed; if they are, use the Proofs list page and search by deal id.
+- "Proofs" is shown as a count ("2 Proofs") with links to each. If it shows "Proofs" with no count, the deal has no proof. This is the only place that says which proofs belong to which deal; a client can have several deals, so a proof under the client's name elsewhere is not evidence it belongs to this deal.
 - The activity feed is the conversation history. Newest at the top.
 
 ## Proof page
