@@ -1,10 +1,12 @@
 """
-Sasha Brain.
+Sasha Brain — hybrid loop (option C).
 
-One model, one loop: look at the page, pick an action, repeat, then reply.
-No business rules in the prompt — the CRM, quoter and forms already enforce them.
+After every action the model gets BOTH the accessibility tree (names, exact) and a
+screenshot (layout, canvas). It acts by name when it can, by coordinates when it must.
+No business rules in the system prompt — the CRM, quoter and forms already enforce them.
 """
 
+import base64
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -13,21 +15,37 @@ from openai import OpenAI
 
 import config
 import memory
-from browser import Browser
+from browser import Browser, VIEWPORT
 
 OUTREACH_GUIDE = (config.ROOT / "prompts" / "initial_outreach.md").read_text()
 REPLY_GUIDE = (config.ROOT / "prompts" / "client_reply.md").read_text()
 
-SYSTEM_PROMPT = """You are Sasha, a sales representative at Fresh Prints (custom apparel).
+SYSTEM_PROMPT = f"""You are Sasha, a sales representative at Fresh Prints (custom apparel).
 
-You are logged into the Fresh Prints CRM in a browser. You can see pages and act on them
-using the tools provided. Work the way a careful human rep would:
+You are logged into the Fresh Prints CRM in a browser. After every action you get two
+views of the screen: the accessibility tree (exact names of links, buttons and fields, plus
+an EDITABLE FIELDS list) and a screenshot ({VIEWPORT["width"]}x{VIEWPORT["height"]} px).
+Use the tree for names and values. Use the screenshot for layout, images, and anything the
+tree doesn't show.
 
-- Open the deal first and read it (client, proof, product, quantity, dates) before replying.
+How to act:
+- Prefer acting by name: `click` (role + name from the tree), `click_text` (plain visible
+  text), `fill_field` (label or #index from EDITABLE FIELDS). These are exact.
+- Use `click_at` / `type_here` with screenshot coordinates only when nothing in the tree
+  matches, e.g. canvas or icon-only controls.
+- `fill_field` replaces the field's content and tells you what it now contains. Read that.
+
+Work the way a careful human rep would:
+- Look before you act. Open the deal and read it before replying.
 - Use the CRM, quoter and forms for real facts. Never invent a price, stock level or date.
-- After any action that changes data, look at the page again to confirm it actually saved.
+- When you submit a form on the client's behalf, the form must actually contain what the
+  client asked for. Fill the description / notes field with their request in plain words.
+- After any action that changes data, look again and confirm it saved and that what you
+  entered is there. Reporting success you did not see is the worst mistake you can make.
+- Never delete anything. If a dialog asks to confirm a delete, answer No.
 - If you need information only the client can give, ask them for it in your reply.
 - If something is blocked or unclear, say so in your reply rather than guessing.
+- Some buttons open a new tab. You are always shown the newest tab.
 
 When you have what you need, call `reply_to_client` with a short, friendly message written
 as Sasha. Prices, quantities and dates in the reply must be values you saw on screen.
@@ -38,67 +56,32 @@ NUDGE = (
     "If you could not complete something, say so in the message."
 )
 
-# Plain function specs; wrapped into OpenAI's {"type": "function", "function": …} below.
+XY = {"x": {"type": "integer"}, "y": {"type": "integer"}}
+
 TOOL_SPECS = [
-    {
-        "name": "navigate",
-        "description": "Go to a URL.",
-        "parameters": {
-            "type": "object",
-            "properties": {"url": {"type": "string"}},
-            "required": ["url"],
-        },
-    },
-    {
-        "name": "snapshot",
-        "description": "Get the accessibility tree of the current page (what is on screen).",
-        "parameters": {"type": "object", "properties": {}},
-    },
-    {
-        "name": "click",
-        "description": "Click an element by its ARIA role and accessible name, as shown in the snapshot.",
-        "parameters": {
-            "type": "object",
-            "properties": {"role": {"type": "string"}, "name": {"type": "string"}},
-            "required": ["role", "name"],
-        },
-    },
-    {
-        "name": "type_text",
-        "description": "Type into a textbox (replaces existing content). Optionally press Enter after.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "role": {"type": "string"},
-                "name": {"type": "string"},
-                "text": {"type": "string"},
-                "press_enter": {"type": "boolean", "default": False},
-            },
-            "required": ["role", "name", "text"],
-        },
-    },
-    {
-        "name": "select_option",
-        "description": "Pick an option in a <select> dropdown by its visible label.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "role": {"type": "string"},
-                "name": {"type": "string"},
-                "option": {"type": "string"},
-            },
-            "required": ["role", "name", "option"],
-        },
-    },
-    {
-        "name": "reply_to_client",
-        "description": "Finish: send this message to the client. Call exactly once, at the end.",
-        "parameters": {
-            "type": "object",
-            "properties": {"message": {"type": "string"}},
-            "required": ["message"],
-        },
-    },
+    {"name": "navigate", "description": "Go to a URL.",
+     "parameters": {"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]}},
+    {"name": "look", "description": "Look at the screen again without doing anything.",
+     "parameters": {"type": "object", "properties": {}}},
+    {"name": "click", "description": "Click an element by its ARIA role and accessible name from the tree.",
+     "parameters": {"type": "object", "properties": {"role": {"type": "string"}, "name": {"type": "string"}}, "required": ["role", "name"]}},
+    {"name": "click_text", "description": "Click by visible text, for things with no role (spans, menu items, tabs).",
+     "parameters": {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}},
+    {"name": "fill_field",
+     "description": "Replace the content of an editable field. `field` = its label, placeholder, nearby heading, or '#N' from EDITABLE FIELDS. Works for inputs, textareas and rich-text editors.",
+     "parameters": {"type": "object", "properties": {"field": {"type": "string"}, "text": {"type": "string"}, "press_enter": {"type": "boolean", "default": False}}, "required": ["field", "text"]}},
+    {"name": "select_option", "description": "Pick an option in a <select> dropdown by label.",
+     "parameters": {"type": "object", "properties": {"field": {"type": "string"}, "option": {"type": "string"}}, "required": ["field", "option"]}},
+    {"name": "press_key", "description": "Press a key: Enter, Escape, Tab, ArrowDown, ...",
+     "parameters": {"type": "object", "properties": {"key": {"type": "string"}}, "required": ["key"]}},
+    {"name": "click_at", "description": "Fallback: click at screenshot pixel coordinates.",
+     "parameters": {"type": "object", "properties": XY, "required": ["x", "y"]}},
+    {"name": "type_here", "description": "Fallback: type into whatever has focus (after click_at).",
+     "parameters": {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}},
+    {"name": "scroll", "description": "Scroll the page.",
+     "parameters": {"type": "object", "properties": {"direction": {"type": "string", "enum": ["up", "down"]}, "amount": {"type": "integer", "default": 3}}, "required": ["direction"]}},
+    {"name": "reply_to_client", "description": "Finish: send this message to the client. Call exactly once, at the end.",
+     "parameters": {"type": "object", "properties": {"message": {"type": "string"}}, "required": ["message"]}},
 ]
 
 TOOLS = [{"type": "function", "function": spec} for spec in TOOL_SPECS]
@@ -137,10 +120,7 @@ class Brain:
 
         for step_index in range(config.MAX_STEPS):
             response = self.client.chat.completions.create(
-                model=config.MODEL,
-                max_tokens=2048,
-                tools=TOOLS,
-                messages=messages,
+                model=config.MODEL, max_tokens=2048, tools=TOOLS, messages=messages,
             )
             result.input_tokens += response.usage.prompt_tokens
             result.output_tokens += response.usage.completion_tokens
@@ -149,8 +129,6 @@ class Brain:
 
             tool_calls = assistant.tool_calls or []
             if not tool_calls:
-                # Model stopped without calling reply_to_client. Nudge once; if it still
-                # doesn't, fall back to whatever text it wrote.
                 if not result.reply and not self._nudged(messages):
                     messages.append({"role": "user", "content": NUDGE})
                     continue
@@ -169,14 +147,16 @@ class Brain:
                     continue
 
                 output = self._execute(name, args)
-                shot = self.browser.screenshot(self.run_dir / f"step_{step_index:02d}.png")
-                result.steps.append(Step(step_index, name, args, output, str(shot)))
-                messages.append(self._tool_result(tool_call.id, output))
+                tree = self.browser.snapshot()
+                shot_path = self.browser.save_screenshot(self.run_dir / f"step_{step_index:02d}.png")
+                result.steps.append(Step(step_index, name, args, output, str(shot_path)))
+                messages.append(self._tool_result(tool_call.id, f"{output}\n\n{tree}"))
+                messages.append(self._screenshot_message(shot_path))
 
             if finished:
                 break
 
-        memory.save_history(deal_id, messages)
+        memory.save_history(deal_id, self._compact_old_screenshots(messages))
         memory.append_transcript(deal_id, client_message, result.reply)
         self._write_run_json(deal_id, client_message, result)
         return result
@@ -200,24 +180,56 @@ class Brain:
         )
 
     def _execute(self, tool: str, args: dict) -> str:
+        b = self.browser
         try:
             match tool:
                 case "navigate":
-                    return self.browser.navigate(args["url"])
-                case "snapshot":
-                    return self.browser.snapshot()
+                    return b.navigate(args["url"])
+                case "look":
+                    return "Looking."
                 case "click":
-                    return self.browser.click(args["role"], args["name"])
-                case "type_text":
-                    return self.browser.type_text(
-                        args["role"], args["name"], args["text"], args.get("press_enter", False)
-                    )
+                    return b.click(args["role"], args["name"])
+                case "click_text":
+                    return b.click_text(args["text"])
+                case "fill_field":
+                    return b.fill_field(args["field"], args["text"], args.get("press_enter", False))
                 case "select_option":
-                    return self.browser.select_option(args["role"], args["name"], args["option"])
+                    return b.select_option(args["field"], args["option"])
+                case "press_key":
+                    return b.press_key(args["key"])
+                case "click_at":
+                    return b.click_at(args["x"], args["y"])
+                case "type_here":
+                    return b.type_here(args["text"])
+                case "scroll":
+                    return b.scroll(args["direction"], args.get("amount", 3))
                 case _:
                     return f"Unknown tool: {tool}"
         except Exception as error:
-            return f"ERROR: {type(error).__name__}: {error}"
+            return f"ERROR: {type(error).__name__}: {str(error)[:300]}"
+
+    @staticmethod
+    def _screenshot_message(path: Path) -> dict:
+        data = base64.b64encode(path.read_bytes()).decode()
+        return {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "Screenshot:"},
+                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{data}"}},
+            ],
+        }
+
+    @staticmethod
+    def _compact_old_screenshots(messages: list[dict]) -> list[dict]:
+        """Keep the last few screenshots in saved history; older ones become a note."""
+        keep = config.SCREENSHOTS_TO_KEEP
+        image_indexes = [
+            i for i, m in enumerate(messages)
+            if m.get("role") == "user" and isinstance(m.get("content"), list)
+        ]
+        for i in image_indexes[:-keep] if keep else image_indexes:
+            messages[i] = {"role": "user", "content": "[earlier screenshot omitted]"}
+        return messages
 
     def _write_run_json(self, deal_id: int, client_message: str | None, result: RunResult) -> None:
         log = {
@@ -232,7 +244,6 @@ class Brain:
 
     @staticmethod
     def _reply_text(args: dict) -> str:
-        """Models sometimes use a different key than the schema says. Take any string value."""
         if "message" in args:
             return str(args["message"])
         for value in args.values():
@@ -250,16 +261,11 @@ class Brain:
 
     @staticmethod
     def _assistant_as_dict(message) -> dict:
-        """Keep history as plain dicts so it round-trips through any OpenAI-compatible server."""
         entry: dict = {"role": "assistant", "content": message.content or ""}
         if message.tool_calls:
             entry["tool_calls"] = [
-                {
-                    "id": call.id,
-                    "type": "function",
-                    "function": {"name": call.function.name, "arguments": call.function.arguments},
-                }
-                for call in message.tool_calls
+                {"id": c.id, "type": "function", "function": {"name": c.function.name, "arguments": c.function.arguments}}
+                for c in message.tool_calls
             ]
         return entry
 
