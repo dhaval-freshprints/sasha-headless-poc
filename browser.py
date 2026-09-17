@@ -88,12 +88,20 @@ class Browser:
         return f"Clicked {role} '{name}'. {self._where()}"
 
     def click_text(self, text: str) -> str:
+        """
+        Click by visible text. If the text is a tooltip / hidden label that can't take the
+        click itself (a colour swatch, an icon with a hover name), click the element it labels.
+        """
         target = self.page.get_by_text(text, exact=False).first
         if target.count() == 0:
             return self._not_found(f"text '{text}'")
-        target.click(timeout=ACTION_TIMEOUT_MS)
+        try:
+            target.click(timeout=3000)
+        except Exception:
+            parent = target.locator("xpath=..")
+            parent.click(timeout=ACTION_TIMEOUT_MS, force=True)
         self._settle()
-        return f"Clicked text '{text}'. {self._where()}"
+        return f"Clicked '{text}'. {self._where()}"
 
     def fill_field(self, field: str, text: str, press_enter: bool = False) -> str:
         """

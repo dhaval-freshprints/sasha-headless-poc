@@ -57,6 +57,16 @@ Step 3, Print Info & Price Estimate (same layout as the revision form):
 - `button "Submit"` at the bottom right enables once the description is filled. "Another Proof Item" adds a second product to the same proof.
 - After Submit, the deal page shows the new proof under its proof count and the proof page shows "Original Proof" with a pending status.
 
+## Stock checker (/dashboard/stock-checker)
+
+Live stock by size for one product and colour. The most direct answer to "do you have my sizes".
+
+- One search box at the top (shows as `#0 [text] '(unlabelled)'` in EDITABLE FIELDS). Type the style code, then click the `option` that appears, e.g. `option "NKDC1963 - Nike Dri-FIT Micro Pique 2.0 Polo"`.
+- A row of colour swatches appears. Each swatch's name is a hover tooltip, so use `click_text` with the colour name (e.g. "Gorge Green"); the tool clicks the swatch for you. "All Colors" is the first swatch.
+- Clicking a swatch renders a table. In the tree it's `row "<Colour> <XS> <S> <M> <L> <XL> <2XL> <3XL> <4XL> <blank cost> <restock date>"`, with one `cell` per value. `read_text` gives the same numbers in order after "Colors / Dist.".
+- "No Restock Date" means no supplier restock is scheduled. A date there is the supplier's estimate.
+- Nothing on this page is saved. It only reads.
+
 ## Revision request form
 
 - Opens as an overlay titled "Placing a Revision Request".

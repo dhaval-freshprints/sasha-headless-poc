@@ -84,7 +84,7 @@ def print_steps(result: RunResult) -> None:
     for step in result.steps:
         short_args = {k: (v[:50] if isinstance(v, str) else v) for k, v in step.args.items()}
         short_result = step.result[:70].replace("\n", " ")
-        print(f"  [{step.index:02d}] {step.tool} {short_args} -> {short_result}")
+        print(f"  [{step.index:02d}] {step.tool} {short_args} -> {short_result}  [tree {step.tree_chars // 1000}K]")
 
 
 if __name__ == "__main__":

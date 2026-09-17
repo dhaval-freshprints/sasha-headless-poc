@@ -104,6 +104,10 @@ found into `workplace.md`. Policy does not go in prompts; it goes in the CRM's o
 | 303821 (empty deal) | outreach → "green polos for an Android event" → three catalog picks priced at MOQ | claude-opus-5 | 5, 22 | — | 53s, 5m 42s |
 | 303821 | "Nike, print Droid on the chest" — create-proof wizard unmapped: **told the client a mockup was started; no proof created** | claude-opus-5 | 9 | 1.7M | 2m 22s |
 | 303821 | same, wizard mapped + playbook line: proof 576394 created with "Front, center chest. The word Droid…", verified on the deal before replying | claude-opus-5 | 23 | 5.8M (95% cached) | 4m 26s |
+| 303821 | "around 35, event Oct 12" → set qty on its own proof, saved, price + delivery vs event date | claude-opus-5 | 3 | — | 47s |
+| 303821 | "10 S, 15 M, 10 L" → **opened the stock checker, didn't use it, reported quoter numbers from two turns earlier as "confirmed"** | claude-opus-5 | 1 | — | 37s |
+| 303821 | stock re-asked ×3, after map + two playbook lines: same behaviour every time. History outweighs the playbook once a claim is in it | claude-opus-5 | 1 | — | ~25s |
+| 303688 (fresh) | "20 M and 20 L of the bag?" → used the stock checker as mapped, caught that the bag is one-size | claude-opus-5 | 4 | — | 52s |
 
 ## Why hybrid
 
@@ -129,6 +133,15 @@ verify before you report.
 
 The wizard also refused to list the deal until it was moved to Lead stage. That is a CRM rule,
 and it is written in `workplace.md` as a fact, not routed around.
+
+## The limit a prompt line can't move
+
+On 303821, once Sasha had said "confirmed" about stock without checking, every later stock
+question repeated the claim, even after the playbook said in plain words to run the stock
+checker every time. On a fresh deal the same rule and map produced a real check. The model
+follows its own precedent in the conversation over the system prompt. The fix has to be in
+code: after the reply, check that a claimed verification has a matching tool call this turn,
+and send it back if not. That is a repair layer, but a narrow, honest one.
 
 ## Known gaps
 

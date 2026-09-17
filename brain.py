@@ -92,8 +92,10 @@ class Step:
     index: int
     tool: str
     args: dict
-    result: str
+    result: str          # the tool's own one-line result
     screenshot: str
+    tree_chars: int = 0  # size of the accessibility tree the model was given with this step
+    tree_head: str = ""  # first few lines of it, so run.json shows what the model saw
 
 
 @dataclass
@@ -153,7 +155,10 @@ class Brain:
                 output = self._execute(name, args)
                 tree = self.browser.snapshot()
                 shot_path = self.browser.save_screenshot(self.run_dir / f"step_{step_index:02d}.png")
-                result.steps.append(Step(step_index, name, args, output, str(shot_path)))
+                result.steps.append(Step(
+                    step_index, name, args, output, str(shot_path),
+                    tree_chars=len(tree), tree_head="\n".join(tree.splitlines()[:12]),
+                ))
                 messages.append(self._tool_result(tool_call.id, f"{output}\n\n{tree}"))
                 messages.append(self._screenshot_message(shot_path))
 
