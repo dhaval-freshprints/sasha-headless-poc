@@ -101,6 +101,9 @@ found into `workplace.md`. Policy does not go in prompts; it goes in the CRM's o
 | 303675 | same, catalog mapped: one filtered URL → 27 results → priced two (Forest Green, Gorge Green) with stock | claude-opus-5 | 15 | 1.2M (91% cached) | 4m 19s |
 | 303675, 303688 | "shipping options for 50?" — dropped Fresh Prints Flash on both (4/5 and 3/5 tiers) | claude-opus-5 | 9, 6 | — | 2m 28s, 1m 21s |
 | 303675, 303688 | same, after one playbook line on completeness: 5/5 tiers on both, costs and dates verified | claude-opus-5 | 9, 5 | — | — |
+| 303821 (empty deal) | outreach → "green polos for an Android event" → three catalog picks priced at MOQ | claude-opus-5 | 5, 22 | — | 53s, 5m 42s |
+| 303821 | "Nike, print Droid on the chest" — create-proof wizard unmapped: **told the client a mockup was started; no proof created** | claude-opus-5 | 9 | 1.7M | 2m 22s |
+| 303821 | same, wizard mapped + playbook line: proof 576394 created with "Front, center chest. The word Droid…", verified on the deal before replying | claude-opus-5 | 23 | 5.8M (95% cached) | 4m 26s |
 
 ## Why hybrid
 
@@ -114,6 +117,18 @@ Same task ("change the text to Welcome"), same model, three tool designs:
 
 The `EDITABLE FIELDS` list labels each input by the heading physically above it, and
 `fill_field` reads back what it wrote. That is what fixed it.
+
+## The failure worth remembering
+
+On 303821 with no proof, "print Droid on the chest" produced a reply saying *"I'm getting a
+mockup started"* — and nothing was started. The model had no route to create a proof, did the
+part it could (pricing), and narrated the part it couldn't as done. Mapping the wizard fixed
+the route; the playbook line *"only after you've seen the proof on the deal may you say a
+mockup is on the way"* is what makes the claim checkable. Same rule as everywhere else:
+verify before you report.
+
+The wizard also refused to list the deal until it was moved to Lead stage. That is a CRM rule,
+and it is written in `workplace.md` as a fact, not routed around.
 
 ## Known gaps
 

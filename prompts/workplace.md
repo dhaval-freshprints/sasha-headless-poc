@@ -10,6 +10,7 @@ If a line needs the words "always", "never" or "prefer", it belongs in playbook.
 | Deal | `/dashboard/sales-pipeline/deal?id=<deal_id>` | Client, stage, due date, est. value, proofs linked, full activity history (emails, notes) |
 | Proof | `/dashboard/proof/<proof_id>` | One design on one product. Price at a quantity, delivery estimate, print details, revisions |
 | Proof revision | `/dashboard/proof/<proof_id>?proofItemId=<item>&proofRevisionId=<rev>` | A specific version of a proof item |
+| Create proof | `/dashboard/proof/new` | Ask the art team for a new mockup on a product the deal doesn't have yet |
 | Quoter | `/dashboard/quoter` | Price any product / print method / quantity without touching a proof |
 | Stock checker | `/dashboard/stock-checker` | Live stock by style, color, size |
 | Proofs list | `/dashboard/proofs` | Search proofs by deal id or title when a deal page hides them |
@@ -30,6 +31,31 @@ If a line needs the words "always", "never" or "prefer", it belongs in playbook.
 - Revision chips at the top ("Original Proof", "Revision 1", ...) switch which version is shown.
 - "Or Submit a Revision Request" (plain text, next to "Revise in Design Tool") opens the revision form. It is hidden while a revision is already pending.
 - "Design in Design Tool" opens the Design Tool in a new tab. It is a canvas editor. The proof's text cannot be read from the tree there.
+
+## Create proof wizard (/dashboard/proof/new)
+
+Three steps. The top bar shows Proof Details → Product Info → Print Info & Price Estimate. Each step's "next" button stays disabled until that step's required fields are set.
+
+Step 1, Proof Details:
+- Proof Title: a text box (`'e.g. Pi Kapp Rush 2021'` in EDITABLE FIELDS). Write something the art team will recognise, e.g. "<Client> <product> - <event>".
+- Client: type the name, then click the `option` that appears (it shows name + email).
+- Deal: a dropdown, not a search. Click it (the `Deal` field), then click the deal's `option` by title. Only deals in Lead stage or later are listed; if the deal isn't there, its stage is too early. Say so rather than creating an unlinked proof.
+- Related Campaign: required even when none applies. Click it and choose `option "None"`.
+- "Proof for Flash Order" toggle: only for rush jobs.
+- Then click `button "Product Info"`.
+
+Step 2, Product Info:
+- Style Code: type it, click the `option`. Color: same. Product images and a stock warning appear once both are set.
+- Then click `button "Add Location & Design"`.
+
+Step 3, Print Info & Price Estimate (same layout as the revision form):
+- Location #1 with Print Type tabs (Screen Print, Embroidery, Digital, Applique, Transfers, Patches, Rhinestones, Vinyl, Foil, ...) and method cards with MOQ. Screen Print Standard is preselected.
+- "# of Colors" and "Oversized".
+- "Describe the Art & Location" is required and empty (`[richtext] '(Required)'` in EDITABLE FIELDS). This is the only place the art team learns what to make. Put the placement and the exact text or artwork in plain words, e.g. "Front, center chest. The word Droid in white."
+- "Upload Ref. Image" for a reference file.
+- Decorating Methods (optional add-ons), Licensing Info, Estimate Quantity.
+- `button "Submit"` at the bottom right enables once the description is filled. "Another Proof Item" adds a second product to the same proof.
+- After Submit, the deal page shows the new proof under its proof count and the proof page shows "Original Proof" with a pending status.
 
 ## Revision request form
 
