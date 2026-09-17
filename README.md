@@ -64,7 +64,7 @@ curl -X POST localhost:8100/simulate -H 'content-type: application/json' -d '{"d
 curl -X POST localhost:8100/simulate -H 'content-type: application/json' -d '{"deal_id": 303817, "client_message": "price for 50?"}'
 ```
 
-Every turn writes `runs/deal_<id>/<timestamp>/run.json` plus one screenshot per step.
+Every turn writes `runs/deal_<id>/turn_<timestamp>/run.json` plus one screenshot per step, and appends to `runs/deal_<id>/transcript.md`, which is Sasha's only memory of the deal.
 
 ## Docker
 
@@ -134,18 +134,24 @@ verify before you report.
 The wizard also refused to list the deal until it was moved to Lead stage. That is a CRM rule,
 and it is written in `workplace.md` as a fact, not routed around.
 
-## The limit a prompt line can't move
+## Memory: transcript only
 
-On 303821, once Sasha had said "confirmed" about stock without checking, every later stock
-question repeated the claim, even after the playbook said in plain words to run the stock
-checker every time. On a fresh deal the same rule and map produced a real check. The model
-follows its own precedent in the conversation over the system prompt. The fix has to be in
-code: after the reply, check that a claimed verification has a matching tool call this turn,
-and send it back if not. That is a repair layer, but a narrow, honest one.
+Sasha remembers one thing between turns: `runs/deal_<id>/transcript.md`, the client ↔ Sasha
+messages. Not her tool calls, not the pages she read, not screenshots. Each turn she reads the
+thread, then opens the CRM, like a rep.
+
+Why. With the full model history carried forward, once Sasha had said "confirmed" about stock
+without checking, every later stock question on that deal repeated the claim, through four
+turns and two playbook lines saying to check every time. The model followed its own precedent
+in the conversation over the system prompt. Switching to transcript-only memory on the same
+deal, same question: it ran the stock checker, 4 steps, and the claim was true. Also ~6× fewer
+tokens per turn (97K vs 590K), and the memory is human-readable.
+
+Cost: anything Sasha learned but didn't say is forgotten (a proof ID, a style code she looked
+up). She re-reads it. A few extra steps on some turns, not a failure.
 
 ## Known gaps
 
-- Conversation history is in memory; restarting forgets it.
 - One browser, one request at a time.
 - Session expiry: re-run `auth_setup.py`.
 - Reply is returned as text, not sent anywhere.

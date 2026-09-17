@@ -1,11 +1,12 @@
 """
-Per-deal memory on disk, so a client reply tomorrow still sees today's outreach.
+Per-deal memory on disk: the transcript of what the client and Sasha said.
 
-runs/deal_<id>/history.json    — the full model conversation (what the model needs)
-runs/deal_<id>/transcript.md   — client ↔ Sasha only, human-readable (what people need)
+runs/deal_<id>/transcript.md
+
+This is the only thing Sasha remembers between turns. Tool calls, page trees and
+screenshots from earlier turns are not carried forward; she re-reads the CRM each time.
 """
 
-import json
 from datetime import datetime
 from pathlib import Path
 
@@ -18,15 +19,9 @@ def deal_dir(deal_id: int) -> Path:
     return path
 
 
-def load_history(deal_id: int) -> list[dict]:
-    path = deal_dir(deal_id) / "history.json"
-    if not path.exists():
-        return []
-    return json.loads(path.read_text())
-
-
-def save_history(deal_id: int, history: list[dict]) -> None:
-    (deal_dir(deal_id) / "history.json").write_text(json.dumps(history, indent=2))
+def load_transcript(deal_id: int) -> str:
+    path = deal_dir(deal_id) / "transcript.md"
+    return path.read_text() if path.exists() else ""
 
 
 def append_transcript(deal_id: int, client_message: str | None, sasha_reply: str) -> None:
@@ -41,7 +36,7 @@ def append_transcript(deal_id: int, client_message: str | None, sasha_reply: str
 
 
 def clear(deal_id: int) -> None:
-    for name in ("history.json", "transcript.md"):
+    for name in ("transcript.md", "history.json"):
         path = deal_dir(deal_id) / name
         if path.exists():
             path.unlink()

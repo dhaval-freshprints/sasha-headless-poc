@@ -6,7 +6,7 @@ POST /simulate  {"deal_id": 123, "client_message": "What's the price for 30?"}
 POST /reset     {"deal_id": 123}                →  forget the conversation
 GET  /transcript/{deal_id}                      →  client ↔ Sasha transcript
 
-Conversation is remembered per deal on disk (runs/deal_<id>/), so it survives restarts.
+Memory per deal is the transcript only (runs/deal_<id>/transcript.md). Each turn re-reads the CRM.
 
 Run:  uvicorn api:app --port 8100
 """

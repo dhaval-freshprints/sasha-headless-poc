@@ -7,7 +7,7 @@ Run Sasha on any deal from the terminal. No server needed.
     python run_cli.py <deal_id> --reset              # forget this deal's conversation
     python run_cli.py <deal_id> --headed             # watch the browser work
 
-Conversation is remembered per deal in runs/deal_<id>/ so replies can come days later.
+Memory per deal is the transcript only (runs/deal_<id>/transcript.md). Each turn re-reads the CRM.
 In chat mode: type the client's next message and press Enter. Empty line or Ctrl-C to quit.
 """
 
@@ -53,7 +53,7 @@ def main() -> None:
 
 
 def chat(browser: Browser, deal_id: int) -> None:
-    if not memory.load_history(deal_id):
+    if not memory.load_transcript(deal_id):
         run_turn(browser, deal_id, None)
     else:
         print(f"[deal {deal_id}] resuming conversation (see runs/deal_{deal_id}/transcript.md)")

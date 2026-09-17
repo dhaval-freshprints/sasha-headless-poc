@@ -114,11 +114,7 @@ class Brain:
         self.client = OpenAI(base_url=config.LLM_BASE_URL, api_key=config.LLM_API_KEY)
 
     def run(self, deal_id: int, client_message: str | None) -> RunResult:
-        messages = memory.load_history(deal_id)
-        if messages and messages[0].get("role") == "system":
-            messages[0] = SYSTEM_MESSAGE      # always the current prompt files, never a stale copy
-        else:
-            messages.insert(0, SYSTEM_MESSAGE)
+        messages = self._start_messages(deal_id)
         messages.append({"role": "user", "content": self._build_turn_text(deal_id, client_message)})
 
         result = RunResult(reply="")
@@ -165,12 +161,24 @@ class Brain:
             if finished:
                 break
 
-        memory.save_history(deal_id, self._compact_old_screenshots(messages))
         memory.append_transcript(deal_id, client_message, result.reply)
         self._write_run_json(deal_id, client_message, result)
         return result
 
     # ---- helpers ------------------------------------------------------------
+
+    def _start_messages(self, deal_id: int) -> list[dict]:
+        """
+        Every turn starts fresh: the system prompt plus what the client and Sasha have said.
+        No tool calls, page trees or screenshots from earlier turns. Sasha re-reads the CRM
+        each time, like a rep opening the thread and then the deal.
+        """
+        messages = [SYSTEM_MESSAGE]
+        transcript = memory.load_transcript(deal_id)
+        if transcript:
+            messages.append({"role": "user", "content": f"Conversation so far with this client:\n\n{transcript}"})
+            messages.append({"role": "assistant", "content": "Understood. I have the conversation so far."})
+        return messages
 
     def _build_turn_text(self, deal_id: int, client_message: str | None) -> str:
         url = config.deal_url(deal_id)
@@ -223,18 +231,6 @@ class Brain:
                 {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{data}"}},
             ],
         }
-
-    @staticmethod
-    def _compact_old_screenshots(messages: list[dict]) -> list[dict]:
-        """Keep the last few screenshots in saved history; older ones become a note."""
-        keep = config.SCREENSHOTS_TO_KEEP
-        image_indexes = [
-            i for i, m in enumerate(messages)
-            if m.get("role") == "user" and isinstance(m.get("content"), list)
-        ]
-        for i in image_indexes[:-keep] if keep else image_indexes:
-            messages[i] = {"role": "user", "content": "[earlier screenshot omitted]"}
-        return messages
 
     def _write_run_json(self, deal_id: int, client_message: str | None, result: RunResult) -> None:
         log = {

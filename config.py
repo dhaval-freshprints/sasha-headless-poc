@@ -21,8 +21,7 @@ MODEL = os.environ["MODEL"]
 
 MAX_STEPS = int(os.environ.get("MAX_STEPS", "40"))
 SNAPSHOT_MAX_CHARS = int(os.environ.get("SNAPSHOT_MAX_CHARS", "30000"))
-# Screenshots kept verbatim in the saved history. Older ones become a one-line note.
-SCREENSHOTS_TO_KEEP = int(os.environ.get("SCREENSHOTS_TO_KEEP", "3"))
+
 
 AUTH_DIR = ROOT / "auth"          # persistent Chromium profile (logged-in session)
 RUNS_DIR = ROOT / os.environ.get("RUNS_DIR", "runs")
