@@ -73,7 +73,8 @@ def run_turn(browser: Browser, deal_id: int, client_message: str | None) -> RunR
     result = Brain(browser, run_dir).run(deal_id, client_message)
 
     print_steps(result)
-    print(f"\n--- Sasha ({len(result.steps)} steps, {result.input_tokens} in / {result.output_tokens} out tokens) ---")
+    print(f"\n--- Sasha ({len(result.steps)} steps, {result.input_tokens} in "
+          f"({result.cached_tokens} cached) / {result.output_tokens} out tokens) ---")
     print(result.reply)
     print(f"[screenshots + run.json in {run_dir}]\n")
     return result

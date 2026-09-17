@@ -62,6 +62,7 @@ def simulate(request: SimulateRequest) -> dict:
         "seconds": round(time.time() - started, 1),
         "step_count": len(result.steps),
         "input_tokens": result.input_tokens,
+        "cached_tokens": result.cached_tokens,
         "output_tokens": result.output_tokens,
         "run_dir": str(run_dir),
         "steps": [step.__dict__ for step in result.steps],

@@ -59,6 +59,14 @@ class Browser:
         self._settle()
         return self.page.screenshot(full_page=False)
 
+    def read_text(self) -> str:
+        """The page's visible text, nothing else. Cheap and exact — use it to verify what saved."""
+        self._settle()
+        text = self.page.locator("body").inner_text()
+        if len(text) > config.SNAPSHOT_MAX_CHARS:
+            text = text[: config.SNAPSHOT_MAX_CHARS] + "\n... [truncated]"
+        return f"{self._where()}\n\n{text}"
+
     def save_screenshot(self, path: Path) -> Path:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(self.screenshot())

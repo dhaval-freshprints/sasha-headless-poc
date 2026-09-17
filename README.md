@@ -25,7 +25,8 @@ deal_id (+ optional client message)
 | `config.py` | settings from `.env` |
 | `browser.py` | Browser Hands — hybrid tools (by name first, by coordinate as fallback) |
 | `brain.py` | Sasha Brain — the loop + system prompt |
-| `prompts/initial_outreach.md` | wording rules for the first outreach (adapted from the prod LangSmith prompt) |
+| `prompts/workplace.md` | the map: pages, URLs, how each form works. Facts only, no opinions |
+| `prompts/playbook.md` | how Sasha works and writes: judgment, voice, outreach, client reply |
 | `run_cli.py` | terminal runner |
 | `api.py` | `POST /simulate`, `POST /reset` |
 | `auth_setup.py` | one-time login, saves session to `./auth` |
@@ -72,6 +73,19 @@ python auth_setup.py     # on the host first, so ./auth exists
 docker compose up --build
 ```
 
+## Prompts
+
+Exactly two, both in the system message, cached (one `cache_control` marker; ~90% cache hit
+rate measured through the gateway):
+
+- **workplace.md** — where things are. A line belongs here if it has a URL, a button name or
+  a field label in it. If it needs "always", "never" or "prefer", it doesn't.
+- **playbook.md** — what to do. If a section ever needs a priority order to resolve conflicts
+  with another section, something has gone wrong.
+
+When the model has to explore a page (the quoter, first time: 11 steps), a human writes what it
+found into `workplace.md`. Policy does not go in prompts; it goes in the CRM's own forms or in code.
+
 ## Results so far (QA)
 
 | Deal | Task | Model | Steps | Tokens in | Time |
@@ -81,6 +95,8 @@ docker compose up --build
 | 303817 | initial outreach | claude-sonnet-5 | 15 | 228K | ~90s |
 | 303817 | initial outreach | claude-opus-5 | 4 | 25K | 28s |
 | 303675 | "change the text to Welcome" → revision request with the instruction in it, verified | claude-opus-5 | 5 | 185K | 59s |
+| 303675 | "30 as embroidery?" — quoter unmapped: explored it, one price | claude-opus-5 | 11 | 1.1M (88% cached) | 2m 24s |
+| 303675 | same, quoter mapped: both embroidery sizes + screen print baseline, all read from the quoter | claude-opus-5 | 15 | 1.0M (90% cached) | 3m 06s |
 
 ## Why hybrid
 

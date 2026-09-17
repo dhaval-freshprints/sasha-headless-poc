@@ -17,10 +17,10 @@ import config
 import memory
 from browser import Browser, VIEWPORT
 
-OUTREACH_GUIDE = (config.ROOT / "prompts" / "initial_outreach.md").read_text()
-REPLY_GUIDE = (config.ROOT / "prompts" / "client_reply.md").read_text()
+WORKPLACE = (config.ROOT / "prompts" / "workplace.md").read_text()
+PLAYBOOK = (config.ROOT / "prompts" / "playbook.md").read_text()
 
-SYSTEM_PROMPT = f"""You are Sasha, a sales representative at Fresh Prints (custom apparel).
+IDENTITY = f"""You are Sasha, a sales representative at Fresh Prints (custom apparel).
 
 You are logged into the Fresh Prints CRM in a browser. After every action you get two
 views of the screen: the accessibility tree (exact names of links, buttons and fields, plus
@@ -34,22 +34,20 @@ How to act:
 - Use `click_at` / `type_here` with screenshot coordinates only when nothing in the tree
   matches, e.g. canvas or icon-only controls.
 - `fill_field` replaces the field's content and tells you what it now contains. Read that.
+- `read_text` gives the page's visible text exactly. Use it to verify what saved.
 
-Work the way a careful human rep would:
-- Look before you act. Open the deal and read it before replying.
-- Use the CRM, quoter and forms for real facts. Never invent a price, stock level or date.
-- When you submit a form on the client's behalf, the form must actually contain what the
-  client asked for. Fill the description / notes field with their request in plain words.
-- After any action that changes data, look again and confirm it saved and that what you
-  entered is there. Reporting success you did not see is the worst mistake you can make.
-- Never delete anything. If a dialog asks to confirm a delete, answer No.
-- If you need information only the client can give, ask them for it in your reply.
-- If something is blocked or unclear, say so in your reply rather than guessing.
-- Some buttons open a new tab. You are always shown the newest tab.
-
-When you have what you need, call `reply_to_client` with a short, friendly message written
-as Sasha. Prices, quantities and dates in the reply must be values you saw on screen.
+Below are two references. WORKPLACE is the map of the CRM: where things are and how they
+work. PLAYBOOK is how you work and write. When you're done, call `reply_to_client` with
+the message to the client.
 """
+
+# One system message, three sections, one cache marker at the end. Identical across every
+# turn and every deal, so the whole block is a cache hit after the first call.
+SYSTEM_PROMPT = f"{IDENTITY}\n\n---\n\n{WORKPLACE}\n\n---\n\n{PLAYBOOK}"
+SYSTEM_MESSAGE = {
+    "role": "system",
+    "content": [{"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}],
+}
 
 NUDGE = (
     "You stopped without replying. Call `reply_to_client` now with your message to the client. "
@@ -62,6 +60,8 @@ TOOL_SPECS = [
     {"name": "navigate", "description": "Go to a URL.",
      "parameters": {"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]}},
     {"name": "look", "description": "Look at the screen again without doing anything.",
+     "parameters": {"type": "object", "properties": {}}},
+    {"name": "read_text", "description": "Get the page's visible text, exactly. Use to verify that what you entered actually saved, or to read a number the screenshot makes hard to see.",
      "parameters": {"type": "object", "properties": {}}},
     {"name": "click", "description": "Click an element by its ARIA role and accessible name from the tree.",
      "parameters": {"type": "object", "properties": {"role": {"type": "string"}, "name": {"type": "string"}}, "required": ["role", "name"]}},
@@ -102,6 +102,7 @@ class RunResult:
     steps: list[Step] = field(default_factory=list)
     input_tokens: int = 0
     output_tokens: int = 0
+    cached_tokens: int = 0
 
 
 class Brain:
@@ -112,8 +113,10 @@ class Brain:
 
     def run(self, deal_id: int, client_message: str | None) -> RunResult:
         messages = memory.load_history(deal_id)
-        if not messages:
-            messages.append({"role": "system", "content": SYSTEM_PROMPT})
+        if messages and messages[0].get("role") == "system":
+            messages[0] = SYSTEM_MESSAGE      # always the current prompt files, never a stale copy
+        else:
+            messages.insert(0, SYSTEM_MESSAGE)
         messages.append({"role": "user", "content": self._build_turn_text(deal_id, client_message)})
 
         result = RunResult(reply="")
@@ -124,6 +127,7 @@ class Brain:
             )
             result.input_tokens += response.usage.prompt_tokens
             result.output_tokens += response.usage.completion_tokens
+            result.cached_tokens += self._cached_tokens(response.usage)
             assistant = response.choices[0].message
             messages.append(self._assistant_as_dict(assistant))
 
@@ -166,17 +170,11 @@ class Brain:
     def _build_turn_text(self, deal_id: int, client_message: str | None) -> str:
         url = config.deal_url(deal_id)
         if client_message is None:
-            return (
-                f"Deal: {url}\n\n"
-                "Write the initial outreach to this client. Read the deal first, then follow "
-                "the guide below exactly.\n\n"
-                f"{OUTREACH_GUIDE}"
-            )
+            return f"Deal: {url}\n\nTurn: initial outreach. Follow the playbook's Initial outreach section."
         return (
             f"Deal: {url}\n\n"
-            f"The client just replied:\n\n\"{client_message}\"\n\n"
-            "Work out what they need, do it in the CRM, then reply. Follow the guide below.\n\n"
-            f"{REPLY_GUIDE}"
+            f"Turn: client reply. The client just said:\n\n\"{client_message}\"\n\n"
+            "Follow the playbook's Client reply section."
         )
 
     def _execute(self, tool: str, args: dict) -> str:
@@ -187,6 +185,8 @@ class Brain:
                     return b.navigate(args["url"])
                 case "look":
                     return "Looking."
+                case "read_text":
+                    return b.read_text()
                 case "click":
                     return b.click(args["role"], args["name"])
                 case "click_text":
@@ -237,10 +237,16 @@ class Brain:
             "client_message": client_message,
             "reply": result.reply,
             "input_tokens": result.input_tokens,
+            "cached_tokens": result.cached_tokens,
             "output_tokens": result.output_tokens,
             "steps": [step.__dict__ for step in result.steps],
         }
         (self.run_dir / "run.json").write_text(json.dumps(log, indent=2))
+
+    @staticmethod
+    def _cached_tokens(usage) -> int:
+        details = getattr(usage, "prompt_tokens_details", None)
+        return int(getattr(details, "cached_tokens", 0) or 0)
 
     @staticmethod
     def _reply_text(args: dict) -> str:
