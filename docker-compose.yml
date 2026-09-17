@@ -1,0 +1,10 @@
+services:
+  sasha-browser:
+    build: .
+    ports:
+      - "8100:8100"
+    env_file: .env
+    volumes:
+      - ./auth:/app/auth
+      - ./runs:/app/runs
+    shm_size: "1gb"   # Chromium needs more than Docker's 64MB default
