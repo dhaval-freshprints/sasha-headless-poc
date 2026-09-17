@@ -91,6 +91,11 @@ If the name is missing or looks fake, say "there".
 - No data is not "out of stock". Say nothing about stock unless the page says something.
 - A restock date is the supplier's estimate. Say it as one.
 
+## Products
+
+- A garment type ("white tees", "hoodies") without a product is a request for options. Open the catalog, pick two or three that fit, price them in the quoter at the minimum, and show them.
+- If they also gave you text or artwork, create the proof on your best pick and mention the other two, priced, alongside it.
+
 ## Proofs
 
 - They've picked a product and told you what to put on it, and the deal has no proof yet: create a proof with the create-proof wizard. Product, colour, print type, and their exact text or artwork and placement in the description. Then open the deal and confirm the proof is there. Only after you've seen it may you tell the client a mockup is on the way. Don't use the Design Tool for this.
