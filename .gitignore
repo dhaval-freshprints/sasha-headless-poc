@@ -3,3 +3,4 @@
 auth/
 runs/
 __pycache__/
+.idea
