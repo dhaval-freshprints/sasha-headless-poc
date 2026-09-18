@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Design Tool proofs: what was found and what needs to be done</title>
+<style>
+  body { font: 15px/1.5 -apple-system, Segoe UI, Helvetica, Arial, sans-serif; max-width: 980px; margin: 2rem auto; padding: 0 1rem; color: #222; }
+  h1 { font-size: 1.6rem; } h2 { font-size: 1.25rem; margin-top: 2rem; border-bottom: 1px solid #ddd; }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; } th, td { border: 1px solid #ccc; padding: .4rem .6rem; vertical-align: top; text-align: left; }
+  th { background: #f3f3f3; } code { background: #f4f4f4; padding: 0 .25rem; }
+  .fact { color: #155724; } .assume { color: #856404; } .warn { background: #fff3cd; padding: .5rem .8rem; border-left: 4px solid #ffc107; }
+</style>
+</head>
+<body>
+<h1>Design Tool proofs: what was found and what needs to be done</h1>
+<p>Session TOOLSET01, 2026-09-18. Companion to <code>TOOLSET01_plan_three_kinds_of_knowledge.html</code>. Every statement below is a
+<span class="fact">Fact</span> with its proof, or is marked <span class="assume">(Assumption)</span>.</p>
+
+<h2>1. The ask</h2>
+<p>Today Sasha creates proofs only through the create-proof wizard (<code>/dashboard/proof/new</code>), which sends a request to the art team.
+The Design Tool is the second route: pick the product, put the design on the canvas, save. The proof is attached to the deal and is
+already <em>Done</em>. We want Sasha to be able to take that route.</p>
+
+<h2>2. What the Design Tool is (verified in QA)</h2>
+<p>Proof for every row: probe scripts in the session scratchpad (<code>probe_dt*.py</code>, <code>probe_dt_save.py</code>, <code>probe_after*.py</code>) and
+their screenshots (<code>dt_*.png</code>, <code>dts_*.png</code>, <code>proof_576430.png</code>). The one write made was on eval deal 303841.</p>
+<table>
+<tr><th>Topic</th><th>Fact</th><th>Proof</th></tr>
+<tr><td>Where it lives</td><td>A separate host, <code>https://dt-qa.internal-fp.com/</code>. Same login session; it opened logged in ("QT Qa Test").</td><td>Sidebar link "Design Tool" href on deal, proof and proofs-list pages; <code>dt_open.png</code>.</td></tr>
+<tr><td>Entry points</td><td>Proof page "Design in Design Tool" / "Revise in Design Tool" opens a new tab at <code>?proofItemId=N</code>. Hidden "Create in Design Tool" opens <code>?proofId=N</code> (adds an item to an existing proof). <code>?dealId=N</code> loads but prefills nothing. The deal page has no "design for this deal" entry. Proofs-list "Create Proof" goes to the wizard.</td><td>probe_dt.py, probe_dt4.py, probe_dt5.py (d), probe_dt6.py (a).</td></tr>
+<tr><td>What the tree sees</td><td>338 AX nodes, of which 6 are interactive on load (Qty, title box, Save, "+", user link, zoom slider). Left rail (Add Text, Upload, Designs...), print-type chips, method cards, "Change Product", colour tiles, product cards and "Switch to This" are all <code>DIV</code>s with no role. <code>read_page</code> and <code>find</code> cannot return them; <code>get_page_text</code> shows their labels.</td><td>probe_dt2.py: "AX nodes total: 338", "initial: 31 clickable-ish elements" all DIV/no role; tree output 6 lines.</td></tr>
+<tr><td>Product</td><td>"Change Product" opens a modal with a search box (placeholder <code>Try "T-Shirt"</code>). A style code works: NKDC1963 gave two cards. Clicking the card name opens a detail modal with "Switch to This". After that the right panel shows the new product.</td><td><code>dt_product_search.png</code>, <code>dt_product_picked2.png</code>, probe_dt8.py (C).</td></tr>
+<tr><td>Colour</td><td>Colour tiles in the product panel are DOM nodes (<code>data-testid="product-color-tile"</code>) with no name attribute. The name appears only as a hover tooltip, together with stock: "Black / Selling Out Fast in S". NKDC1963 has 20 tiles.</td><td>probe_dt_save.py output "1) colour tiles: ['Anthracite…', 'Black…', …]".</td></tr>
+<tr><td>Text</td><td>"Add Text" puts a "TEXT" object on the canvas (Fabric.js, two <code>&lt;canvas&gt;</code> elements). Editing: double-click the object, select all, type. The words go into Fabric's hidden textarea. The object's position is only visible in a screenshot; the size label ("5.93"w x 1.72"h - 11.39" from Collar") is drawn, not in the DOM. The Text Tool panel does expose Width, Height, Distance from Collar and Rotate as <code>spinbutton</code>s and Font as a <code>combobox</code>, so placement and font can be set by <code>form_input</code>.</td><td><code>dt_text_typed.png</code> (Droid rendered), <code>dts_text_added.png</code>, probe_dt2.py tree after Add Text.</td></tr>
+<tr><td>Save</td><td>The Save button opens a menu: Design Title (text), Deal (react-select; searches by deal title or id, options take about 5 s and show "Loading…" first), Client (auto-filled once the deal is picked), Send a Copy to Client Yes/No (<strong>default Yes</strong>), Est. Quantity, Price Per Item, Block Checkout, Save. Save with an empty canvas does nothing except a chat message "Add art to save your design". A successful save shows a "Design Saved" toast and the URL becomes <code>?proofItemId=N</code>.</td><td><code>dts_save_menu.png</code>, <code>dts_after_save.png</code>, probe_dt7.py (1), probe_dt8.py (B).</td></tr>
+<tr><td>Result on the CRM</td><td>Proof 576430 on deal 303841 (ChristopherNguyenDeal). Proofs list: status <strong>Done</strong>. Proof page: "Original Proof" with a green check, mockup image with "Droid" on the black polo, Nike NKDC1963, Black, "Screen Print: Standard *assumed", 1 colour, Art Description "Front" only, Custom Fonts "Super Dream", price $65.62 x 12, "Revise in Design Tool" offered.</td><td>probe_after2.py, probe_after3.py, <code>proof_576430.png</code>.</td></tr>
+<tr><td>Hazard: chat overlay</td><td>A "Need help?" chat panel expands by itself on stock warnings and covers the left rail. A click on "Add Text" then times out (Playwright: 30 s, intercepted). It has a "Collapse" button.</td><td><code>dts_text_added.png</code> from the first save attempt; probe_dt_save.py first run traceback.</td></tr>
+<tr><td>Hazard: licensing</td><td>The saved proof shows Greek Licensing "Student Government Association / No Marks" and Collegiate Licensing "Pepperdine University / No Marks" that nobody chose. <span class="assume">(Assumption)</span> They come from the client's record. The wizard makes these an explicit required choice; the Design Tool does not.</td><td>proof 576430 page text.</td></tr>
+<tr><td>Hazard: no words for the art team</td><td>The proof's Art Description is just "Front". The client's words exist only in the mockup image.</td><td>proof 576430 page text.</td></tr>
+</table>
+
+<h2>3. Why Sasha cannot do it today</h2>
+<ol>
+<li><span class="fact">Fact</span> <code>navigate</code> refuses the host: <code>config.ALLOWED_HOSTS</code> is the FP host, the login host and www.freshprints.com (config.py lines 28-35). <code>dt-qa.internal-fp.com</code> is not in it.</li>
+<li><span class="fact">Fact</span> The controls are role-less DIVs, so <code>find</code>/<code>read_page</code> return nothing for "Add Text", "Change Product", "Screen Print", "Switch to This", the colour tiles. The model would have to screenshot and click coordinates for every one of them.</li>
+<li><span class="fact">Fact</span> <code>hover</code> returns only "Hovered ref_N." (toolset_executor.py line 349-355); tooltip text is not reported, so colour names are unreadable without a screenshot per tile.</li>
+<li><span class="fact">Fact</span> <code>form_input</code> on a combobox waits 8 x 300 ms for options (toolset_executor.py <code>_wait_for_options</code>); the Deal box needs about 5 s and shows "Loading…" first.</li>
+<li><span class="fact">Fact</span> playbook.md line 103 says "Don't use the Design Tool for this." workplace.md line 33 says the Design Tool "is a canvas editor. The proof's text cannot be read from the tree there." Both are true today and both steer away.</li>
+</ol>
+
+<h2>4. What needs to be done, by home</h2>
+<p>Same rule as the main plan: widget mechanics in the executor, page facts in workplace.md, judgment in playbook.md, and an eval ask to say when it is done.</p>
+
+<h3>4a. Executor (widget mechanics, nothing page-specific)</h3>
+<table>
+<tr><th>#</th><th>Widget class</th><th>Change</th><th>Size</th></tr>
+<tr><td>I</td><td>Role-less clickable elements</td><td><code>_collect_nodes</code> adds DOM-only nodes for visible elements that are clickable but have no AX node: <code>tabindex="0"</code>, <code>cursor: pointer</code>, or a class containing <code>btn</code>/<code>button</code>, with their visible text as the name. They print as <code>button "Add Text" [ref_N]</code> and are clickable by ref. Refs for them come from <code>DOM.requestNode</code> on the JS handle instead of the AX <code>backendDOMNodeId</code>; <code>_call_on_ref</code> already works on backend node ids. This is the bulk of the work and it also covers the catalog and any other React page.</td><td>~80 lines</td></tr>
+<tr><td>C</td><td>Tooltip-only names</td><td><code>hover</code> returns the text that appeared after hovering (visible-text diff before/after). Plus: when <code>read_page</code>/<code>find</code> meets a run of unnamed clickable tiles under one parent, hover each once and use the tooltip as the name (bounded: 20 tiles x 350 ms = 7 s). The stock-checker swatches get the same fix for free.</td><td>~50 lines</td></tr>
+<tr><td>A'</td><td>Slow async comboboxes</td><td><code>_wait_for_options</code> keeps waiting while the only option says "Loading…", up to ~8 s.</td><td>~10 lines</td></tr>
+<tr><td>J</td><td>Overlays that cover controls</td><td><code>Browser.dismiss_toasts</code> also collapses the help chat (its "Collapse" button) so rail clicks are not intercepted. <code>click</code> reports "click intercepted by &lt;overlay&gt;" instead of hanging when Playwright cannot reach the target.</td><td>~15 lines</td></tr>
+<tr><td>K</td><td>Canvas text</td><td>No executor change is possible for finding the object: there is no Fabric global (probe_dt8.py D) and the size label is drawn. The sequence <code>double_click</code> (coordinate) → <code>key ctrl+a</code> → <code>type</code> already works with the members we have. <code>type</code>'s read-back of the hidden textarea was "Droid" once and "x" once, so the verification is a <code>zoom</code> on the object, not the read-back. <span class="assume">(Assumption)</span> "x" came from a double-click that landed beside the object.</td><td>0</td></tr>
+<tr><td>—</td><td>Config</td><td>Add the Design Tool host to the default allowed hosts (derive from <code>FP_BASE_URL</code>'s host or add <code>DT_BASE_URL</code> to <code>.env</code>). <span class="assume">(Assumption)</span> prod is <code>dt.internal-fp.com</code>; verify before prod.</td><td>~5 lines</td></tr>
+</table>
+
+<h3>4b. workplace.md (facts)</h3>
+<p>One new section "Design Tool (dt-qa.internal-fp.com)" of about 20 lines, all from section 2: the URL and the three entry URLs; new tab; the rail; Change Product → search box → card → "Switch to This"; colour tiles named by tooltip and carrying stock; Add Text → double-click → type; Size &amp; Placement spinbuttons and what "Distance from Collar" means; the Save menu fields, that the Deal box searches by title or id and fills Client, that Send a Copy defaults to Yes, that an empty canvas cannot be saved; what the saved proof looks like (Done, Original Proof, Art Description "Front", licensing defaulted, "Revise in Design Tool"). Replace line 33 with the fact that the tool is now usable and how.</p>
+
+<h3>4c. playbook.md (judgment) — needs your decision</h3>
+<p>Line 103 currently routes every new proof to the wizard. The Design Tool route has to be chosen by rule, and the rule is judgment, not mechanics. Proposal:</p>
+<ul>
+<li>Words only (a name, a slogan, a date), a font or a colour, a placement the client named: Design Tool. The proof is Done at once and the client can see it in the same reply.</li>
+<li>Artwork, a logo, an uploaded file, a school's marks, or anything Sasha would have to draw: the wizard, so the art team makes it.</li>
+<li>In the Save menu, Send a Copy to Client is No. Sasha writes the reply herself.</li>
+<li>Same rule as before: open the deal and see the proof before saying a mockup is ready. Now it can say "here is the mockup" instead of "a mockup is on the way".</li>
+<li>Revisions on a Design Tool proof go through "Revise in Design Tool", not the revision form, because the words are on the canvas, not in the description.</li>
+</ul>
+<div class="warn"><strong>Two things to confirm before this ships.</strong> (1) Is a Design Tool proof with Art Description "Front" and no words acceptable for production, or must Sasha also add the words to the proof description afterwards? (2) The licensing defaults on the saved proof (Student Government Association, Pepperdine University) were not chosen by anyone. If they can be wrong, Sasha must set them, and where they are set in the tool is not yet mapped.</div>
+
+<h3>4d. Evals</h3>
+<ul>
+<li>Ask 11: same words as ask 8 ("Nike polos in black, print Droid on the chest") on a fresh Leads deal, expected route Design Tool. Checks: visited <code>dt-qa</code>; proofs +1; new check <code>proof_status: Done</code> read from the proofs list row (the deal-page snapshot does not show status); reply matches "mockup|proof"; sign-off; <code>max_rounds</code> 30.</li>
+<li>Ask 8 stays as the wizard case, with artwork instead of words so the two routes are distinguishable.</li>
+<li>Eval deals: the asks.json note lists 303842/303844/303845 as the next ChristopherNguyen deals; they are BobbyEvansDeal, GloriaWhiteDeal and MarkMartinDeal (probe_after3.py). Only 303841 is ChristopherNguyenDeal, and it now has two proofs (576424 from pass 5, 576430 from this test). The note needs correcting and a fresh deal picking.</li>
+</ul>
+
+<h2>5. Order and size</h2>
+<ol>
+<li>Config host + executor I (role-less clickables) — without these nothing else can be exercised. Test with a probe that reads the Design Tool tree and clicks "Add Text" by ref.</li>
+<li>Executor C (tooltips) and J (overlay), A' (loading wait).</li>
+<li>workplace.md section, playbook.md rule, ask 11 + <code>proof_status</code> check.</li>
+<li>Run ask 11 three times; then the full set to confirm asks 5, 8 and 10 did not move.</li>
+</ol>
+<p>Total executor change about 160 lines in one file; prompts about 25 lines; eval about 30 lines. <span class="assume">(Assumption)</span> A Design Tool proof will take 20–30 rounds and cost about twice ask 8 ($0.60–0.80 on Opus 5), because the text object and the tiles need screenshots.</p>
+
+<h2>5a. Implementation log (2026-09-18)</h2>
+<p>Decisions from the owner: a Done proof with Art Description "Front" and no words is acceptable; licensing is not chosen by Sasha (the tool does not ask for it).</p>
+<table>
+<tr><th>Home</th><th>Done</th><th>Proof</th></tr>
+<tr><td>Executor</td><td>Class I: <code>CLICKABLE_JS</code> tags role-less clickables, <code>_clickable_dom_nodes</code> lists them as <code>button "..."</code> with refs from <code>DOM.describeNode</code>; containers holding two named clickables are dropped. Class C: <code>hover</code> reports the tooltip; unnamed tiles are named by hovering once per page (<code>TabRefs.tooltip_names</code>, cap 24). <code>_wait_for_options</code> waits through "Loading…" (up to 7.5 s) and accepts role-less menu entries whose class says option (<code>_is_option</code>). <code>find</code> gives +4 to an exact-name match. "New on the page" collapses repeats (<code>_collapse_repeats</code>). <code>Browser.dismiss_toasts</code> collapses help-chat overlays and no longer clicks a bare <code>aria-label=Close</code> (that was closing the product picker). <code>config.DT_BASE_URL</code> host allowed.</td><td>toolset_executor.py, browser.py, config.py; scratchpad test_dt_executor2.py: first read 7.3 s then 0.8 s, product pick, colour, Save form and Deal select all by ref.</td></tr>
+<tr><td>workplace.md</td><td>New "Design Tool" section, Pages row, proof-page line 33 replaced.</td><td>prompts/workplace.md</td></tr>
+<tr><td>playbook.md</td><td>Line 103 split: words only → Design Tool, artwork → wizard, copy to client No, confirm on the deal first; Design Tool revisions via "Revise in Design Tool"; a product going on a proof this turn is not priced in the quoter.</td><td>prompts/playbook.md</td></tr>
+<tr><td>Evals</td><td>Ask 11 (Design Tool, words only, cap 30) with the new <code>proof_status</code> check read from the proofs list; ask 8 moved to deal 303844 with artwork wording.</td><td>evals/asks.json, evals/run.py</td></tr>
+</table>
+<p><strong>Run 1</strong> (deal 303845): proof 576433 created, Done, "Droid" centred 3" below the collar on the black polo, copy to client No, reply correct with the proof's price. Every check passed except the cap: 35 rounds, 72 calls, 18 images, 353 s, $1.20. Six rounds were a catalog + quoter detour before the tool (playbook line 68 asked for it; the new pricing line removes it), one round lost to a stale ref on the Yes/No buttons, which re-render on every Save-form change.</p>
+
+<p><strong>Run 2</strong> (deal 303842, after the pricing line): <strong>PASS</strong>. Proof 576434, Done, "Droid" centred 3" below the collar, copy to client No. 29 rounds, 60 calls, 17 images, 281 s, $0.92. Three rounds went to the Distance from Collar box: <code>form_input</code> reported "3" but the value reverted until the field lost focus. <code>_set_text</code> now blurs the field after typing so number boxes apply their value.</p>
+
+<h2>6. Not in this plan</h2>
+<ul>
+<li>Uploads, clipart, Image AI, Greek letters, Decorate: not probed.</li>
+<li>Text colour: the palette is DIV tiles by hex plus a "e.g. 7428 c" text box (in the tree). <span class="assume">(Assumption)</span> it accepts a Pantone code. Not tested.</li>
+<li>Where licensing is set inside the tool: not found.</li>
+</ul>
+
+<h2>Assumptions (collected)</h2>
+<ul>
+<li>Licensing defaults on the saved proof come from the client record. Confirm by saving on a client with no org; break if they differ.</li>
+<li>Prod Design Tool host is <code>dt.internal-fp.com</code>. Confirm from the prod sidebar link.</li>
+<li>The "x" read-back came from a missed double-click. Confirm by re-running the text step with the object's real coordinates.</li>
+<li>Rounds and cost for ask 11 are 20–30 and about 2x ask 8. Measured by the first eval run.</li>
+<li>The "e.g. 7428 c" box accepts a Pantone code. Not tested.</li>
+</ul>
+</body>
+</html>

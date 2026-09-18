@@ -11,6 +11,7 @@ If a line needs the words "always", "never" or "prefer", it belongs in playbook.
 | Proof | `/dashboard/proof/<proof_id>` | One design on one product. Price at a quantity, delivery estimate, print details, revisions |
 | Proof revision | `/dashboard/proof/<proof_id>?proofItemId=<item>&proofRevisionId=<rev>` | A specific version of a proof item |
 | Create proof | `/dashboard/proof/new` | Ask the art team for a new mockup on a product the deal doesn't have yet |
+| Design Tool | `https://dt-qa.internal-fp.com/` | Build a mockup yourself on a product and save it as a finished proof on the deal, no art team |
 | Quoter | `/dashboard/quoter` | Price any product / print method / quantity without touching a proof |
 | Stock checker | `/dashboard/stock-checker` | Live stock by style, color, size |
 | Proofs list | `/dashboard/proofs` | All proofs, newest first. The search box filters by proof id, proof name or client name, not by deal. `?search=` in the URL does nothing |
@@ -30,7 +31,7 @@ If a line needs the words "always", "never" or "prefer", it belongs in playbook.
 - Print details are under "Location & Decorations": print type, number of colors, art description per location.
 - Revision chips at the top ("Original Proof", "Revision 1", ...) switch which version is shown.
 - "Or Submit a Revision Request" (plain text, next to "Revise in Design Tool") opens the revision form. It is hidden while a revision is already pending.
-- "Design in Design Tool" opens the Design Tool in a new tab. It is a canvas editor. The proof's text cannot be read from the tree there.
+- "Design in Design Tool" / "Revise in Design Tool" opens the Design Tool (below) in a new tab on this proof.
 
 ## Create proof wizard (/dashboard/proof/new)
 
@@ -58,6 +59,21 @@ Step 3, Print Info & Price Estimate (same layout as the revision form):
 - Estimate Quantity is required. Use the client's quantity, or the MOQ if they gave none.
 - `button "Submit"` at the bottom right stays disabled until the description, both licensing boxes and Estimate Quantity are filled. "Another Proof Item" adds a second product to the same proof.
 - After Submit, the deal page shows the new proof under its proof count and the proof page shows "Original Proof" with a pending status.
+
+## Design Tool (https://dt-qa.internal-fp.com/)
+
+A canvas editor. Saving creates a proof on the deal in one step: the proof is Done at once, nothing goes to the art team. Same login as the CRM; it is a different host, so open it with `navigate`.
+
+- The controls are chips and tiles; the tree lists them as `button "..."`. The garment and the design are on a canvas that is not in the tree: a screenshot shows it.
+- A "Need help?" chat panel at the bottom left opens by itself on stock warnings and covers the left rail. `button "Collapse"` closes it.
+- Left rail: `button "Add Text"`, `button "Upload"`, `button "Designs"` (a gallery of past designs; ignore it), `button "Clipart & logos"`, `button "Greek"`.
+- Right panel: the current product (name, style code, minimum), its colour tiles, Print Type tabs (Screen Print, Embroidery, Digital, ...) and method cards (Standard, Puff Ink, ...), all buttons named by their label. A new design starts on a Comfort Colors tee.
+- Change product: `button "Change Product"` opens a picker. Its search box is `textbox "Try "T-Shirt""` (the other search box, `textbox "Try "Alpha""`, is the designs gallery). Type a style code with `form_input`, e.g. NKDC1963; each result is a `button` named by the product, e.g. `button "Nike Dri-FIT Micro Pique 2.0 Polo"`. Click it, then `button "Switch to This"`. The picker closes and the right panel shows the new product.
+- Colour: the tiles under the product name are `button "<Colour> / <stock note>"`, e.g. `button "Black / Selling Out Fast in S"`. Click one to set the garment colour. The first read of a page with tiles takes a few seconds.
+- Text: `button "Add Text"` puts a placeholder "TEXT" object on the garment, about 11 inches below the collar. To write in it: take a screenshot, `double_click` the object by coordinate, `key ctrl+a`, `type` the words. The Text Tool panel on the left then shows `combobox "Font"`, format buttons, a colour palette, and `spinbutton "Width"`, `"Height"`, `"Distance from Collar"` and `"Rotate"` in inches; `form_input` on Distance from Collar moves the text (about 3 for the chest). The panel never shows the words; only the canvas does. `zoom` on the object to read them back.
+- Save: `button "Save"` at the top right opens a form: `textbox "Design Title"`, `combobox "Deal"` (type the deal title or id with `form_input`; the options take a few seconds), `textbox "Client"` (fills itself once the deal is chosen), "Send a Copy to Client" as `button "Yes"` / `button "No"` (starts on Yes; Yes emails the client), Est. Quantity, Price Per Item, and a second `button "Save"` at the bottom of the form. That bottom Save stays disabled while the canvas is empty.
+- After Save a "Design Saved" toast shows and the URL gains `?proofItemId=<n>`. The proof is on the deal page under its proof count, its status is Done, and its page shows "Original Proof" with the mockup image, the product and colour, the print method and the font. Its Art Description says only the location ("Front"); the words are only in the image. Licensing shows whatever the client record holds; the tool asks for none.
+- Changes to a Design Tool proof: "Revise in Design Tool" on the proof page, which opens the tool on that proof; Save there offers "Save as new revision".
 
 ## Stock checker (/dashboard/stock-checker)
 

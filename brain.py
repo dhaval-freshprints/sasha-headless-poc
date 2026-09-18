@@ -41,9 +41,12 @@ the message to the client.
 SYSTEM_PROMPT = f"{IDENTITY}\n\n---\n\n{WORKPLACE}\n\n---\n\n{PLAYBOOK}"
 
 NUDGE = (
-    "You stopped without replying. Call `reply_to_client` now with your message to the client. "
-    "If you could not complete something, say so in the message."
+    "That came back as plain text, not a tool call, so nothing was executed. If you meant to act, "
+    "call the tool. When the work is done, call `reply_to_client` with your message to the client; "
+    "if you could not complete something, say so in the message."
 )
+MAX_NUDGES = 3
+NO_REPLY = "(no reply was sent: the turn ended without reply_to_client)"
 
 
 @dataclass
@@ -106,7 +109,7 @@ class Brain:
 
         result = RunResult(reply="")
         turn_started = time.monotonic()
-        nudged = False
+        nudges = 0
 
         for batch in range(config.MAX_STEPS):
             self.on_event("thinking", batch)
@@ -119,12 +122,13 @@ class Brain:
             messages.append(self.llm.assistant_message(reply))
 
             if not reply.tool_calls:
-                if not result.reply and not nudged:
-                    messages.append(self.llm.user_message(NUDGE))
-                    nudged = True
-                    continue
-                result.reply = reply.text
-                break
+                # Text instead of a tool call. Only reply_to_client counts as a reply: text that
+                # looks like a tool call must never reach the client. Nudge, then give up.
+                if result.reply or nudges >= MAX_NUDGES:
+                    break
+                messages.append(self.llm.user_message(NUDGE))
+                nudges += 1
+                continue
 
             browser_started = time.monotonic()
             blocks, finished = self._run_batch(batch, reply.tool_calls, result)
@@ -139,7 +143,7 @@ class Brain:
                 break
 
         result.seconds = time.monotonic() - turn_started
-        memory.append_transcript(deal_id, client_message, result.reply)
+        memory.append_transcript(deal_id, client_message, result.reply or NO_REPLY)
         self._write_run_json(deal_id, client_message, result)
         return result
 

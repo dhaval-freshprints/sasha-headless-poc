@@ -141,8 +141,10 @@ class Browser:
             pass
 
     def dismiss_toasts(self, page: Page) -> None:
-        """Notification banners cover controls in screenshots. Close the ones we can."""
-        for selector in [".toast-close-button", "[aria-label='Close']", ".toast .close", ".notification .close"]:
+        """Notification banners and help-chat panels cover controls. Close the ones we can.
+        Only toast-like containers: a bare aria-label=Close would also close modals the model opened."""
+        for selector in [".toast-close-button", "[class*='toast'] [aria-label='Close']", ".toast .close",
+                         ".notification .close", "[class*='overlay'] button:has-text('Collapse')"]:
             try:
                 found = page.locator(selector)
                 for i in range(min(found.count(), 3)):

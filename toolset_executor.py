@@ -125,6 +125,49 @@ SET_SELECT_JS = """function(value) {
 
 READ_VALUE_JS = "function() { " + ELEMENT_JS + " return (e.isContentEditable ? e.innerText : e.value) || ''; }"
 IS_CHECKED_JS = "function() { " + ELEMENT_JS + " return !!e.checked; }"
+BLUR_JS = "function() { " + ELEMENT_JS + " if (e.blur) e.blur(); }"
+# Elements the accessibility tree does not list as controls but the page treats as clickable:
+# role-less DIVs with a pointer cursor, a tabindex or a button class (React chips, tiles, cards).
+# Each one is tagged with data-sasha-click=<index> so CDP can find its DOM node afterwards.
+CLICKABLE_JS = """() => {
+    const skipTags = new Set(['A', 'BUTTON', 'INPUT', 'SELECT', 'TEXTAREA', 'LABEL', 'OPTION', 'HTML', 'BODY', 'CANVAS', 'SVG', 'PATH']);
+    const found = [];
+    for (const e of document.querySelectorAll('*')) {
+        e.removeAttribute('data-sasha-click');
+        if (skipTags.has(e.tagName) || e.getAttribute('role') || e.closest('a, button')) continue;
+        const r = e.getBoundingClientRect();
+        if (r.width === 0 || r.height === 0 || !e.checkVisibility({checkVisibilityCSS: true})) continue;
+        const cls = (e.className || '').toString();
+        const clickable = e.hasAttribute('tabindex') || /(^|[\\s_-])(btn|button)([\\s_-]|$)/.test(cls)
+            || getComputedStyle(e).cursor === 'pointer';
+        if (!clickable) continue;
+        const text = (e.innerText || '').replace(/\\s+/g, ' ').trim();
+        if (text.length > 120) continue;                     // a whole card or panel, not a control
+        if (!text && !e.hasAttribute('tabindex') && !e.dataset.testid) continue;
+        found.push({el: e, text, hint: [e.dataset.testid, cls.split(' ')[0]].filter(Boolean).join(' ')});
+    }
+    // a wrapper and the label inside it share one text: keep the inner one.
+    // a container holding two or more named clickables (a card grid) is not a control itself.
+    const keep = found.filter(f => {
+        const inner = found.filter(g => g !== f && f.el.contains(g.el));
+        if (inner.some(g => g.text === f.text)) return false;
+        return inner.filter(g => g.text).length < 2;
+    });
+    keep.forEach((f, i) => f.el.setAttribute('data-sasha-click', String(i)));
+    return keep.map(f => ({text: f.text, hint: f.hint}));
+}"""
+
+# The tooltip showing right now, if any. Colour swatches and icon buttons carry their name here.
+TOOLTIP_JS = """() => {
+    const tips = [...document.querySelectorAll('[role=tooltip], [class*=tooltip]')]
+        .filter(e => e.getBoundingClientRect().width > 0 && (e.innerText || '').trim());
+    if (!tips.length) return '';
+    tips.sort((a, b) => b.innerText.length - a.innerText.length);
+    return tips[0].innerText.replace(/\\s*\\n+\\s*/g, ' / ').trim().slice(0, 80);
+}"""
+
+MAX_TOOLTIP_HOVERS = 24      # unnamed tiles named by hovering, per read of the page
+
 CENTER_JS = """function() {
     """ + ELEMENT_JS + """
     if (e.scrollIntoViewIfNeeded) e.scrollIntoViewIfNeeded(); else e.scrollIntoView({block: 'center'});
@@ -184,6 +227,8 @@ class Node:
                 score += 2
             elif word in value:
                 score += 1
+        if words and " ".join(words) == _short(self.name, 80).lower():
+            score += 4        # the whole query is this element's name
         if wanted_role and self.role == wanted_role:
             score += 2
         if score and self.interactive:
@@ -199,6 +244,7 @@ class TabRefs:
         self.ref_to_node = {}
         self.node_to_ref = {}
         self.last_read = []
+        self.tooltip_names: dict[int, str] = {}   # unnamed tiles, named once by hovering
 
     def ref_for(self, backend_id: int) -> str:
         if backend_id not in self.node_to_ref:
@@ -352,7 +398,11 @@ class ToolsetExecutor:
         x, y = self._point(tab_id, args["target"])
         page.mouse.move(x, y)
         self.browser.settle(page)
-        return f"Hovered {self._describe(args['target'])}."
+        text = f"Hovered {self._describe(args['target'])}."
+        tip = page.evaluate(TOOLTIP_JS)
+        if tip:
+            text += f' Tooltip: "{tip}"'
+        return text
 
     def scroll(self, args: dict) -> str:
         tab_id = self._tab(args)
@@ -469,10 +519,11 @@ class ToolsetExecutor:
 
     def _wait_for_options(self, tab_id: str) -> list[Node]:
         page = self._page(tab_id)
-        for _ in range(8):
+        for _ in range(25):
             page.wait_for_timeout(300)
-            options = [n for n in self._collect_nodes(tab_id, "interactive", 15, None) if n.role == "option"]
-            if options:
+            options = [n for n in self._collect_nodes(tab_id, "interactive", 15, None) if _is_option(n)]
+            still_loading = options and all("loading" in n.name.lower() for n in options)
+            if options and not still_loading:
                 return options
         return []
 
@@ -482,6 +533,7 @@ class ToolsetExecutor:
         page.keyboard.press("ControlOrMeta+a")
         page.keyboard.press("Backspace")
         page.keyboard.type(text, delay=10)
+        self._call_on_ref(tab_id, ref, BLUR_JS)      # number boxes apply their value on blur
         now = self._call_on_ref(tab_id, ref, READ_VALUE_JS)
         return f"Filled {ref} with {len(text)} characters. Now contains: {now[:80]!r}"
 
@@ -593,8 +645,63 @@ class ToolsetExecutor:
                     walk(child, next_depth, name if printable else parent_name)
 
         walk(root, 0, "")
+        if not root_ref:
+            collected.extend(self._clickable_dom_nodes(tab_id, {n.backend_id for n in collected}))
         refs.last_read = collected
         return collected
+
+    def _clickable_dom_nodes(self, tab_id: str, known: set[int]) -> list[Node]:
+        """Role-less elements the page treats as clickable (React chips, tiles, cards). The
+        accessibility tree skips them; they are listed as buttons, named by text or tooltip."""
+        refs = self._refs_for(tab_id)
+        try:
+            items = self._page(tab_id).evaluate(CLICKABLE_JS)
+            backend_ids = self._backend_ids_by_index(tab_id, "[data-sasha-click]", "data-sasha-click")
+        except Exception:
+            return []
+        nodes = []
+        for index, item in enumerate(items):
+            backend_id = backend_ids.get(index)
+            if backend_id is None or backend_id in known:
+                continue
+            nodes.append(Node(ref=refs.ref_for(backend_id), role="button", name=item["text"],
+                              depth=0, backend_id=backend_id, hints=item["hint"]))
+        self._name_by_tooltip(tab_id, [n for n in nodes if not n.name])
+        return nodes
+
+    def _backend_ids_by_index(self, tab_id: str, selector: str, attribute: str) -> dict[int, int]:
+        """DOM backend node ids of the elements matching selector, keyed by their integer attribute."""
+        root = self._cdp_send(tab_id, "DOM.getDocument", {"depth": 0})["root"]["nodeId"]
+        node_ids = self._cdp_send(tab_id, "DOM.querySelectorAll", {"nodeId": root, "selector": selector})["nodeIds"]
+        found = {}
+        for node_id in node_ids:
+            node = self._cdp_send(tab_id, "DOM.describeNode", {"nodeId": node_id})["node"]
+            attrs = node.get("attributes", [])
+            found[int(attrs[attrs.index(attribute) + 1])] = node["backendNodeId"]
+        return found
+
+    def _name_by_tooltip(self, tab_id: str, nodes: list[Node]) -> None:
+        """Unnamed tiles (colour swatches) show their name only on hover. Hover each once per page."""
+        if not nodes:
+            return
+        refs = self._refs_for(tab_id)
+        page = self._page(tab_id)
+        for node in nodes[:MAX_TOOLTIP_HOVERS]:
+            if node.backend_id not in refs.tooltip_names:
+                refs.tooltip_names[node.backend_id] = self._tooltip_after_hover(tab_id, node.backend_id, page)
+            node.name = refs.tooltip_names[node.backend_id]
+        page.mouse.move(1, 1)
+
+    def _tooltip_after_hover(self, tab_id: str, backend_id: int, page: Page) -> str:
+        try:
+            center = self._call_on_node(tab_id, backend_id, CENTER_JS)
+            if center is None:
+                return ""
+            page.mouse.move(float(center[0]), float(center[1]))
+            page.wait_for_timeout(250)
+            return page.evaluate(TOOLTIP_JS) or ""
+        except Exception:
+            return ""
 
     def _interactive_ids(self, tab_id: str) -> set[int]:
         """The interactive elements on the page right now, so an action can report what it revealed."""
@@ -613,9 +720,9 @@ class ToolsetExecutor:
             return ""
         if not nodes:
             return ""
-        lines = [n.line().strip() for n in nodes[:10]]
-        more = f" (+{len(nodes) - 10} more; use find to narrow)" if len(nodes) > 10 else ""
-        return " New on the page: " + " | ".join(lines) + more
+        lines = _collapse_repeats([n.line().strip() for n in nodes])
+        more = f" (+{len(lines) - 10} more; use find to narrow)" if len(lines) > 10 else ""
+        return " New on the page: " + " | ".join(lines[:10]) + more
 
     def _near_label(self, tab_id: str, backend_id: int) -> tuple[str, str]:
         try:
@@ -691,7 +798,7 @@ def _image_block(png: bytes) -> dict:
 
 
 def _best_option(options: list, text: str):
-    """Exact name first, then a name containing the text, then the first option shown."""
+    """Exact name first, then a name containing the text. Nothing else: a wrong pick is worse than an error."""
     wanted = text.strip().lower()
     for option in options:
         if option.name.strip().lower() == wanted:
@@ -701,9 +808,29 @@ def _best_option(options: list, text: str):
     for option in real:
         if wanted in option.name.lower():
             return option
-    if real:
-        return real[0]
-    raise ValueError(f"No existing option matches {text!r}; the only choice is {options[0].name!r}, which would create a new entry.")
+    offered = [o.name for o in options][:12]
+    raise ValueError(f"No existing option matches {text!r}. The box offers: {offered}. Nothing was selected.")
+
+
+def _is_option(node: Node) -> bool:
+    """A dropdown choice: a real option node, or a role-less menu entry whose class says option."""
+    return node.role == "option" or (node.role == "button" and "option" in node.hints.lower())
+
+
+def _collapse_repeats(lines: list[str]) -> list[str]:
+    """Ten identical 'button "Like"' entries (one per card) become one line with a count."""
+    counts: dict[str, int] = {}
+    for line in lines:
+        key = line.split(" [ref_")[0]
+        counts[key] = counts.get(key, 0) + 1
+    out, done = [], set()
+    for line in lines:
+        key = line.split(" [ref_")[0]
+        if key in done:
+            continue
+        done.add(key)
+        out.append(line if counts[key] == 1 else f"{line} (x{counts[key]})")
+    return out
 
 
 def _short(text: str, limit: int) -> str:

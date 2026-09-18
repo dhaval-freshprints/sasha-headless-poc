@@ -29,7 +29,7 @@ deal_id (+ optional client message)
 | `toolset_executor.py` | runs each toolset member against Playwright; owns refs and tab ids |
 | `browser.py` | the Chromium session and tabs |
 | `brain.py` | Sasha Brain — the loop + system prompt |
-| `prompts/workplace.md` | the map: pages, URLs, how each form works. Facts only, no opinions |
+| `prompts/workplace.md` | the map: pages, URLs, how each form works, incl. the Design Tool. Facts only, no opinions |
 | `prompts/playbook.md` | how Sasha works and writes: judgment, voice, outreach, client reply |
 | `run_cli.py` | terminal runner |
 | `api.py` | `POST /simulate`, `POST /reset` |
@@ -60,6 +60,10 @@ element tagged `[ref_N]`), `find` (a query, up to 20 matching elements), `get_pa
 (visible text, exact), `screenshot`, `zoom`. It acts by ref (`left_click`, `form_input`,
 `scroll_to`) or by viewport coordinate when a control has no name (canvas, icon buttons).
 Refs live until the tab navigates; a stale ref returns an error and the model re-reads.
+
+Controls the accessibility tree does not list (role-less DIVs with a pointer cursor, a tabindex
+or a button class: React chips, tiles, cards, the Design Tool's whole UI) are added to the tree
+as `button "<text>"`; unnamed tiles are named by their hover tooltip, hovered once per page.
 
 One model turn can carry several calls. They run in order and stop at the first failure;
 the rest are answered `Not executed: an earlier action in this turn failed.`

@@ -11,6 +11,7 @@ load_dotenv()
 ROOT = Path(__file__).parent
 
 FP_BASE_URL = os.environ["FP_BASE_URL"].rstrip("/")
+DT_BASE_URL = os.environ.get("DT_BASE_URL", "https://dt-qa.internal-fp.com").rstrip("/")   # the Design Tool
 FP_LOGIN_URL = os.environ["FP_LOGIN_URL"]
 FP_USER = os.environ["FP_USER"]
 FP_PASSWORD = os.environ["FP_PASSWORD"]
@@ -28,6 +29,7 @@ READ_PAGE_MAX_CHARS = 50000   # the toolset contract caps read_page output here
 _default_hosts = {
     urlparse(FP_BASE_URL).hostname,
     urlparse(FP_LOGIN_URL).hostname,
+    urlparse(DT_BASE_URL).hostname,
     "www.freshprints.com",
 }
 ALLOWED_HOSTS = {

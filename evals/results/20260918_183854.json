@@ -1,0 +1,83 @@
+[
+  {
+    "id": 11,
+    "deal": 303842,
+    "message": "Let's go with Nike polos in black, and print Droid on the chest.",
+    "passed": true,
+    "failures": [],
+    "rounds": 29,
+    "calls": 60,
+    "images": 17,
+    "stale_refs": 0,
+    "halts": 0,
+    "seconds": 281,
+    "fresh_tokens": 56949,
+    "cached_tokens": 997359,
+    "output_tokens": 5607,
+    "cost_usd": 0.924,
+    "before": {
+      "proofs": [],
+      "statuses": {
+        "576433": "Done",
+        "576432": "Done",
+        "576431": "Done",
+        "576430": "Done",
+        "576429": "Done",
+        "576428": "Done",
+        "576427": "Done",
+        "576426": "Done",
+        "576425": "Done",
+        "576424": "In Progress",
+        "576423": "In Progress",
+        "576422": "In Progress",
+        "576421": "Done",
+        "576420": "Done",
+        "576419": "Done",
+        "576418": "In Progress",
+        "576417": "In Progress",
+        "576416": "Done",
+        "576415": "Done",
+        "576414": "Done",
+        "576413": "Done",
+        "576412": "Done",
+        "576411": "Done",
+        "576410": "In Progress",
+        "576409": "In Progress"
+      }
+    },
+    "after": {
+      "proofs": [
+        "576434"
+      ],
+      "statuses": {
+        "576434": "Done",
+        "576433": "Done",
+        "576432": "Done",
+        "576431": "Done",
+        "576430": "Done",
+        "576429": "Done",
+        "576428": "Done",
+        "576427": "Done",
+        "576426": "Done",
+        "576425": "Done",
+        "576424": "In Progress",
+        "576423": "In Progress",
+        "576422": "In Progress",
+        "576421": "Done",
+        "576420": "Done",
+        "576419": "Done",
+        "576418": "In Progress",
+        "576417": "In Progress",
+        "576416": "Done",
+        "576415": "Done",
+        "576414": "Done",
+        "576413": "Done",
+        "576412": "Done",
+        "576411": "Done",
+        "576410": "In Progress"
+      }
+    },
+    "reply": "Sweet! Went with the black Nike Dri-FIT Micro Pique 2.0 polos and your mockup is ready to look at.\n\nThe price is based on 12 polos: $65.62 each, $787.44 total. Standard shipping is free and lands between Sep 29 and Oct 2. Once you know your final count I'll update it.\n\nHow many polos are you looking at?\n\nBest,\nSasha",
+    "run_dir": "/Users/dhaval/Desktop/fresh_prints/sasha_code/sasha-browser-poc-worktrees/explore-alternatives/runs/deal_303842/turn_20260918_183413"
+  }
+]

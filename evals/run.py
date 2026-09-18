@@ -95,6 +95,7 @@ def snapshot(inspector: ToolsetExecutor, deal_id: int, proof_id: int | None) -> 
     deal_text = inspector.run("get_page_text", {}).replace("\n", " | ")
     proofs_part = re.search(r"Proofs \|(.*?)\| Orders", deal_text)
     state = {"proofs": re.findall(r"#(\d{6})", proofs_part.group(1)) if proofs_part else []}
+    state["statuses"] = proof_statuses(inspector)
     if proof_id:
         inspector.run("navigate", {"url": f"{config.FP_BASE_URL}/dashboard/proof/{proof_id}"})
         proof_text = inspector.run("get_page_text", {}).replace("\n", " | ")
@@ -104,6 +105,13 @@ def snapshot(inspector: ToolsetExecutor, deal_id: int, proof_id: int | None) -> 
         state["revision_pending"] = "Or Submit a Revision Request" not in proof_text
         state["qty"] = qty.group(1) if qty else None
     return state
+
+
+def proof_statuses(inspector: ToolsetExecutor) -> dict[str, str]:
+    """Proof id -> status (Done, In Progress) from the first page of the proofs list, newest first."""
+    inspector.run("navigate", {"url": f"{config.FP_BASE_URL}/dashboard/proofs"})
+    text = inspector.run("get_page_text", {}).replace("\n", " | ")
+    return dict(re.findall(r"\| (\d{6}) \| (Done|In Progress) \|", text))
 
 
 # ---- checks -------------------------------------------------------------------
@@ -147,6 +155,12 @@ def proofs(expected: str, log, before, after) -> bool:
     return delta == (0 if expected == "same" else 1)
 
 
+def proof_status(expected: str, log, before, after) -> bool:
+    """Every proof the turn added has this status in the proofs list."""
+    added = [p for p in after["proofs"] if p not in before["proofs"]]
+    return bool(added) and all(after["statuses"].get(p) == expected for p in added)
+
+
 def revisions(expected: str, log, before, after) -> bool:
     """'same' or '+1' on the ask's proof."""
     delta = len(after.get("revisions", [])) - len(before.get("revisions", []))
@@ -169,7 +183,7 @@ def no_errors(expected: bool, log, before, after) -> bool:
 CHECKS = {
     "visited": visited, "not_visited": not_visited,
     "reply_regex": reply_regex, "reply_not_regex": reply_not_regex, "signoff": signoff,
-    "proofs": proofs, "revisions": revisions, "revision_pending": revision_pending, "qty": qty,
+    "proofs": proofs, "proof_status": proof_status, "revisions": revisions, "revision_pending": revision_pending, "qty": qty,
     "no_errors": no_errors,
 }
 
