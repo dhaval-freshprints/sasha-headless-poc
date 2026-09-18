@@ -1,7 +1,7 @@
 # Sasha browser POC — setup and run
 
 Sasha drives the Fresh Prints QA CRM in a real browser and writes emails to clients.
-This gets it running on your machine with Claude via the Anthropic API.
+This gets it running on your machine with Claude via the Anthropic API and Anthropic's browser toolset.
 
 Needs: Python 3.12+, an Anthropic API key, the QA CRM login.
 
@@ -32,19 +32,16 @@ Open `.env` and set these:
 ```
 FP_PASSWORD=<QA CRM password for qatest@yopmail.com>
 
-LLM_PROVIDER=anthropic
-LLM_BASE_URL=
-LLM_API_KEY=sk-ant-...
-MODEL=<a current Claude model name>
+ANTHROPIC_API_KEY=sk-ant-...
+MODEL=claude-opus-5
 ```
 
-Leave `LLM_BASE_URL` empty; the Anthropic SDK uses its default endpoint. For `MODEL`, use
-the newest Opus-class model that supports tool use and images. Get the exact name from
-Anthropic's model list rather than guessing; names change:
+`MODEL` must support the browser toolset (`browser_toolset_20260801`): `claude-opus-5`,
+`claude-sonnet-5`, `claude-fable-5-1` or `claude-opus-4-8`. To list what your key can see:
 
 ```bash
 curl -s https://api.anthropic.com/v1/models \
-  -H "x-api-key: $LLM_API_KEY" -H "anthropic-version: 2023-06-01" \
+  -H "x-api-key: $ANTHROPIC_API_KEY" -H "anthropic-version: 2023-06-01" \
   | python3 -c "import json,sys; print('\n'.join(m['id'] for m in json.load(sys.stdin)['data']))"
 ```
 
@@ -98,10 +95,12 @@ Forget the conversation so far and start the deal over:
 
 ```
 [deal 303688 · client reply] working...
-  [00] navigate {...} -> Now at .../deal?id=303688  [tree 6K]
-  [01] click {'role': 'link', 'name': '#576394'} -> ...
-  [02] fill_field {'field': '#5', 'text': '40'} -> ...
-  [03] click {'role': 'button', 'name': 'Cancel'} -> ...
+  [00] navigate {'url': '.../deal?id=303688'} -> Navigated to ...
+  [01] read_page {'filter': 'interactive'} -> link "#576394" [ref_12] ...  [6K]
+  [02] left_click {'target': {'type': 'ref', 'ref': 'ref_12'}} -> Clicked element ref_12.
+  [03] form_input {'target': {...'ref_5'}, 'value': 40} -> Filled ref_5 with 2 characters. Now contains: '40'
+  [04] get_page_text {} -> ...
+  [05] left_click {'target': {...}} -> Clicked element ref_31.
 
 --- Sasha ---
 At 40 bags it's $40.91 each, so $1,636.40 total, with free standard shipping.
@@ -109,17 +108,17 @@ At 40 bags it's $40.91 each, so $1,636.40 total, with free standard shipping.
 Best,
 Sasha
 
-[4 steps · 39s (model 22s, browser 17s) · tokens in 106,044 (75,434 cached, 30,610 fresh) · out 903]
+[6 steps · 39s (model 22s, browser 17s) · tokens in 106,044 (75,434 cached, 30,610 fresh) · out 903 · images 1, stale refs 0, halts 0]
 ```
 
-One line per browser action while it runs, then the email, then the cost.
+One line per browser call while it runs (several per model turn), then the email, then the cost. The numbers above are illustrative; no toolset turn has been measured yet.
 
 ## 7. Where things land
 
 ```
 runs/deal_<id>/transcript.md              what the client and Sasha said. Sasha's only memory.
 runs/deal_<id>/turn_<time>/run.json       every step, tokens, timing
-runs/deal_<id>/turn_<time>/step_NN.png    screenshot after each step
+runs/deal_<id>/turn_<time>/batch_NN.png   screenshot after each batch of calls (for you, not the model)
 ```
 
 To see what Sasha did on a turn, open the screenshots in order.
@@ -135,17 +134,7 @@ prompts/playbook.md      how Sasha works and writes
 
 Edit, save, run again. They're read fresh on every run.
 
-## 9. Switching model provider
-
-Same code, one setting:
-
-| Want | `.env` |
-|---|---|
-| Claude via Anthropic | `LLM_PROVIDER=anthropic`, `LLM_BASE_URL=` empty, Anthropic key, Claude model name |
-| GPT via OpenAI | `LLM_PROVIDER=openai`, `LLM_BASE_URL=` empty, OpenAI key, GPT model name |
-| Internal gateway | `LLM_PROVIDER=gateway`, `LLM_BASE_URL=http://192.168.29.70:8317/v1`, gateway key, any model it lists |
-
-## 10. Running as a server (optional)
+## 9. Running as a server (optional)
 
 ```bash
 .venv/bin/uvicorn api:app --port 8100
@@ -164,8 +153,9 @@ Or with Docker: `docker compose up --build`. Copy `./auth/` in first, or run `au
 | Symptom | Cause | Fix |
 |---|---|---|
 | Sasha says she's on the login page | QA session expired | `auth_setup.py` again |
-| `KeyError: 'LLM_API_KEY'` | `.env` missing or key blank | fill it in |
-| 401 from the model API | wrong key for the provider | check `LLM_PROVIDER` matches the key |
-| 404 model not found | model name wrong for that provider | check the provider's model list |
+| `KeyError: 'ANTHROPIC_API_KEY'` | `.env` missing or key blank | fill it in |
+| 401 from the model API | wrong key | check `ANTHROPIC_API_KEY` |
+| 404 model not found, or 400 mentioning `browser_toolset` | model name wrong, or it doesn't support the toolset | use one of the models listed in step 3 |
+| result says `ref_N is stale` often | the page re-rendered under the model | expected now and then; if every turn, look at the screenshots |
 | `playwright` can't find chromium | step 2, last line skipped | `.venv/bin/playwright install chromium` |
-| A turn hits 40 steps and stops | model is stuck on a page it can't read | look at the screenshots; usually a map gap in `workplace.md` |
+| A turn hits 40 model turns and stops | model is stuck on a page it can't read | look at the screenshots; usually a map gap in `workplace.md` |

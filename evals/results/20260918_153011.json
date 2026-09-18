@@ -1,0 +1,376 @@
+[
+  {
+    "id": 1,
+    "deal": 303839,
+    "message": null,
+    "passed": true,
+    "failures": [],
+    "rounds": 2,
+    "calls": 3,
+    "images": 1,
+    "stale_refs": 0,
+    "halts": 0,
+    "seconds": 20,
+    "fresh_tokens": 1933,
+    "cached_tokens": 42310,
+    "output_tokens": 614,
+    "cost_usd": 0.046,
+    "before": {
+      "proofs": []
+    },
+    "after": {
+      "proofs": []
+    },
+    "reply": "Hey Thomas!\n\nI'm Sasha, your account manager at Fresh Prints. I'll be your go-to for anything merch related for the Miami University Marching Band, from picking the right garments to getting mockups made and everything printed and delivered.\n\nHappy to jump in whenever you're ready. If you've got a rough idea already, I can start putting mockups together.\n\nWhat products and designs did you have in mind?\n\nBest,\nSasha",
+    "run_dir": "/Users/dhaval/Desktop/fresh_prints/sasha_code/sasha-browser-poc-worktrees/explore-alternatives/runs/deal_303839/turn_20260918_151027"
+  },
+  {
+    "id": 2,
+    "deal": 303688,
+    "message": "Do you have 20 M and 20 L in stock?",
+    "passed": true,
+    "failures": [],
+    "rounds": 6,
+    "calls": 13,
+    "images": 1,
+    "stale_refs": 0,
+    "halts": 0,
+    "seconds": 75,
+    "fresh_tokens": 6646,
+    "cached_tokens": 110997,
+    "output_tokens": 2026,
+    "cost_usd": 0.139,
+    "before": {
+      "proofs": [
+        "573727"
+      ],
+      "revisions": [
+        "Revision 1"
+      ],
+      "revision_pending": false,
+      "qty": "12"
+    },
+    "after": {
+      "proofs": [
+        "573727"
+      ],
+      "revisions": [
+        "Revision 1"
+      ],
+      "revision_pending": false,
+      "qty": "12"
+    },
+    "reply": "Hey Sanjay!\n\nJust checked stock on the Brasilia drawstring packs. They come in one size only, so there's no M or L to split, and we're in good shape on inventory: 5,834 in Midnight Navy right now, so 40 is easily covered.\n\nSince it's one size, 20 and 20 would just land as 40 bags total.\n\nIs 40 the number you want me to work from?\n\nBest,\nSasha",
+    "run_dir": "/Users/dhaval/Desktop/fresh_prints/sasha_code/sasha-browser-poc-worktrees/explore-alternatives/runs/deal_303688/turn_20260918_151054"
+  },
+  {
+    "id": 3,
+    "deal": 303688,
+    "message": "What's the price for 40?",
+    "passed": true,
+    "failures": [],
+    "rounds": 7,
+    "calls": 11,
+    "images": 1,
+    "stale_refs": 0,
+    "halts": 0,
+    "seconds": 49,
+    "fresh_tokens": 7912,
+    "cached_tokens": 130741,
+    "output_tokens": 1220,
+    "cost_usd": 0.135,
+    "before": {
+      "proofs": [
+        "573727"
+      ],
+      "revisions": [
+        "Revision 1"
+      ],
+      "revision_pending": false,
+      "qty": "12"
+    },
+    "after": {
+      "proofs": [
+        "573727"
+      ],
+      "revisions": [
+        "Revision 1"
+      ],
+      "revision_pending": false,
+      "qty": "12"
+    },
+    "reply": "Hey Sanjay!\n\nAt 40 the Brasilia drawstring packs come to $40.91 each, so $1,636.40 all in. Standard shipping is free and that lands them Sep 29 to Oct 2.\n\nWant me to get these set up at 40?\n\nBest,\nSasha",
+    "run_dir": "/Users/dhaval/Desktop/fresh_prints/sasha_code/sasha-browser-poc-worktrees/explore-alternatives/runs/deal_303688/turn_20260918_151215"
+  },
+  {
+    "id": 4,
+    "deal": 303837,
+    "message": "Can you show me orange alternatives?",
+    "passed": false,
+    "failures": [
+      "rounds 20 > 15"
+    ],
+    "rounds": 20,
+    "calls": 50,
+    "images": 13,
+    "stale_refs": 0,
+    "halts": 0,
+    "seconds": 156,
+    "fresh_tokens": 32740,
+    "cached_tokens": 556270,
+    "output_tokens": 3992,
+    "cost_usd": 0.542,
+    "before": {
+      "proofs": [
+        "576414",
+        "576415"
+      ],
+      "revisions": [],
+      "revision_pending": false,
+      "qty": "12"
+    },
+    "after": {
+      "proofs": [
+        "576414",
+        "576415"
+      ],
+      "revisions": [],
+      "revision_pending": false,
+      "qty": "12"
+    },
+    "reply": "Sweet, orange works great with this design. Here are three I'd put in front of you, all priced at 12 tees with the same 1 color screen print, shipping free:\n\n\u2022 Gildan Heavy Cotton tee in Orange, the same tee you're on now, $22.58 each, $270.96 total\n\u2022 Gildan Softstyle tee in Orange, a lighter, softer fit, $23.66 each, $283.92 total\n\u2022 Comfort Colors Heavyweight tee in Burnt Orange, the thicker vintage feel, $28.12 each, $337.44 total\n\nThose prices are based on 12, which is the minimum on all three.\n\nWhich orange do you want me to mock up?\n\nBest,\nSasha",
+    "run_dir": "/Users/dhaval/Desktop/fresh_prints/sasha_code/sasha-browser-poc-worktrees/explore-alternatives/runs/deal_303837/turn_20260918_151311"
+  },
+  {
+    "id": 5,
+    "deal": 303817,
+    "message": "Can you change the text to Welcome?",
+    "passed": true,
+    "failures": [],
+    "rounds": 6,
+    "calls": 14,
+    "images": 2,
+    "stale_refs": 0,
+    "halts": 0,
+    "seconds": 64,
+    "fresh_tokens": 8732,
+    "cached_tokens": 113933,
+    "output_tokens": 1720,
+    "cost_usd": 0.144,
+    "before": {
+      "proofs": [
+        "571811"
+      ],
+      "revisions": [
+        "Revision 1"
+      ],
+      "revision_pending": false,
+      "qty": "12"
+    },
+    "after": {
+      "proofs": [
+        "571811"
+      ],
+      "revisions": [
+        "Revision 1",
+        "Revision 2"
+      ],
+      "revision_pending": true,
+      "qty": null
+    },
+    "reply": "Hey Jon!\n\nYes, easy change. I sent it over to the art team to swap the text to Welcome, same font and placement as what you've seen.\n\nI'll reach out as soon as the updated mockup is ready.\n\nBest,\nSasha",
+    "run_dir": "/Users/dhaval/Desktop/fresh_prints/sasha_code/sasha-browser-poc-worktrees/explore-alternatives/runs/deal_303817/turn_20260918_151554"
+  },
+  {
+    "id": 6,
+    "deal": 303675,
+    "message": "What would 30 cost as embroidery?",
+    "passed": false,
+    "failures": [
+      "reply_regex=['\\\\$\\\\d', 'embroider']",
+      "signoff=True",
+      "rounds 40 > 15"
+    ],
+    "rounds": 40,
+    "calls": 105,
+    "images": 31,
+    "stale_refs": 0,
+    "halts": 0,
+    "seconds": 323,
+    "fresh_tokens": 66213,
+    "cached_tokens": 1674320,
+    "output_tokens": 8947,
+    "cost_usd": 1.392,
+    "before": {
+      "proofs": [
+        "573697"
+      ],
+      "revisions": [
+        "Revision 1"
+      ],
+      "revision_pending": true,
+      "qty": null
+    },
+    "after": {
+      "proofs": [
+        "573697"
+      ],
+      "revisions": [
+        "Revision 1"
+      ],
+      "revision_pending": true,
+      "qty": null
+    },
+    "reply": "",
+    "run_dir": "/Users/dhaval/Desktop/fresh_prints/sasha_code/sasha-browser-poc-worktrees/explore-alternatives/runs/deal_303675/turn_20260918_151704"
+  },
+  {
+    "id": 7,
+    "deal": 303688,
+    "message": "What are the shipping options for 50?",
+    "passed": true,
+    "failures": [],
+    "rounds": 9,
+    "calls": 16,
+    "images": 3,
+    "stale_refs": 0,
+    "halts": 0,
+    "seconds": 68,
+    "fresh_tokens": 11762,
+    "cached_tokens": 177804,
+    "output_tokens": 2411,
+    "cost_usd": 0.208,
+    "before": {
+      "proofs": [
+        "573727"
+      ],
+      "revisions": [
+        "Revision 1"
+      ],
+      "revision_pending": false,
+      "qty": "12"
+    },
+    "after": {
+      "proofs": [
+        "573727"
+      ],
+      "revisions": [
+        "Revision 1"
+      ],
+      "revision_pending": false,
+      "qty": "12"
+    },
+    "reply": "Hey Sanjay!\n\nHere's what shipping looks like on the drawstring packs at 50:\n\n\u2022 Standard: free, arriving Sep 29 to Oct 2\n\u2022 Expedited: $295.50, arriving Sep 27\n\u2022 Fresh Prints Flash: $787.50, arriving Sep 25\n\u2022 Economy: the cheapest of the bunch, saving $393.50 (about $7.87 a pack), arriving Oct 16\n\nAt 50 the packs come to $39.56 each, $1,978.00 total before shipping and tax.\n\nWhen do you need them in hand?\n\nBest,\nSasha",
+    "run_dir": "/Users/dhaval/Desktop/fresh_prints/sasha_code/sasha-browser-poc-worktrees/explore-alternatives/runs/deal_303688/turn_20260918_152235"
+  },
+  {
+    "id": 8,
+    "deal": 303838,
+    "message": "Let's go with Nike polos in black, and print Droid on the chest.",
+    "passed": false,
+    "failures": [
+      "proofs='+1'",
+      "reply_regex=['mockup|proof']",
+      "signoff=True",
+      "rounds 40 > 25"
+    ],
+    "rounds": 40,
+    "calls": 98,
+    "images": 32,
+    "stale_refs": 0,
+    "halts": 0,
+    "seconds": 293,
+    "fresh_tokens": 69107,
+    "cached_tokens": 1809075,
+    "output_tokens": 6071,
+    "cost_usd": 1.402,
+    "before": {
+      "proofs": []
+    },
+    "after": {
+      "proofs": []
+    },
+    "reply": "",
+    "run_dir": "/Users/dhaval/Desktop/fresh_prints/sasha_code/sasha-browser-poc-worktrees/explore-alternatives/runs/deal_303838/turn_20260918_152345"
+  },
+  {
+    "id": 9,
+    "deal": 303688,
+    "message": "Thanks!",
+    "passed": true,
+    "failures": [],
+    "rounds": 1,
+    "calls": 2,
+    "images": 0,
+    "stale_refs": 0,
+    "halts": 0,
+    "seconds": 23,
+    "fresh_tokens": 1786,
+    "cached_tokens": 26610,
+    "output_tokens": 519,
+    "cost_usd": 0.035,
+    "before": {
+      "proofs": [
+        "573727"
+      ],
+      "revisions": [
+        "Revision 1"
+      ],
+      "revision_pending": false,
+      "qty": "12"
+    },
+    "after": {
+      "proofs": [
+        "573727"
+      ],
+      "revisions": [
+        "Revision 1"
+      ],
+      "revision_pending": false,
+      "qty": "12"
+    },
+    "reply": "No reply needed here. I read through the deal and there's nothing open on my side: the proof is done through Revision 1 and there's no outstanding question waiting on Sanjay. A \"Thanks!\" with nothing pending doesn't need an answer, so I'm leaving it and will pick it back up when he comes back with quantity or timing.",
+    "run_dir": "/Users/dhaval/Desktop/fresh_prints/sasha_code/sasha-browser-poc-worktrees/explore-alternatives/runs/deal_303688/turn_20260918_152846"
+  },
+  {
+    "id": 10,
+    "deal": 303817,
+    "message": "Can you also add a back print?",
+    "passed": true,
+    "failures": [],
+    "rounds": 3,
+    "calls": 6,
+    "images": 1,
+    "stale_refs": 0,
+    "halts": 0,
+    "seconds": 55,
+    "fresh_tokens": 5656,
+    "cached_tokens": 57956,
+    "output_tokens": 2135,
+    "cost_usd": 0.111,
+    "before": {
+      "proofs": [
+        "571811"
+      ],
+      "revisions": [
+        "Revision 1",
+        "Revision 2"
+      ],
+      "revision_pending": true,
+      "qty": null
+    },
+    "after": {
+      "proofs": [
+        "571811"
+      ],
+      "revisions": [
+        "Revision 1",
+        "Revision 2"
+      ],
+      "revision_pending": true,
+      "qty": null
+    },
+    "reply": "Totally doable, a back print is easy to add on these tees. Front and back live on the same piece, so it stays one design.\n\nThe art team is working through your latest changes right now, and I'll fold the back print into that same round so it all comes back together. Once I know what you want back there I'll get it over to them, and I'll send the updated price with the mockup since a second print location moves the per-piece cost.\n\nWhat do you want on the back?\n\nBest,\nSasha",
+    "run_dir": "/Users/dhaval/Desktop/fresh_prints/sasha_code/sasha-browser-poc-worktrees/explore-alternatives/runs/deal_303817/turn_20260918_152916"
+  }
+]

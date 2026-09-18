@@ -83,12 +83,14 @@ def run_turn(browser: Browser, deal_id: int, client_message: str | None) -> RunR
 def show_progress(kind: str, payload) -> None:
     """Print each step as it happens, and a marker while the model is deciding the next one."""
     if kind == "thinking":
-        print(f"  [{payload:02d}] thinking...", end="\r", flush=True)
+        print(f"  [batch {payload:02d}] thinking...", end="\r", flush=True)
         return
     step = payload
     short_args = {k: (v[:50] if isinstance(v, str) else v) for k, v in step.args.items()}
     short_result = step.result[:70].replace("\n", " ")
-    print(f"  [{step.index:02d}] {step.tool} {short_args} -> {short_result}  [tree {step.tree_chars // 1000}K]")
+    marker = "ERR " if step.is_error else ""
+    size = f"  [{step.tree_chars // 1000}K]" if step.tree_chars else ""
+    print(f"  [{step.index:02d}] {marker}{step.tool} {short_args} -> {short_result}{size}")
 
 
 if __name__ == "__main__":

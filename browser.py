@@ -1,26 +1,42 @@
 """
-Browser Hands — hybrid (option C).
+Browser Hands: a logged-in Chromium with named tabs.
 
-Two senses, always together:
-  - the accessibility tree: names of things, exact and cheap
-  - a screenshot: layout, canvas, anything the tree can't express
-
-Two ways to act:
-  - by name (role + name, or visible text): precise, preferred
-  - by pixel coordinates: fallback for canvas and unnamed controls
+Sensing and acting live in toolset_executor.py. This file owns the session, the tabs,
+screenshots, and the two things every action needs afterwards: settle and dismiss toasts.
 
 Nothing else is exposed: no shell, no filesystem.
 """
 
 from pathlib import Path
 
-from playwright.sync_api import BrowserContext, Locator, Page, sync_playwright
+from playwright.sync_api import BrowserContext, Page, sync_playwright
 
 import config
 
 VIEWPORT = {"width": 1440, "height": 900}
-ACTION_TIMEOUT_MS = 8000
 SETTLE_MS = 700
+
+# The page's visible text. Like innerText, but subtrees parked outside the viewport (slide-in
+# drawers, notification panels) are skipped, whatever depth they sit at.
+VISIBLE_TEXT_JS = """() => {
+    const width = window.innerWidth;
+    const skip = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE']);
+    function textOf(node) {
+        if (node.nodeType === 3) return node.textContent;
+        if (node.nodeType !== 1 || skip.has(node.tagName)) return '';
+        const r = node.getBoundingClientRect();
+        if (r.width > 0 && (r.left >= width || r.right <= 0)) return '';
+        const s = getComputedStyle(node);
+        if (s.display === 'none' || s.visibility === 'hidden') return '';
+        let out = '';
+        for (const child of node.childNodes) out += textOf(child);
+        const inline = s.display.startsWith('inline') || node.tagName === 'TD' || node.tagName === 'TH';
+        if (node.tagName === 'TD' || node.tagName === 'TH') out = ' ' + out;
+        return inline ? out : '\\n' + out + '\\n';
+    }
+    return textOf(document.body)
+        .split('\\n').map(line => line.replace(/\\s+/g, ' ').trim()).filter(Boolean).join('\\n');
+}"""
 
 
 class Browser:
@@ -32,223 +48,105 @@ class Browser:
             viewport=VIEWPORT,
             device_scale_factor=1,
         )
-        if not self._context.pages:
+        self.tabs: dict[str, Page] = {}
+        self.active_tab_id = ""
+        self._tab_counter = 0
+        self._context.on("page", self._register_tab)
+        for page in self._context.pages:
+            self._register_tab(page)
+        if not self.tabs:
             self._context.new_page()
+        self.active_tab_id = next(iter(self.tabs))
 
     def close(self) -> None:
         self._context.close()
         self._playwright.stop()
 
+    # ---- tabs ---------------------------------------------------------------
+
     @property
     def page(self) -> Page:
-        """Always the newest tab, so a button that opens a tab doesn't strand the model."""
-        return self._context.pages[-1]
+        return self.tabs[self.active_tab_id]
+
+    def tab_page(self, tab_id: str) -> Page:
+        if tab_id not in self.tabs:
+            raise ValueError(f"No tab with tab_id {tab_id}.")
+        return self.tabs[tab_id]
+
+    def new_tab(self) -> str:
+        page = self._context.new_page()
+        tab_id = self._tab_id_of(page)
+        self.active_tab_id = tab_id
+        return tab_id
+
+    def switch_tab(self, tab_id: str) -> None:
+        self.tab_page(tab_id).bring_to_front()
+        self.active_tab_id = tab_id
+
+    def close_tab(self, tab_id: str) -> None:
+        self.tab_page(tab_id).close()
+
+    def tab_state(self) -> list[dict]:
+        """The tab inventory in the shape the browser_state block wants."""
+        entries = []
+        for tab_id, page in self.tabs.items():
+            entry = {"tab_id": tab_id, "title": page.title(), "url": page.url}
+            if tab_id == self.active_tab_id:
+                entry["active"] = True
+            entries.append(entry)
+        return entries
+
+    def _register_tab(self, page: Page) -> None:
+        self._tab_counter += 1
+        tab_id = f"tab-{self._tab_counter}"
+        self.tabs[tab_id] = page
+        page.on("close", lambda _: self._forget_tab(tab_id))
+
+    def _forget_tab(self, tab_id: str) -> None:
+        self.tabs.pop(tab_id, None)
+        if self.active_tab_id == tab_id and self.tabs:
+            self.active_tab_id = next(reversed(self.tabs))
+
+    def _tab_id_of(self, page: Page) -> str:
+        for tab_id, known in self.tabs.items():
+            if known == page:
+                return tab_id
+        raise ValueError("Page is not a registered tab.")
 
     # ---- see ----------------------------------------------------------------
 
-    def snapshot(self) -> str:
-        """Accessibility tree + what's focused. Editable regions are called out explicitly."""
-        self._settle()
-        self._dismiss_toasts()
-        tree = self.page.locator("body").aria_snapshot()
-        if len(tree) > config.SNAPSHOT_MAX_CHARS:
-            tree = tree[: config.SNAPSHOT_MAX_CHARS] + "\n... [truncated]"
-        return f"{self._where()}\n\n{tree}\n\n{self._editable_summary()}"
-
-    def screenshot(self) -> bytes:
-        self._settle()
-        return self.page.screenshot(full_page=False)
-
-    def read_text(self) -> str:
-        """The page's visible text, nothing else. Cheap and exact — use it to verify what saved."""
-        self._settle()
-        text = self.page.locator("body").inner_text()
-        if len(text) > config.SNAPSHOT_MAX_CHARS:
-            text = text[: config.SNAPSHOT_MAX_CHARS] + "\n... [truncated]"
-        return f"{self._where()}\n\n{text}"
+    def screenshot(self, page: Page, clip: dict | None = None) -> bytes:
+        self.settle(page)
+        return page.screenshot(full_page=False, clip=clip)
 
     def save_screenshot(self, path: Path) -> Path:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(self.screenshot())
+        path.write_bytes(self.screenshot(self.page))
         return path
 
-    # ---- act by name --------------------------------------------------------
+    def page_text(self, page: Page) -> str:
+        self.settle(page)
+        text = page.evaluate(VISIBLE_TEXT_JS)
+        if len(text) > config.PAGE_TEXT_MAX_CHARS:
+            text = text[: config.PAGE_TEXT_MAX_CHARS] + "\n... [truncated]"
+        return text
 
-    def navigate(self, url: str) -> str:
-        self.page.goto(url, wait_until="domcontentloaded")
-        self._settle()
-        return self._where()
+    # ---- after every action -------------------------------------------------
 
-    def click(self, role: str, name: str) -> str:
-        target = self.page.get_by_role(role, name=name, exact=False).first
-        if target.count() == 0:
-            return self._not_found(f"{role} '{name}'")
-        target.click(timeout=ACTION_TIMEOUT_MS)
-        self._settle()
-        return f"Clicked {role} '{name}'. {self._where()}"
-
-    def click_text(self, text: str) -> str:
-        """
-        Click by visible text. If the text is a tooltip / hidden label that can't take the
-        click itself (a colour swatch, an icon with a hover name), click the element it labels.
-        """
-        target = self.page.get_by_text(text, exact=False).first
-        if target.count() == 0:
-            return self._not_found(f"text '{text}'")
+    def settle(self, page: Page) -> None:
+        page.wait_for_timeout(SETTLE_MS)
         try:
-            target.click(timeout=3000)
-        except Exception:
-            parent = target.locator("xpath=..")
-            parent.click(timeout=ACTION_TIMEOUT_MS, force=True)
-        self._settle()
-        return f"Clicked '{text}'. {self._where()}"
-
-    def fill_field(self, field: str, text: str, press_enter: bool = False) -> str:
-        """
-        Put text into an editable field, replacing what's there.
-        `field` is matched, in order, against: accessible name / label, placeholder,
-        nearby label text, or an index like "#3" from the EDITABLE FIELDS list.
-        Works for inputs, textareas and rich-text (contenteditable) editors.
-        """
-        target = self._find_editable(field)
-        if target is None:
-            return self._not_found(f"editable field '{field}'") + " " + self._editable_summary()
-        target.click(timeout=ACTION_TIMEOUT_MS)
-        self.page.keyboard.press("Meta+a")
-        self.page.keyboard.press("Backspace")
-        self.page.keyboard.type(text, delay=10)
-        if press_enter:
-            self.page.keyboard.press("Enter")
-        self._settle()
-        return f"Filled '{field}' with {len(text)} characters. Now contains: {self._value_of(target)!r}"
-
-    def select_option(self, field: str, option: str) -> str:
-        target = self._find_editable(field)
-        if target is None:
-            return self._not_found(f"select '{field}'")
-        target.select_option(label=option, timeout=ACTION_TIMEOUT_MS)
-        self._settle()
-        return f"Selected '{option}' in '{field}'."
-
-    def press_key(self, key: str) -> str:
-        self.page.keyboard.press(key)
-        self._settle()
-        return f"Pressed {key}. {self._where()}"
-
-    # ---- act by coordinates (fallback) --------------------------------------
-
-    def click_at(self, x: int, y: int) -> str:
-        self.page.mouse.click(x, y)
-        self._settle()
-        return f"Clicked ({x}, {y}). {self._where()}"
-
-    def type_here(self, text: str) -> str:
-        """Type into whatever has focus. Use after click_at on a canvas or unnamed control."""
-        self.page.keyboard.type(text, delay=10)
-        self._settle()
-        return f"Typed {len(text)} characters into the focused element."
-
-    def scroll(self, direction: str, amount: int = 3) -> str:
-        delta = amount * 120
-        self.page.mouse.move(VIEWPORT["width"] // 2, VIEWPORT["height"] // 2)
-        self.page.mouse.wheel(0, delta if direction == "down" else -delta)
-        self._settle()
-        return f"Scrolled {direction}."
-
-    # ---- helpers ------------------------------------------------------------
-
-    def _find_editable(self, field: str) -> Locator | None:
-        editables = self._editables()
-        if field.startswith("#") and field[1:].isdigit():
-            index = int(field[1:])
-            return editables[index]["locator"] if index < len(editables) else None
-        needle = field.lower().strip()
-        for entry in editables:
-            haystack = " | ".join([entry["label"], entry["placeholder"], entry["near"]]).lower()
-            if needle and needle in haystack:
-                return entry["locator"]
-        return None
-
-    def _editables(self) -> list[dict]:
-        """Every visible thing a user could type into, with the best label we can find."""
-        selector = "input:not([type=hidden]):not([type=checkbox]):not([type=radio]), textarea, select, [contenteditable=true]"
-        locator = self.page.locator(selector)
-        entries = []
-        for i in range(locator.count()):
-            el = locator.nth(i)
-            try:
-                if not el.is_visible():
-                    continue
-                meta = el.evaluate("""e => {
-                    const lab = e.labels?.[0]?.innerText?.trim() || e.getAttribute('aria-label') || '';
-                    const own = (e.isContentEditable ? e.innerText : e.value) || '';
-                    // Label = the closest short text ABOVE the field that isn't the field's own content.
-                    const box = e.getBoundingClientRect();
-                    let near = '';
-                    const candidates = [...document.querySelectorAll('label, h1, h2, h3, h4, h5, h6, p, span, div, legend')]
-                        .filter(n => n.children.length === 0 || n.tagName === 'LABEL');
-                    const visible = n => { const s = getComputedStyle(n); return s.visibility !== 'hidden' && s.display !== 'none' && s.opacity !== '0' && n.getClientRects().length > 0; };
-                    const covered = n => { const r = n.getBoundingClientRect(); const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return top && !n.contains(top) && !top.contains(n); };
-                    let best = Infinity;
-                    for (const n of candidates) {
-                        const t = (n.innerText || '').trim();
-                        if (!t || t.length > 60 || t === own.trim()) continue;
-                        if (!visible(n) || covered(n)) continue;
-                        const r = n.getBoundingClientRect();
-                        const above = box.top - r.bottom;
-                        const overlapX = r.left < box.right && r.right > box.left;
-                        if (above >= -4 && above < 90 && overlapX && above < best) { best = above; near = t; }
-                    }
-                    const kind = e.isContentEditable ? 'richtext' : (e.tagName.toLowerCase() === 'select' ? 'select' : (e.type || 'text'));
-                    return {label: lab, placeholder: e.placeholder || '', near, kind, value: own.slice(0, 40)};
-                }""")
-            except Exception:
-                continue
-            meta["locator"] = el
-            meta["index"] = len(entries)
-            entries.append(meta)
-        return entries
-
-    def _editable_summary(self) -> str:
-        entries = self._editables()
-        if not entries:
-            return "EDITABLE FIELDS: none visible."
-        lines = ["EDITABLE FIELDS (use fill_field with the label, or the #index):"]
-        for e in entries:
-            label = e["label"] or e["placeholder"] or e["near"] or "(unlabelled)"
-            lines.append(f"  #{e['index']} [{e['kind']}] {label!r}  value={e['value']!r}")
-        return "\n".join(lines)
-
-    @staticmethod
-    def _value_of(target: Locator) -> str:
-        try:
-            return target.evaluate("e => (e.isContentEditable ? e.innerText : e.value) || ''")[:80]
-        except Exception:
-            return ""
-
-    def _dismiss_toasts(self) -> None:
-        """Notification banners cover controls in screenshots. Close the ones we can."""
-        for sel in [".toast-close-button", "[aria-label='Close']", ".toast .close", ".notification .close"]:
-            try:
-                loc = self.page.locator(sel)
-                for i in range(min(loc.count(), 3)):
-                    if loc.nth(i).is_visible():
-                        loc.nth(i).click(timeout=500)
-            except Exception:
-                pass
-
-    def _where(self) -> str:
-        tabs = len(self._context.pages)
-        note = f" ({tabs} tabs open, showing newest)" if tabs > 1 else ""
-        return f"Now at {self.page.url}{note}"
-
-    @staticmethod
-    def _not_found(what: str) -> str:
-        return f"NOT FOUND: {what} is not on this page. Take a snapshot and check the exact name, or use click_at with coordinates from the screenshot."
-
-    def _settle(self) -> None:
-        self.page.wait_for_timeout(SETTLE_MS)
-        try:
-            self.page.wait_for_load_state("networkidle", timeout=4000)
+            page.wait_for_load_state("networkidle", timeout=4000)
         except Exception:
             pass
+
+    def dismiss_toasts(self, page: Page) -> None:
+        """Notification banners cover controls in screenshots. Close the ones we can."""
+        for selector in [".toast-close-button", "[aria-label='Close']", ".toast .close", ".notification .close"]:
+            try:
+                found = page.locator(selector)
+                for i in range(min(found.count(), 3)):
+                    if found.nth(i).is_visible():
+                        found.nth(i).click(timeout=500)
+            except Exception:
+                pass

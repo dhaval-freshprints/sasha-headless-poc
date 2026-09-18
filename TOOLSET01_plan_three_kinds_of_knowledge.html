@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plan: three kinds of knowledge</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; max-width: 960px; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; color: #222; }
+  h1 { font-size: 1.7rem; border-bottom: 2px solid #ddd; padding-bottom: .3rem; }
+  h2 { font-size: 1.3rem; margin-top: 2rem; border-bottom: 1px solid #eee; }
+  h3 { font-size: 1.05rem; margin-top: 1.4rem; }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .9em; }
+  code { background: #f4f4f4; padding: .1em .3em; border-radius: 3px; }
+  pre { background: #f6f8fa; padding: .8rem; overflow-x: auto; border-radius: 4px; }
+  table { border-collapse: collapse; width: 100%; margin: .8rem 0; font-size: .92em; }
+  th, td { border: 1px solid #ddd; padding: .4rem .6rem; text-align: left; vertical-align: top; }
+  th { background: #f4f4f4; }
+  .note { background: #fff8e1; border-left: 4px solid #f0b400; padding: .6rem .9rem; margin: 1rem 0; }
+  .fact { color: #1a6b1a; font-weight: 600; }
+  .assume { color: #9a4d00; font-weight: 600; }
+  .small { font-size: .85em; color: #555; }
+</style>
+</head>
+<body>
+
+<h1>Plan: three kinds of knowledge</h1>
+<p class="small">Branch <code>explore-alternatives</code>. Written 2026-09-18, after three live turns on the Anthropic browser toolset (303688 twice, 303837 once). Claims are marked <span class="fact">Fact</span> (cited to a file, a run, or a command) or <span class="assume">Assumption</span> (with what would confirm it).</p>
+
+<h2>1. The goal, and why the current loop never ends</h2>
+<p><strong>Goal.</strong> Sasha does what the client asked, using the browser and the rulebook. Not: every control on every page described in a prompt.</p>
+
+<p><strong>Why the loop never ends today.</strong> <span class="fact">Fact</span> In the 303837 turn (<code>runs/deal_303837/turn_20260918_144156/run.json</code>), 28 model rounds, 82 browser calls, 0 errors, correct answer. About 13 rounds were wasted on: the colour box swallowing the first keystrokes (4 times), style-code typos (<code>1717</code>, <code>64000</code> twice, <code>3001</code>), and <code>find</code> not seeing react-select inputs. Every wasted round was a widget-mechanics problem. None was a judgment or rulebook problem.</p>
+
+<p><span class="fact">Fact</span> The lines added to <code>prompts/workplace.md</code> today were also widget mechanics: the qty box is a <code>spinbutton</code> (line 28), swatches are tooltip-only so click by coordinate (line 65), radios have no name so click by coordinate (line 106). The map has been absorbing executor gaps. Each new page with the same widget produces another line. That is the loop.</p>
+
+<h2>2. Three kinds of knowledge, three homes</h2>
+<table>
+<tr><th>Kind</th><th>What it is</th><th>Home</th><th>Why it is bounded</th></tr>
+<tr><td><strong>Widget mechanics</strong></td><td>How a class of control behaves: autocomplete combobox, tooltip-only names, unnamed radios next to a text label, rich-text editors, toasts, tabs opening, dialogs appearing.</td><td><code>toolset_executor.py</code></td><td>A CRM built on one component library has perhaps ten widget classes. Fix once, works on every page, including pages nobody has mapped.</td></tr>
+<tr><td><strong>CRM facts and business rules</strong></td><td>URLs, what each page is for, what it shows, and rules the CRM enforces: wizard lists only Lead-stage deals, Related Campaign is required, Individual Shipping is internal, "mto" colours start at 50, the catalog price is the blank cost.</td><td><code>prompts/workplace.md</code></td><td>About ten pages. Grows only when the CRM ships a page or a rule.</td></tr>
+<tr><td><strong>Judgment</strong></td><td>How a rep works and writes: verify before claiming, price at MOQ when no quantity, one question per reply, never delete.</td><td><code>prompts/playbook.md</code></td><td>Changes with sales policy, not with pages.</td></tr>
+</table>
+
+<div class="note"><strong>The test for a line.</strong> If it names a page, what is on it, or a rule the CRM enforces, it belongs in <code>workplace.md</code>. If it says how to operate a control ("type, then click the option", "click by coordinate", "shows as <code>textbox "e.g. 12"</code>"), it is an executor gap. Fix the executor and delete the line.</div>
+
+<h2>3. Audit of <code>workplace.md</code> against that test</h2>
+<p><span class="fact">Fact</span> Read from the current file. Line numbers as of this commit.</p>
+<table>
+<tr><th>Lines</th><th>Content</th><th>Verdict</th><th>Goes to</th></tr>
+<tr><td>8-18</td><td>Pages table: URL and purpose</td><td>Keep</td><td>workplace</td></tr>
+<tr><td>22-24</td><td>Deal page: where the name is, proof count, activity feed</td><td>Keep</td><td>workplace</td></tr>
+<tr><td>28</td><td>Proof page contents; "quantity box is the spinbutton next to the style code"</td><td>Split: contents keep, spinbutton sentence goes</td><td>executor (near-label to the left already covers it)</td></tr>
+<tr><td>29-33</td><td>Save Price vs Cancel, revision chips, Design Tool is a canvas</td><td>Keep (page behaviour and CRM rules)</td><td>workplace</td></tr>
+<tr><td>37</td><td>Wizard steps; next button disabled until required fields set</td><td>Keep</td><td>workplace</td></tr>
+<tr><td>40</td><td>Proof Title "accessible name is its placeholder"</td><td>Go. Tree presentation detail</td><td>executor</td></tr>
+<tr><td>41, 48, 64, 102-103</td><td>"Type the name, then click the option that appears" (Client, Style Code, Color, stock search)</td><td>Go. Same widget five times</td><td>executor: combobox handling in <code>form_input</code></td></tr>
+<tr><td>42</td><td>Deal dropdown mechanics + "only Lead stage or later are listed"</td><td>Split: mechanics go, Lead-stage rule keeps</td><td>both</td></tr>
+<tr><td>43</td><td>Related Campaign required; choose None</td><td>Keep the rule; drop "click it and choose option"</td><td>workplace</td></tr>
+<tr><td>54, 75</td><td>Rich-text editor "shows as textbox under the heading"</td><td>Go. Keep "this is the only place the art team learns what to make"</td><td>executor</td></tr>
+<tr><td>57-58</td><td>Submit enables when description filled; what appears after submit</td><td>Keep</td><td>workplace</td></tr>
+<tr><td>65</td><td>Swatches are tooltip-only, click by coordinate</td><td>Go</td><td>executor: hover reports what appeared; tooltip names harvested</td></tr>
+<tr><td>66, 121</td><td>How the table shows in the tree; "get_page_text returns them exactly"</td><td>Go. Keep "the table is per colour and size"</td><td>executor + one playbook line on numbers</td></tr>
+<tr><td>67-68, 83-85, 89-90, 94, 98-99, 108, 111-114, 116-119</td><td>What pages show, CRM rules (mto 50, Individual Shipping internal, catalog has no prices, pick 2-3 candidates)</td><td>Keep</td><td>workplace (the "pick 2-3" line is judgment; move to playbook)</td></tr>
+<tr><td>86-88</td><td>Catalog search box name, swatch buttons named by hex, card tree shape, href carries the style code</td><td>Split: href carries style code keeps (fact); the rest goes</td><td>executor</td></tr>
+<tr><td>97</td><td>Qty box "textbox e.g. 12, named by its placeholder"</td><td>Go. Keep "fill Qty first"</td><td>executor</td></tr>
+<tr><td>106</td><td>Radios unnamed, click by coordinate; licensing changes price</td><td>Split: mechanics go, "match what the proof shows" keeps</td><td>executor: near-label to the right for radios</td></tr>
+<tr><td>109-110</td><td>Tabs and method cards "click by text"</td><td>Go. Keep the list of print types and methods</td><td>executor</td></tr>
+<tr><td>125-127</td><td>Toasts, the delete dialog wording, new tabs</td><td>Split: delete dialog wording keeps (a rule: never delete), the rest goes</td><td>executor already dismisses toasts and reports tabs</td></tr>
+</table>
+<p>Roughly 14 lines or half-lines leave. The file gets shorter and stops growing per widget.</p>
+
+<h2>4. Executor work: widget classes</h2>
+<p>Each item is one class of control, handled generically. None mentions a page.</p>
+
+<table>
+<tr><th>#</th><th>Widget class</th><th>Executor change</th><th>Replaces map lines</th><th>Evidence it is needed</th></tr>
+<tr><td>A</td><td>Autocomplete combobox (react-select)</td><td><code>form_input</code> on a <code>combobox</code>: click, wait for a <code>listbox</code> or <code>option</code> nodes to appear, type, pick the option whose text equals the value, else the one containing it, read back. Return the chosen option text. If no option, return the options that did appear.</td><td>41, 48, 64, 102, 103</td><td>303837: every style and colour entry was click + type + screenshot + click coordinate, twice when the first typing was lost.</td></tr>
+<tr><td>B</td><td>Fields that lose the first keystrokes</td><td><code>type</code> checks the focused element after typing. If its value does not contain the text, click it again and retype once. Return what the field contains.</td><td>none directly; removes the "orange twice" rounds</td><td>303837 batches 15-16, 22-23, 25-26.</td></tr>
+<tr><td>C</td><td>Tooltip-only names (swatches, icon buttons)</td><td><code>hover</code> returns the text that appeared after hovering (diff of visible text before and after). Tree harvests <code>title</code>, <code>aria-label</code> and common tooltip attributes onto unnamed nodes.</td><td>65, 86</td><td>303688 run 1: hover + zoom + zoom to read one swatch name. 303837: <code>find "Midnight Navy"</code> returned nothing.</td></tr>
+<tr><td>D</td><td>Unnamed radios and checkboxes beside a text label</td><td>Near-label search also looks to the right (within 40px, same row). A radio then prints as <code>radio "" (near: "Yes")</code>.</td><td>106</td><td>Probe on the quoter: radios print with the section heading, not Yes/No.</td></tr>
+<tr><td>E</td><td>Action feedback</td><td>After any click: return the page title, whether the URL changed, and whether a <code>dialog</code> appeared and its text. After <code>form_input</code> and <code>type</code>: the field's content. The model gets proof without asking.</td><td>121, 125-127</td><td>Playbook line 12 asks the model to look after writes; feedback in the result makes that free.</td></tr>
+<tr><td>F</td><td>Placeholder-named fields</td><td>Already correct: Chromium names them by placeholder. Delete the map lines that explain it.</td><td>40, 97</td><td>Probe output: <code>textbox "e.g. Pi Kapp Rush 2021"</code>.</td></tr>
+<tr><td>G</td><td>Rich-text editors</td><td>Already <code>textbox</code> with the heading as near-label. Delete the map lines.</td><td>54, 75</td><td>Offline test and probe.</td></tr>
+<tr><td>H</td><td><code>find</code> on comboboxes</td><td>Score near-label for comboboxes the same as textboxes (it does), and include listbox options in the tree while a dropdown is open.</td><td>none</td><td>303837 batch 7: <code>find "Color search box"</code> missed the colour box.</td></tr>
+</table>
+
+<p class="small">Estimated size: A and E are the largest, about 60 lines each. B, C, D are 15-30 lines each. Total under 200 lines in one file.</p>
+
+<h2>5. Judgment: what changes in <code>playbook.md</code></h2>
+<ul>
+<li>Add one line under Working: "Read prices, dates and stock numbers with <code>get_page_text</code>. A screenshot is for layout, not for numbers." <span class="fact">Fact</span> 303837 read all three prices from screenshots; they happened to be right (checked against <code>batch_12</code>, <code>batch_17</code>, <code>batch_27</code>).</li>
+<li>Move "Pick 2-3 candidates, don't price all 27" from workplace line 90 to playbook Products. It is judgment.</li>
+<li>Nothing else. The playbook is not where the loop is.</li>
+</ul>
+
+<h2>6. Define done: the eval set</h2>
+<p>Without a fixed set of asks and a score, the loop has no exit. This is the part that turns "we keep finding issues" into "we are at 9 of 12 and the three failures are all widget class C".</p>
+
+<h3>6.1 The asks</h3>
+<p>Start with the turns the README already measured plus the two run today. Each has a deal, a client message, what must be true afterwards, and which knowledge kinds it exercises.</p>
+<table>
+<tr><th>#</th><th>Deal</th><th>Ask</th><th>Must be true</th><th>Exercises</th></tr>
+<tr><td>1</td><td>fresh deal, no proof</td><td>initial outreach</td><td>reply asks what they had in mind; no CRM write; no quoter visit</td><td>judgment</td></tr>
+<tr><td>2</td><td>303688</td><td>"Do you have 20 M and 20 L in stock?"</td><td>stock checker visited this turn; reply says one size; a stock number from the page; no write</td><td>widgets A, C; rule</td></tr>
+<tr><td>3</td><td>303688</td><td>"price for 40?"</td><td>qty set on the proof, price in reply equals the page, Cancel clicked, qty back to original</td><td>widget E; judgment</td></tr>
+<tr><td>4</td><td>303837</td><td>"Can you show me orange alternatives?"</td><td>2-3 products, each priced in the quoter this turn, prices equal quoter, no write</td><td>widgets A, B, D, H</td></tr>
+<tr><td>5</td><td>303675</td><td>"change the text to Welcome"</td><td>revision request submitted with "Welcome" in the description; verified by re-opening</td><td>widgets A, G, E; rule</td></tr>
+<tr><td>6</td><td>303675</td><td>"30 as embroidery?"</td><td>both embroidery sizes priced from the quoter</td><td>widgets A, D</td></tr>
+<tr><td>7</td><td>303688</td><td>"shipping options for 50?"</td><td>every client-facing tier with cost and date; Individual Shipping absent</td><td>rule; judgment</td></tr>
+<tr><td>8</td><td>empty deal</td><td>"Nike, print Droid on the chest"</td><td>proof exists on the deal with the placement text; reply says mockup started only after that</td><td>widgets A, G, E; rule (Lead stage)</td></tr>
+<tr><td>9</td><td>any</td><td>"Thanks!"</td><td>no reply needed, says so; no browser writes</td><td>judgment</td></tr>
+<tr><td>10</td><td>any with a pending revision</td><td>"can you also add a back print?"</td><td>no revision submitted while one is pending; says so</td><td>rule; judgment</td></tr>
+</table>
+
+<h3>6.2 The harness</h3>
+<p><code>evals/asks.json</code> holds the table. <code>evals/run.py</code> runs each ask with <code>--reset</code>, then applies the checks it can automate and prints a table for a human to grade the rest:</p>
+<ul>
+<li><strong>Automatic from <code>run.json</code>:</strong> rounds, calls, images, stale refs, halts, cost estimate; which URLs were visited (stock checker this turn, quoter this turn); whether any call hit a Save, Submit or Order control (from the tool result text and tree lines); reply regex (contains a dollar amount, contains "one size", signs off correctly).</li>
+<li><strong>Automatic from the CRM after the turn</strong> (read-only, using the executor): proof count on the deal, qty on the proof, presence of a Revision N chip. Compared with a snapshot taken before the turn.</li>
+<li><strong>Human:</strong> is the price in the reply the one the quoter showed; is the tone right. One column, yes or no.</li>
+</ul>
+<p>Score = asks fully passing. Also report <strong>rounds per ask</strong>, because a pass at 28 rounds is not the same as a pass at 8.</p>
+
+<h3>6.3 The stop rule</h3>
+<p>Done for this phase when: all 10 pass, twice on separate days, with the widget lines from section 3 <strong>deleted</strong> from <code>workplace.md</code>, and no ask over 15 rounds. Then new asks are added only when the client does something new, not when a widget misbehaves.</p>
+
+<h2>7. Order of work</h2>
+<ol>
+<li><strong>Baseline.</strong> Write <code>evals/asks.json</code> and <code>evals/run.py</code>. Run the ten asks as the code is now. Record the score and rounds. Nothing else changes in this step. Cost: (Assumption) about $1 per ask on Opus 5 at today's cache rate, so about $10 per full pass.</li>
+<li><strong>Widget classes A, B, E.</strong> Combobox handling, keystroke check, action feedback. Rerun asks 2, 3, 4, 5. Expect rounds on ask 4 to drop below 15.</li>
+<li><strong>Widget classes C, D, H.</strong> Hover feedback, right-side labels, find on comboboxes. Rerun asks 2, 4, 6.</li>
+<li><strong>Strip the map.</strong> Delete the lines marked "Go" in section 3; move the two rule fragments and the "pick 2-3" line. Rerun all ten. Must not regress. If an ask regresses, the executor is missing a class, not the map a line.</li>
+<li><strong>Playbook line on numbers.</strong> Rerun asks 3, 4, 6. Check the run.json shows <code>get_page_text</code> before each price in the reply.</li>
+<li><strong>Freeze.</strong> Put the section 2 test in the header of <code>workplace.md</code>. Second full pass on another day. Update the README results table.</li>
+</ol>
+
+<h2>8. Decisions taken</h2>
+<ul>
+<li><strong>Deals.</strong> Picked from a read-only scan of QA deals 303822 to 303849. Writes go to 303817 (revision request) and 303838 (new proof; Leads stage, no proof). Outreach uses 303839 (Leads, no proof). Read-only asks use 303688, 303837, 303675.</li>
+<li><strong>Grading.</strong> Automatic checks only. What the checks cannot see is not scored.</li>
+</ul>
+
+<h2>8a. Results log</h2>
+<table>
+<tr><th>Pass</th><th>Code state</th><th>Score</th><th>Rounds</th><th>Cost</th><th>Time</th><th>Failures</th></tr>
+<tr><td>Baseline, 2026-09-18 15:30</td><td>toolset as first built; <code>find</code> ranking and no <code>wait</code></td><td>7/10</td><td>134</td><td>$4.15</td><td>19 min</td><td>4: correct but 20 rounds. 6: hit the 40-round cap in the quoter's Greek Marks box, no reply. 8: hit the cap in the create-proof wizard, no proof. All three: every quoter and wizard click by coordinate, 0 by ref; autocomplete boxes typed into twice or three times.</td></tr>
+<tr><td>Pass 2, 15:48 (asks 2, 3, 4, 6, 8 only)</td><td>+ autocomplete <code>form_input</code>, <code>type</code> verifies and retries, click reports dialogs, <code>find</code> re-reads the tree, page text skips offscreen drawers</td><td>2/5</td><td>100</td><td>$2.79</td><td>13 min</td><td>3: 6 rounds, 0 images, all by ref. 6: reply with the embroidery price now, 23 rounds. 4: 21 rounds, still coordinates; the model never called <code>form_input</code> on the quoter. 8: 20 rounds spent pricing three products the client had not asked for, then the wizard's Submit stayed disabled.</td></tr>
+<tr><td>Pass 3, 16:11 (asks 2, 3, 4, 6, 8)</td><td>+ <code>find</code> counts a nearby label as the name and treats "search" as a role word; IDENTITY says <code>form_input</code> handles dropdowns; playbook: a named product means create the proof, don't shop; map: the wizard's licensing boxes and quantity are required</td><td>4/5</td><td>67</td><td>$1.63</td><td>9 min</td><td>4: correct, 18 rounds (cap 15). Model used <code>form_input</code> for all 8 fields on the quoter, 2 coordinate clicks left. 6: 13 rounds, pass. 8: <strong>proof created</strong> on 303838, 20 rounds, pass.</td></tr>
+<tr><td>Pass 4, 16:29 (all 10)</td><td>+ actions report interactive elements that appeared ("New on the page"); map: radios line reduced to facts; write deals rotated (5 and 10 on 303821, 8 on 303840)</td><td>8/10</td><td>98</td><td>$2.58</td><td>16 min</td><td>All ten outcomes correct. 4: 19 rounds, 7 of them lost on the catalog where a 434-character <code>row</code> name swamped <code>find</code>. 8: proof created, 34 rounds; the Deal dropdown cost 7 rounds because the appeared-elements note hid its options.</td></tr>
+<tr><td>Pass 5, 16:46 (all 10)</td><td>+ links show their URL from the accessibility tree; names over 80 chars truncated; dropdown options listed when a dropdown opens; write deals rotated (5 and 10 on 303832, 8 on 303841)</td><td>8/10</td><td>91</td><td>$2.23</td><td>15 min</td><td>All ten outcomes correct. 4: 19 rounds; catalog now 3 rounds (was 9), quoter 14 because the model opens each colour list to choose a shade. 6: 19 rounds (12 in pass 4); the proof carries collegiate and Greek licensing, six rounds went to matching it. 8: proof created in 21 rounds (34 in pass 4).</td></tr>
+</table>
+<p>After pass 5 one more executor rule was added: an autocomplete never picks an "Add Item …" entry unless it is the exact match (seen in ask 6, where a missing organization got created instead of reported).</p>
+<p><span class="fact">Fact</span> Pass 2 detail in <code>evals/results/20260918_154842.json</code>. The wizard probe afterwards (read-only, never submitted) found the real gate: Licensing Info (Collegiate Marks and Organization) and Estimate Quantity are required form controls (<code>.ng-invalid</code> on <code>selectedSchoolC</code>, <code>selectedOrganizationC</code>, <code>quantity</code>). The old successful run on 303821 had filled exactly those. <code>workplace.md</code> now says so; the old line "Submit enables once the description is filled" was wrong.</p>
+<p><span class="fact">Fact</span> Baseline detail in <code>evals/results/20260918_153011.json</code>. The three failures are all widget class A (autocomplete combobox). A read-only probe afterwards showed why refs were abandoned: <code>find</code> reused the tree from the previous read, so options that appeared after typing were never in its results. Fixed: <code>find</code> re-reads the tree every call.</p>
+
+<h2>9. Not in this plan</h2>
+<ul>
+<li>Deterministic tools for quoting and stock (code instead of browser for the hot flows). Only if the eval plateaus after step 4.</li>
+<li>Sasha writing her own page notes. It is the same loop with a worse author, and wrong notes persist (the "confirmed stock" story in the README).</li>
+<li>Model or effort changes. Same model throughout so the eval measures the code, not the model.</li>
+</ul>
+
+<h2>Assumptions (collected)</h2>
+<ul>
+<li>Widget classes A and B remove most of the wasted rounds on the quoter. Confirm: ask 4 under 15 rounds after step 2.</li>
+<li>Tooltip text appears in the DOM on hover so class C can read it. Confirm with a probe on the stock checker swatches; if it does not, coordinates stay the fallback and the map line becomes a playbook-free executor note.</li>
+<li>Ten asks are enough signal. Confirm by stable scores across two passes.</li>
+<li>About $1 per ask. Confirm from run.json token counts on the baseline pass.</li>
+</ul>
+
+</body>
+</html>

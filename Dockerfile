@@ -7,6 +7,7 @@ COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY *.py ./
+COPY prompts ./prompts
 
 # ./auth (logged-in profile) and ./runs (logs + screenshots) are mounted at run time.
 EXPOSE 8100

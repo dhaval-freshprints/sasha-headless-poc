@@ -1,9 +1,10 @@
 """
-Sasha Brain — hybrid loop (option C).
+Sasha Brain: the loop.
 
-After every action the model gets BOTH the accessibility tree (names, exact) and a
-screenshot (layout, canvas). It acts by name when it can, by coordinates when it must.
-No business rules in the system prompt — the CRM, quoter and forms already enforce them.
+Each model turn returns a batch of browser tool calls. We run them in order, stop at the
+first failure, and send every result back together. The model decides when to look
+(screenshot, read_page, get_page_text); we do not push a view after every action.
+No business rules in the system prompt: the CRM, quoter and forms already enforce them.
 """
 
 import json
@@ -14,26 +15,21 @@ from pathlib import Path
 import config
 import memory
 from browser import Browser, VIEWPORT
-from llm import make_llm
+from llm import LLM, ToolCall
+from toolset_executor import NOT_EXECUTED, StaleRef, ToolsetExecutor, stale_ref_message
 
 WORKPLACE = (config.ROOT / "prompts" / "workplace.md").read_text()
 PLAYBOOK = (config.ROOT / "prompts" / "playbook.md").read_text()
 
 IDENTITY = f"""You are Sasha, a sales representative at Fresh Prints (custom apparel).
 
-You are logged into the Fresh Prints CRM in a browser. After every action you get two
-views of the screen: the accessibility tree (exact names of links, buttons and fields, plus
-an EDITABLE FIELDS list) and a screenshot ({VIEWPORT["width"]}x{VIEWPORT["height"]} px).
-Use the tree for names and values. Use the screenshot for layout, images, and anything the
-tree doesn't show.
-
-How to act:
-- Prefer acting by name: `click` (role + name from the tree), `click_text` (plain visible
-  text), `fill_field` (label or #index from EDITABLE FIELDS). These are exact.
-- Use `click_at` / `type_here` with screenshot coordinates only when nothing in the tree
-  matches, e.g. canvas or icon-only controls.
-- `fill_field` replaces the field's content and tells you what it now contains. Read that.
-- `read_text` gives the page's visible text exactly. Use it to verify what saved.
+You are logged into the Fresh Prints CRM in a browser and you drive it with the browser
+tools. The viewport is {VIEWPORT["width"]}x{VIEWPORT["height"]} px. Read the page before you
+act on it, and look again after any write to confirm what saved. `get_page_text` gives the
+visible text exactly; use it to read prices and numbers. Fill fields with `form_input`: it
+also handles search boxes and dropdowns that filter as you type, and picks the matching
+option for you. Every action already waits for the page to settle before it returns, so act,
+then look; there is no need to pause between them.
 
 Below are two references. WORKPLACE is the map of the CRM: where things are and how they
 work. PLAYBOOK is how you work and write. When you're done, call `reply_to_client` with
@@ -41,7 +37,7 @@ the message to the client.
 """
 
 # One system prompt, three sections. Identical across every turn and every deal, so the
-# whole block is a cache hit after the first call. Each provider marks it for caching its own way.
+# whole block is a cache hit after the first call.
 SYSTEM_PROMPT = f"{IDENTITY}\n\n---\n\n{WORKPLACE}\n\n---\n\n{PLAYBOOK}"
 
 NUDGE = (
@@ -49,46 +45,17 @@ NUDGE = (
     "If you could not complete something, say so in the message."
 )
 
-XY = {"x": {"type": "integer"}, "y": {"type": "integer"}}
-
-TOOL_SPECS = [
-    {"name": "navigate", "description": "Go to a URL.",
-     "parameters": {"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]}},
-    {"name": "look", "description": "Look at the screen again without doing anything.",
-     "parameters": {"type": "object", "properties": {}}},
-    {"name": "read_text", "description": "Get the page's visible text, exactly. Use to verify that what you entered actually saved, or to read a number the screenshot makes hard to see.",
-     "parameters": {"type": "object", "properties": {}}},
-    {"name": "click", "description": "Click an element by its ARIA role and accessible name from the tree.",
-     "parameters": {"type": "object", "properties": {"role": {"type": "string"}, "name": {"type": "string"}}, "required": ["role", "name"]}},
-    {"name": "click_text", "description": "Click by visible text, for things with no role (spans, menu items, tabs).",
-     "parameters": {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}},
-    {"name": "fill_field",
-     "description": "Replace the content of an editable field. `field` = its label, placeholder, nearby heading, or '#N' from EDITABLE FIELDS. Works for inputs, textareas and rich-text editors.",
-     "parameters": {"type": "object", "properties": {"field": {"type": "string"}, "text": {"type": "string"}, "press_enter": {"type": "boolean", "default": False}}, "required": ["field", "text"]}},
-    {"name": "select_option", "description": "Pick an option in a <select> dropdown by label.",
-     "parameters": {"type": "object", "properties": {"field": {"type": "string"}, "option": {"type": "string"}}, "required": ["field", "option"]}},
-    {"name": "press_key", "description": "Press a key: Enter, Escape, Tab, ArrowDown, ...",
-     "parameters": {"type": "object", "properties": {"key": {"type": "string"}}, "required": ["key"]}},
-    {"name": "click_at", "description": "Fallback: click at screenshot pixel coordinates.",
-     "parameters": {"type": "object", "properties": XY, "required": ["x", "y"]}},
-    {"name": "type_here", "description": "Fallback: type into whatever has focus (after click_at).",
-     "parameters": {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}},
-    {"name": "scroll", "description": "Scroll the page.",
-     "parameters": {"type": "object", "properties": {"direction": {"type": "string", "enum": ["up", "down"]}, "amount": {"type": "integer", "default": 3}}, "required": ["direction"]}},
-    {"name": "reply_to_client", "description": "Finish: send this message to the client. Call exactly once, at the end.",
-     "parameters": {"type": "object", "properties": {"message": {"type": "string"}}, "required": ["message"]}},
-]
-
 
 @dataclass
 class Step:
     index: int
+    batch: int           # which model turn this call came from
     tool: str
     args: dict
-    result: str          # the tool's own one-line result
-    screenshot: str
-    tree_chars: int = 0  # size of the accessibility tree the model was given with this step
-    tree_head: str = ""  # first few lines of it, so run.json shows what the model saw
+    result: str          # the tool's own result, or "[image]" for screenshots
+    is_error: bool
+    screenshot: str      # the debug PNG taken after this batch (for humans, never sent to the model)
+    tree_chars: int = 0  # size of a read_page / find result, so run.json shows what the model saw
 
 
 @dataclass
@@ -100,7 +67,10 @@ class RunResult:
     cached_tokens: int = 0
     seconds: float = 0.0
     model_seconds: float = 0.0    # time spent waiting on the LLM
-    browser_seconds: float = 0.0  # time spent in browser actions + snapshots
+    browser_seconds: float = 0.0  # time spent in browser actions
+    screenshots_sent: int = 0     # images the model asked for
+    stale_refs: int = 0
+    batch_halts: int = 0
 
     @property
     def uncached_tokens(self) -> int:
@@ -113,7 +83,8 @@ class RunResult:
             f"(model {self.model_seconds:.0f}s, browser {self.browser_seconds:.0f}s) · "
             f"tokens in {self.input_tokens:,} "
             f"({self.cached_tokens:,} cached, {self.uncached_tokens:,} fresh) · "
-            f"out {self.output_tokens:,}"
+            f"out {self.output_tokens:,} · "
+            f"images {self.screenshots_sent}, stale refs {self.stale_refs}, halts {self.batch_halts}"
         )
 
 
@@ -121,12 +92,13 @@ class Brain:
     def __init__(self, browser: Browser, run_dir: Path, on_event=None):
         """
         on_event(kind, payload) is called as the turn progresses, so a caller can show
-        progress. kind is "thinking" (payload: step index) or "step" (payload: Step).
+        progress. kind is "thinking" (payload: batch index) or "step" (payload: Step).
         """
         self.browser = browser
         self.run_dir = run_dir
         self.on_event = on_event or (lambda kind, payload: None)
-        self.llm = make_llm()
+        self.llm = LLM()
+        self.executor = ToolsetExecutor(browser)
 
     def run(self, deal_id: int, client_message: str | None) -> RunResult:
         messages = self._start_messages(deal_id)
@@ -136,10 +108,10 @@ class Brain:
         turn_started = time.monotonic()
         nudged = False
 
-        for step_index in range(config.MAX_STEPS):
-            self.on_event("thinking", step_index)
+        for batch in range(config.MAX_STEPS):
+            self.on_event("thinking", batch)
             model_started = time.monotonic()
-            reply = self.llm.send(SYSTEM_PROMPT, messages, TOOL_SPECS)
+            reply = self.llm.send(SYSTEM_PROMPT, messages)
             result.model_seconds += time.monotonic() - model_started
             result.input_tokens += reply.input_tokens
             result.output_tokens += reply.output_tokens
@@ -154,35 +126,14 @@ class Brain:
                 result.reply = reply.text
                 break
 
-            finished = False
-            for tool_call in reply.tool_calls:
-                name = tool_call.name
-                args = tool_call.args
-
-                if name == "reply_to_client":
-                    text = self._reply_text(args)
-                    if not text:
-                        messages.append(self.llm.tool_result(
-                            tool_call.id, "The message was empty. Call reply_to_client again with the full email text in `message`."))
-                        continue
-                    result.reply = text
-                    messages.append(self.llm.tool_result(tool_call.id, "Reply sent."))
-                    finished = True
-                    continue
-
-                browser_started = time.monotonic()
-                output = self._execute(name, args)
-                tree = self.browser.snapshot()
-                shot_path = self.browser.save_screenshot(self.run_dir / f"step_{step_index:02d}.png")
-                result.browser_seconds += time.monotonic() - browser_started
-                step = Step(
-                    step_index, name, args, output, str(shot_path),
-                    tree_chars=len(tree), tree_head="\n".join(tree.splitlines()[:12]),
-                )
-                result.steps.append(step)
-                self.on_event("step", step)
-                messages.append(self.llm.tool_result(tool_call.id, f"{output}\n\n{tree}"))
-                messages.append(self.llm.screenshot_message(shot_path))
+            browser_started = time.monotonic()
+            blocks, finished = self._run_batch(batch, reply.tool_calls, result)
+            shot_path = self.browser.save_screenshot(self.run_dir / f"batch_{batch:02d}.png")
+            for step in result.steps:
+                if step.batch == batch:
+                    step.screenshot = str(shot_path)
+            result.browser_seconds += time.monotonic() - browser_started
+            messages.append(self.llm.results_message(blocks))
 
             if finished:
                 break
@@ -191,6 +142,60 @@ class Brain:
         memory.append_transcript(deal_id, client_message, result.reply)
         self._write_run_json(deal_id, client_message, result)
         return result
+
+    # ---- one batch ----------------------------------------------------------
+
+    def _run_batch(self, batch: int, calls: list[ToolCall], result: RunResult) -> tuple[list[dict], bool]:
+        """Run the calls in order. After the first browser failure, the rest are not executed."""
+        blocks: list[dict] = []
+        failed = False
+        finished = False
+        for call in calls:
+            if not call.is_browser:
+                blocks.append(self._handle_reply(call, result))
+                finished = finished or bool(result.reply)
+                continue
+            if failed:
+                blocks.append(self.llm.browser_result(call.id, NOT_EXECUTED, is_error=True))
+                self._record(batch, call, NOT_EXECUTED, True, result)
+                continue
+            content, is_error = self._execute(call, result)
+            if is_error:
+                failed = True
+                result.batch_halts += 1
+            blocks.append(self.llm.browser_result(call.id, content, is_error))
+            self._record(batch, call, content, is_error, result)
+        return blocks, finished
+
+    def _execute(self, call: ToolCall, result: RunResult) -> tuple[str | list, bool]:
+        try:
+            content = self.executor.run(call.name, call.args)
+        except StaleRef as stale:
+            result.stale_refs += 1
+            return stale_ref_message(str(stale)), True
+        except Exception as error:
+            return f"Error: {type(error).__name__}: {str(error)[:300]}", True
+        if call.name in ("screenshot", "zoom"):
+            result.screenshots_sent += 1
+        return content, False
+
+    def _handle_reply(self, call: ToolCall, result: RunResult) -> dict:
+        text = self._reply_text(call.args)
+        if not text:
+            return self.llm.tool_result(
+                call.id, "The message was empty. Call reply_to_client again with the full email text in `message`.")
+        result.reply = text
+        return self.llm.tool_result(call.id, "Reply sent.")
+
+    def _record(self, batch: int, call: ToolCall, content, is_error: bool, result: RunResult) -> None:
+        text = _content_as_text(content)
+        step = Step(
+            index=len(result.steps), batch=batch, tool=call.name, args=call.args,
+            result=text, is_error=is_error, screenshot="",
+            tree_chars=len(text) if call.name in ("read_page", "find") else 0,
+        )
+        result.steps.append(step)
+        self.on_event("step", step)
 
     # ---- helpers ------------------------------------------------------------
 
@@ -217,42 +222,11 @@ class Brain:
             "Follow the playbook."
         )
 
-    def _execute(self, tool: str, args: dict) -> str:
-        b = self.browser
-        try:
-            match tool:
-                case "navigate":
-                    return b.navigate(args["url"])
-                case "look":
-                    return "Looking."
-                case "read_text":
-                    return b.read_text()
-                case "click":
-                    return b.click(args["role"], args["name"])
-                case "click_text":
-                    return b.click_text(args["text"])
-                case "fill_field":
-                    return b.fill_field(args["field"], args["text"], args.get("press_enter", False))
-                case "select_option":
-                    return b.select_option(args["field"], args["option"])
-                case "press_key":
-                    return b.press_key(args["key"])
-                case "click_at":
-                    return b.click_at(args["x"], args["y"])
-                case "type_here":
-                    return b.type_here(args["text"])
-                case "scroll":
-                    return b.scroll(args["direction"], args.get("amount", 3))
-                case _:
-                    return f"Unknown tool: {tool}"
-        except Exception as error:
-            return f"ERROR: {type(error).__name__}: {str(error)[:300]}"
-
     def _write_run_json(self, deal_id: int, client_message: str | None, result: RunResult) -> None:
         log = {
             "deal_id": deal_id,
-            "provider": config.LLM_PROVIDER,
             "model": config.MODEL,
+            "tools": "browser_toolset_20260801",
             "client_message": client_message,
             "reply": result.reply,
             "seconds": round(result.seconds, 1),
@@ -262,6 +236,9 @@ class Brain:
             "cached_tokens": result.cached_tokens,
             "uncached_tokens": result.uncached_tokens,
             "output_tokens": result.output_tokens,
+            "screenshots_sent": result.screenshots_sent,
+            "stale_refs": result.stale_refs,
+            "batch_halts": result.batch_halts,
             "steps": [step.__dict__ for step in result.steps],
         }
         (self.run_dir / "run.json").write_text(json.dumps(log, indent=2))
@@ -276,3 +253,18 @@ class Brain:
                 return value.strip()
         return ""
 
+
+def _content_as_text(content) -> str:
+    """What to store in run.json for a result: its text, with images summarised."""
+    if isinstance(content, str):
+        return content
+    parts = []
+    for block in content:
+        match block.get("type"):
+            case "text":
+                parts.append(block["text"])
+            case "image":
+                parts.append("[image]")
+            case "browser_state":
+                parts.append("[browser_state: " + ", ".join(t["tab_id"] for t in block["tabs"]) + "]")
+    return " ".join(parts)

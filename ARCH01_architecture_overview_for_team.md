@@ -1,5 +1,7 @@
 # Sasha Browser POC — Architecture Walkthrough
 
+> **Superseded.** This describes the hand-written tool design at commit `75d3dbb`. The current code uses Anthropic's browser toolset; see `README.md` and `TOOLSET01_plan_to_adopt_anthropic_browser_toolset.html`. Kept for the measurements and the memory story.
+
 A guide for explaining this project to the team. Every claim below cites a file and line.
 Verified against the working tree at commit `75d3dbb`.
 

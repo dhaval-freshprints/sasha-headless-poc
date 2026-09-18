@@ -1,0 +1,190 @@
+[
+  {
+    "id": 2,
+    "deal": 303688,
+    "message": "Do you have 20 M and 20 L in stock?",
+    "passed": true,
+    "failures": [],
+    "rounds": 10,
+    "calls": 20,
+    "images": 1,
+    "stale_refs": 0,
+    "halts": 0,
+    "seconds": 105,
+    "fresh_tokens": 20764,
+    "cached_tokens": 170389,
+    "output_tokens": 2387,
+    "cost_usd": 0.249,
+    "before": {
+      "proofs": [
+        "573727"
+      ],
+      "revisions": [
+        "Revision 1"
+      ],
+      "revision_pending": false,
+      "qty": "12"
+    },
+    "after": {
+      "proofs": [
+        "573727"
+      ],
+      "revisions": [
+        "Revision 1"
+      ],
+      "revision_pending": false,
+      "qty": "12"
+    },
+    "reply": "Hey Sanjay!\n\nQuick heads up on the sizing: the Nike Brasilia drawstring packs come in one size only, so there's no M or L to split. On stock, we're in great shape, there are 5,834 of them in Midnight Navy right now, so 40 is no problem at all.\n\nI did check the pricing at 40 for you. That comes to $40.91 each, $1,636.40 total, with standard shipping free and delivery by Sep 29 to Oct 2.\n\nIs 40 the number you want to go with?\n\nBest,\nSasha",
+    "run_dir": "/Users/dhaval/Desktop/fresh_prints/sasha_code/sasha-browser-poc-worktrees/explore-alternatives/runs/deal_303688/turn_20260918_153457"
+  },
+  {
+    "id": 3,
+    "deal": 303688,
+    "message": "What's the price for 40?",
+    "passed": true,
+    "failures": [],
+    "rounds": 6,
+    "calls": 10,
+    "images": 0,
+    "stale_refs": 0,
+    "halts": 0,
+    "seconds": 44,
+    "fresh_tokens": 4098,
+    "cached_tokens": 105143,
+    "output_tokens": 1134,
+    "cost_usd": 0.101,
+    "before": {
+      "proofs": [
+        "573727"
+      ],
+      "revisions": [
+        "Revision 1"
+      ],
+      "revision_pending": false,
+      "qty": "12"
+    },
+    "after": {
+      "proofs": [
+        "573727"
+      ],
+      "revisions": [
+        "Revision 1"
+      ],
+      "revision_pending": false,
+      "qty": "12"
+    },
+    "reply": "Hey Sanjay!\n\nAt 40 the bags come to $40.91 each, so $1,636.40 total. Standard shipping is free on that, with delivery landing around Sep 29 to Oct 2.\n\nWant me to get you set up at 40?\n\nBest,\nSasha",
+    "run_dir": "/Users/dhaval/Desktop/fresh_prints/sasha_code/sasha-browser-poc-worktrees/explore-alternatives/runs/deal_303688/turn_20260918_153654"
+  },
+  {
+    "id": 4,
+    "deal": 303837,
+    "message": "Can you show me orange alternatives?",
+    "passed": false,
+    "failures": [
+      "rounds 21 > 15"
+    ],
+    "rounds": 21,
+    "calls": 56,
+    "images": 10,
+    "stale_refs": 0,
+    "halts": 0,
+    "seconds": 173,
+    "fresh_tokens": 30408,
+    "cached_tokens": 592810,
+    "output_tokens": 4383,
+    "cost_usd": 0.558,
+    "before": {
+      "proofs": [
+        "576414",
+        "576415"
+      ],
+      "revisions": [],
+      "revision_pending": false,
+      "qty": "12"
+    },
+    "after": {
+      "proofs": [
+        "576414",
+        "576415"
+      ],
+      "revisions": [],
+      "revision_pending": false,
+      "qty": "12"
+    },
+    "reply": "Sure thing. Here are three orange tees that would work for the same one color front print, priced at 12 pieces since that's the minimum on all three:\n\n\u2022 Gildan Heavy Cotton in Orange, the same tee you're already looking at: $22.58 each, $270.96 total\n\u2022 Gildan Softstyle in Orange, a lighter, softer fit: $23.66 each, $283.92 total\n\u2022 Comfort Colors Heavyweight in Burnt Orange, a heavier garment with a more vintage look: $28.12 each, $337.44 total\n\nShipping is free on all three, and pricing comes down as the quantity goes up.\n\nWhich orange are you leaning toward?\n\nBest,\nSasha",
+    "run_dir": "/Users/dhaval/Desktop/fresh_prints/sasha_code/sasha-browser-poc-worktrees/explore-alternatives/runs/deal_303837/turn_20260918_153744"
+  },
+  {
+    "id": 6,
+    "deal": 303675,
+    "message": "What would 30 cost as embroidery?",
+    "passed": false,
+    "failures": [
+      "rounds 23 > 15"
+    ],
+    "rounds": 23,
+    "calls": 55,
+    "images": 7,
+    "stale_refs": 0,
+    "halts": 0,
+    "seconds": 180,
+    "fresh_tokens": 23818,
+    "cached_tokens": 574932,
+    "output_tokens": 5511,
+    "cost_usd": 0.544,
+    "before": {
+      "proofs": [
+        "573697"
+      ],
+      "revisions": [
+        "Revision 1"
+      ],
+      "revision_pending": true,
+      "qty": null
+    },
+    "after": {
+      "proofs": [
+        "573697"
+      ],
+      "revisions": [
+        "Revision 1"
+      ],
+      "revision_pending": true,
+      "qty": null
+    },
+    "reply": "Embroidery on 30 of the red tees comes to:\n\n\u2022 $47.50 each, $1,425 total, free standard shipping, arriving Sep 29 to Oct 2\n\u2022 Economy shipping would knock $283.50 off that, about $9.45 a tee, with delivery Oct 16\n\nThat's for a standard chest embroidery on the Comfort Colors tee you've got.\n\nWant me to switch the tees over to embroidery?\n\nBest,\nSasha",
+    "run_dir": "/Users/dhaval/Desktop/fresh_prints/sasha_code/sasha-browser-poc-worktrees/explore-alternatives/runs/deal_303675/turn_20260918_154044"
+  },
+  {
+    "id": 8,
+    "deal": 303838,
+    "message": "Let's go with Nike polos in black, and print Droid on the chest.",
+    "passed": false,
+    "failures": [
+      "proofs='+1'",
+      "reply_regex=['mockup|proof']",
+      "signoff=True",
+      "rounds 40 > 25"
+    ],
+    "rounds": 40,
+    "calls": 101,
+    "images": 24,
+    "stale_refs": 0,
+    "halts": 0,
+    "seconds": 294,
+    "fresh_tokens": 61516,
+    "cached_tokens": 1720224,
+    "output_tokens": 6795,
+    "cost_usd": 1.338,
+    "before": {
+      "proofs": []
+    },
+    "after": {
+      "proofs": []
+    },
+    "reply": "",
+    "run_dir": "/Users/dhaval/Desktop/fresh_prints/sasha_code/sasha-browser-poc-worktrees/explore-alternatives/runs/deal_303838/turn_20260918_154347"
+  }
+]

@@ -1,0 +1,191 @@
+[
+  {
+    "id": 1,
+    "deal": 303839,
+    "message": null,
+    "note": "ThomasStewartDeal, Leads stage, no proof. Outreach must ask what they had in mind and touch nothing.",
+    "checks": {
+      "not_visited": [
+        "quoter",
+        "stock-checker",
+        "proof/new"
+      ],
+      "proofs": "same",
+      "reply_regex": [
+        "^Hey ",
+        "Fresh Prints"
+      ],
+      "reply_not_regex": [
+        "\\$\\d"
+      ],
+      "signoff": true
+    }
+  },
+  {
+    "id": 2,
+    "deal": 303688,
+    "proof": 573727,
+    "message": "Do you have 20 M and 20 L in stock?",
+    "note": "Nike Brasilia drawstring pack, one size. Must run the stock checker this turn.",
+    "checks": {
+      "visited": [
+        "stock-checker"
+      ],
+      "reply_regex": [
+        "one[ -]size",
+        "\\d{1,3}(,\\d{3})+|\\d+ (in stock|available)"
+      ],
+      "proofs": "same",
+      "revisions": "same",
+      "qty": "same",
+      "signoff": true
+    }
+  },
+  {
+    "id": 3,
+    "deal": 303688,
+    "proof": 573727,
+    "message": "What's the price for 40?",
+    "note": "Set qty on the proof, read the price, Cancel. Saved qty must not change.",
+    "checks": {
+      "visited": [
+        "proof/573727"
+      ],
+      "reply_regex": [
+        "\\$\\d"
+      ],
+      "proofs": "same",
+      "revisions": "same",
+      "qty": "same",
+      "signoff": true
+    }
+  },
+  {
+    "id": 4,
+    "deal": 303837,
+    "proof": 576415,
+    "message": "Can you show me orange alternatives?",
+    "note": "Two or three products priced in the quoter. Nothing saved.",
+    "checks": {
+      "visited": [
+        "quoter"
+      ],
+      "reply_regex": [
+        "\\$\\d",
+        "orange"
+      ],
+      "proofs": "same",
+      "revisions": "same",
+      "signoff": true
+    }
+  },
+  {
+    "id": 5,
+    "deal": 303832,
+    "proof": 576405,
+    "message": "Can you change the text to Welcome?",
+    "note": "One finished proof (Nike polo, Gorge Green), none pending. A revision request must be submitted with the instruction. Deals used so far: 303817 (baseline), 303821 (pass 4). Next: 303834, 303836, 303825.",
+    "checks": {
+      "visited": [
+        "proof/576405"
+      ],
+      "revision_pending": true,
+      "proofs": "same",
+      "reply_not_regex": [
+        "\\$\\d"
+      ],
+      "signoff": true
+    }
+  },
+  {
+    "id": 6,
+    "deal": 303675,
+    "proof": 573697,
+    "message": "What would 30 cost as embroidery?",
+    "note": "Proof is with the art team; price in the quoter, do not touch the proof.",
+    "checks": {
+      "visited": [
+        "quoter"
+      ],
+      "reply_regex": [
+        "\\$\\d",
+        "embroider"
+      ],
+      "proofs": "same",
+      "revisions": "same",
+      "signoff": true
+    }
+  },
+  {
+    "id": 7,
+    "deal": 303688,
+    "proof": 573727,
+    "message": "What are the shipping options for 50?",
+    "note": "Every client-facing tier with cost and date. Individual Shipping is internal.",
+    "checks": {
+      "reply_regex": [
+        "standard",
+        "expedited",
+        "flash"
+      ],
+      "reply_not_regex": [
+        "individual shipping"
+      ],
+      "qty": "same",
+      "revisions": "same",
+      "signoff": true
+    }
+  },
+  {
+    "id": 8,
+    "deal": 303841,
+    "message": "Let's go with Nike polos in black, and print Droid on the chest.",
+    "note": "ChristopherNguyenDeal, Leads stage, no proof. Create the proof in the wizard, confirm it on the deal, then say a mockup is on the way. Deals used so far: 303838 (pass 3), 303840 (pass 4). Next: 303842, 303844, 303845.",
+    "max_rounds": 25,
+    "checks": {
+      "visited": [
+        "proof/new"
+      ],
+      "proofs": "+1",
+      "reply_regex": [
+        "mockup|proof"
+      ],
+      "signoff": true
+    }
+  },
+  {
+    "id": 9,
+    "deal": 303688,
+    "proof": 573727,
+    "message": "Thanks!",
+    "note": "Nothing open. Playbook: say no reply is needed instead of writing one.",
+    "max_rounds": 5,
+    "checks": {
+      "not_visited": [
+        "quoter",
+        "stock-checker"
+      ],
+      "reply_not_regex": [
+        "\\$\\d"
+      ],
+      "qty": "same",
+      "revisions": "same"
+    }
+  },
+  {
+    "id": 10,
+    "deal": 303832,
+    "proof": 576405,
+    "message": "Can you also add a back print?",
+    "note": "Runs after ask 5, so a revision is pending. No second revision while one is pending. Deals used so far: 303817 (baseline), 303821 (pass 4). Next: 303834, 303836, 303825.",
+    "checks": {
+      "revision_pending": true,
+      "revisions": "same",
+      "proofs": "same",
+      "reply_not_regex": [
+        "\\$\\d"
+      ],
+      "signoff": true
+    }
+  }
+]

@@ -1,18 +1,20 @@
 # Sasha Browser POC
 
-Sasha as a browser-driving sales rep. One model, one loop, hybrid browser control (accessibility tree + screenshot), no business rules in the prompt.
+Sasha as a browser-driving sales rep. One model, one loop, Anthropic's browser toolset
+(`browser_toolset_20260801`) executed against Playwright, no business rules in the prompt.
 Runs against Fresh Prints **QA** (`v4-qa.internal-fp.com`).
 
 ```
 deal_id (+ optional client message)
         │
         ▼
-   brain.py   — the loop: model picks an action, sees the result, repeats, then replies
-        │
+   brain.py            — the loop: model returns a batch of browser calls, we run them in
+        │                order, send every result back, repeat until reply_to_client
         ▼
-   browser.py — logged-in headless Chromium
-              sees: accessibility tree + EDITABLE FIELDS list + screenshot, every step
-              acts: click / click_text / fill_field by name · click_at / type_here by pixel
+   toolset_executor.py — one method per toolset member: read_page/find (tree with [ref_N]),
+        │                clicks by ref or coordinate, form_input, screenshot, tabs
+        ▼
+   browser.py          — logged-in Chromium session, named tabs, settle, toasts
         │
         ▼
    QA CRM / quoter / proofs
@@ -23,13 +25,15 @@ deal_id (+ optional client message)
 | File | Job |
 |---|---|
 | `config.py` | settings from `.env` |
-| `browser.py` | Browser Hands — hybrid tools (by name first, by coordinate as fallback) |
-| `llm/` | new — provider layer: `base.py` (interface), `openai_llm.py`, `anthropic_llm.py`, `make_llm()` switch on `LLM_PROVIDER` |
+| `llm.py` | the Anthropic call: system prompt, the toolset + `reply_to_client`, message shapes |
+| `toolset_executor.py` | runs each toolset member against Playwright; owns refs and tab ids |
+| `browser.py` | the Chromium session and tabs |
 | `brain.py` | Sasha Brain — the loop + system prompt |
 | `prompts/workplace.md` | the map: pages, URLs, how each form works. Facts only, no opinions |
 | `prompts/playbook.md` | how Sasha works and writes: judgment, voice, outreach, client reply |
 | `run_cli.py` | terminal runner |
 | `api.py` | `POST /simulate`, `POST /reset` |
+| `report.py` | rolls every `run.json` into one table |
 | `auth_setup.py` | one-time login, saves session to `./auth` |
 
 ## Setup
@@ -39,14 +43,26 @@ uv venv --python 3.12 && source .venv/bin/activate
 uv pip install -r requirements.txt
 python -m playwright install chromium
 
-cp .env.example .env     # fill FP_PASSWORD and LLM_API_KEY
+cp .env.example .env     # fill FP_PASSWORD and ANTHROPIC_API_KEY
 python auth_setup.py     # logs in, saves ./auth
 ```
 
 ## Model
 
-Any OpenAI-compatible endpoint. Set `LLM_BASE_URL`, `LLM_API_KEY`, `MODEL` in `.env`.
-List what the endpoint offers: `curl -H "Authorization: Bearer $LLM_API_KEY" $LLM_BASE_URL/models`.
+Claude via the Anthropic API. Set `ANTHROPIC_API_KEY` and `MODEL` in `.env`. The model must
+support the browser toolset: `claude-opus-5`, `claude-sonnet-5`, `claude-fable-5-1`,
+`claude-opus-4-8`. Claude API or Vertex only; the toolset is not on Bedrock.
+
+## How the model sees the page
+
+Nothing is pushed after an action. The model asks: `read_page` (accessibility tree, every
+element tagged `[ref_N]`), `find` (a query, up to 20 matching elements), `get_page_text`
+(visible text, exact), `screenshot`, `zoom`. It acts by ref (`left_click`, `form_input`,
+`scroll_to`) or by viewport coordinate when a control has no name (canvas, icon buttons).
+Refs live until the tab navigates; a stale ref returns an error and the model re-reads.
+
+One model turn can carry several calls. They run in order and stop at the first failure;
+the rest are answered `Not executed: an earlier action in this turn failed.`
 
 ## Run
 
@@ -65,7 +81,31 @@ curl -X POST localhost:8100/simulate -H 'content-type: application/json' -d '{"d
 curl -X POST localhost:8100/simulate -H 'content-type: application/json' -d '{"deal_id": 303817, "client_message": "price for 50?"}'
 ```
 
-Every turn writes `runs/deal_<id>/turn_<timestamp>/run.json` plus one screenshot per step, and appends to `runs/deal_<id>/transcript.md`, which is Sasha's only memory of the deal.
+Every turn writes `runs/deal_<id>/turn_<timestamp>/run.json` plus one screenshot per batch (for humans; the model only gets the screenshots it asks for), and appends to `runs/deal_<id>/transcript.md`, which is Sasha's only memory of the deal. `run.json` also counts `screenshots_sent`, `stale_refs` and `batch_halts` per turn.
+
+## Evals
+
+`evals/asks.json` is a fixed set of client asks on QA deals, each with checks the harness can
+score without a human: pages visited, CRM state before vs after (proof count, revisions, saved
+quantity), reply patterns, sign-off, and a round cap.
+
+```bash
+python evals/run.py          # all asks, in order (ask 10 depends on ask 5)
+python evals/run.py 2 4      # a subset
+```
+
+One row per ask plus totals; full detail in `evals/results/<timestamp>.json`.
+
+| Pass (2026-09-18) | Score | Wrong outcomes | Rounds | Cost |
+|---|---|---|---|---|
+| Baseline, toolset as first built | 7/10 | 3 (no reply on 6, no proof on 8) | 134 | $4.15 |
+| Pass 4, widget classes A/B/E + map fixes | 8/10 | 0 | 98 | $2.58 |
+| Pass 5, + link URLs, options on open | 8/10 | 0 | 91 | $2.23 |
+
+The two remaining fails are the 15-round cap on the two quoter asks (4 and 6), not wrong answers. The score is the
+measure of "Sasha can do it from the browser and the rulebook". Rules for the three files it
+exercises are in `TOOLSET01_plan_three_kinds_of_knowledge.html`: widget mechanics live in the
+executor, page facts and CRM rules in `workplace.md`, judgment in `playbook.md`.
 
 ## Docker
 
@@ -77,7 +117,7 @@ docker compose up --build
 ## Prompts
 
 Exactly two, both in the system message, cached (one `cache_control` marker; ~90% cache hit
-rate measured through the gateway):
+rate measured on the previous tool design):
 
 - **workplace.md** — where things are. A line belongs here if it has a URL, a button name or
   a field label in it. If it needs "always", "never" or "prefer", it doesn't.
@@ -88,6 +128,9 @@ When the model has to explore a page (the quoter, first time: 11 steps), a human
 found into `workplace.md`. Policy does not go in prompts; it goes in the CRM's own forms or in code.
 
 ## Results so far (QA)
+
+All rows below were measured with the previous hand-written tools (tree + screenshot pushed
+after every step). No turn has been run on the toolset yet; rerun these and add rows.
 
 | Deal | Task | Model | Steps | Tokens in | Time |
 |---|---|---|---|---|---|
@@ -110,9 +153,10 @@ found into `workplace.md`. Policy does not go in prompts; it goes in the CRM's o
 | 303821 | stock re-asked ×3, after map + two playbook lines: same behaviour every time. History outweighs the playbook once a claim is in it | claude-opus-5 | 1 | — | ~25s |
 | 303688 (fresh) | "20 M and 20 L of the bag?" → used the stock checker as mapped, caught that the bag is one-size | claude-opus-5 | 4 | — | 52s |
 
-## Why hybrid
+## Why tree and screenshot together
 
-Same task ("change the text to Welcome"), same model, three tool designs:
+Measured before the toolset, with the hand-written tools. Same task ("change the text to
+Welcome"), same model, three tool designs:
 
 | Tool design | Steps | Time | Result |
 |---|---|---|---|
@@ -120,8 +164,9 @@ Same task ("change the text to Welcome"), same model, three tool designs:
 | screenshot + pixels only | 40 (cap) | 9m 21s | opened a delete dialog, never submitted |
 | **tree + screenshot (hybrid)** | **5** | **59s** | **revision submitted with the client's instruction** |
 
-The `EDITABLE FIELDS` list labels each input by the heading physically above it, and
-`fill_field` reads back what it wrote. That is what fixed it.
+Labelling each unnamed input by the heading physically above it, and reading back what was
+written, is what fixed it. Both survive in the toolset executor: `read_page` prints
+`(near: "Proof Title")` on unnamed fields, and `form_input` reports what the field now contains.
 
 ## The failure worth remembering
 
@@ -134,22 +179,6 @@ verify before you report.
 
 The wizard also refused to list the deal until it was moved to Lead stage. That is a CRM rule,
 and it is written in `workplace.md` as a fact, not routed around.
-
-## Model providers
-
-`LLM_PROVIDER` picks the API shape: `openai` (api.openai.com), `anthropic` (api.anthropic.com),
-or `gateway` (an OpenAI-compatible proxy in front of Claude; needs `LLM_BASE_URL`). The brain
-calls five methods on an `LLM` object and never sees a vendor SDK. All three verified on the
-same turn shape (set quantity on a proof, read the price, Cancel, reply):
-
-| Provider | Model | Steps | Time | Model time |
-|---|---|---|---|---|
-| gateway | claude-opus-5 | 4 | 39s | 22s |
-| openai | gpt-5.6-terra | 4 | 26s | 11s |
-| anthropic | claude | 4 | verified, numbers not recorded | |
-
-OpenAI direct needed two shape fixes: `max_completion_tokens` instead of `max_tokens`, and
-`reasoning_effort: "none"` (reasoning models refuse function tools on chat-completions otherwise).
 
 ## Memory: transcript only
 

@@ -25,7 +25,7 @@ If a line needs the words "always", "never" or "prefer", it belongs in playbook.
 
 ## Proof page
 
-- Shows one product with: style, color, quantity box, unit price, item total, delivery estimate ("Est. Delivery By"), shipping method, order minimum.
+- Shows one product with: style, color, quantity box, unit price, item total, delivery estimate ("Est. Delivery By"), shipping method, order minimum. The quantity box is the `spinbutton` next to the style code (e.g. "#NKDM3978") in the Price panel; it has no label of its own.
 - Typing a quantity in the quantity box recalculates the price on screen. Nothing is saved until "Save Price" is clicked. "Cancel" discards it.
 - Print details are under "Location & Decorations": print type, number of colors, art description per location.
 - Revision chips at the top ("Original Proof", "Revision 1", ...) switch which version is shown.
@@ -37,7 +37,7 @@ If a line needs the words "always", "never" or "prefer", it belongs in playbook.
 Three steps. The top bar shows Proof Details → Product Info → Print Info & Price Estimate. Each step's "next" button stays disabled until that step's required fields are set.
 
 Step 1, Proof Details:
-- Proof Title: a text box (`'e.g. Pi Kapp Rush 2021'` in EDITABLE FIELDS). Write something the art team will recognise, e.g. "<Client> <product> - <event>".
+- Proof Title: a text box whose accessible name is its placeholder, `textbox "e.g. Pi Kapp Rush 2021"`. Write something the art team will recognise, e.g. "<Client> <product> - <event>".
 - Client: type the name, then click the `option` that appears (it shows name + email).
 - Deal: a dropdown, not a search. Click it (the `Deal` field), then click the deal's `option` by title. Only deals in Lead stage or later are listed; if the deal isn't there, its stage is too early. Say so rather than creating an unlinked proof.
 - Related Campaign: required even when none applies. Click it and choose `option "None"`.
@@ -51,19 +51,21 @@ Step 2, Product Info:
 Step 3, Print Info & Price Estimate (same layout as the revision form):
 - Location #1 with Print Type tabs (Screen Print, Embroidery, Digital, Applique, Transfers, Patches, Rhinestones, Vinyl, Foil, ...) and method cards with MOQ. Screen Print Standard is preselected.
 - "# of Colors" and "Oversized".
-- "Describe the Art & Location" is required and empty (`[richtext] '(Required)'` in EDITABLE FIELDS). This is the only place the art team learns what to make. Put the placement and the exact text or artwork in plain words, e.g. "Front, center chest. The word Droid in white."
+- "Describe the Art & Location" is required and empty. It is a rich-text editor; in the tree it is a `textbox` with no name, placed under the "Describe the Art & Location" heading. This is the only place the art team learns what to make. Put the placement and the exact text or artwork in plain words, e.g. "Front, center chest. The word Droid in white."
 - "Upload Ref. Image" for a reference file.
-- Decorating Methods (optional add-ons), Licensing Info, Estimate Quantity.
-- `button "Submit"` at the bottom right enables once the description is filled. "Another Proof Item" adds a second product to the same proof.
+- Decorating Methods (optional add-ons).
+- Licensing Info is required, both boxes. Collegiate Marks: choose `None` unless the design carries a college's marks. Organization: choose the client's organization if it is listed; otherwise choose `Other`, and a text box appears for the organization name (it is on the deal page).
+- Estimate Quantity is required. Use the client's quantity, or the MOQ if they gave none.
+- `button "Submit"` at the bottom right stays disabled until the description, both licensing boxes and Estimate Quantity are filled. "Another Proof Item" adds a second product to the same proof.
 - After Submit, the deal page shows the new proof under its proof count and the proof page shows "Original Proof" with a pending status.
 
 ## Stock checker (/dashboard/stock-checker)
 
 Live stock by size for one product and colour. The most direct answer to "do you have my sizes".
 
-- One search box at the top (shows as `#0 [text] '(unlabelled)'` in EDITABLE FIELDS). Type the style code, then click the `option` that appears, e.g. `option "NKDC1963 - Nike Dri-FIT Micro Pique 2.0 Polo"`.
-- A row of colour swatches appears. Each swatch's name is a hover tooltip, so use `click_text` with the colour name (e.g. "Gorge Green"); the tool clicks the swatch for you. "All Colors" is the first swatch.
-- Clicking a swatch renders a table. In the tree it's `row "<Colour> <XS> <S> <M> <L> <XL> <2XL> <3XL> <4XL> <blank cost> <restock date>"`, with one `cell` per value. `read_text` gives the same numbers in order after "Colors / Dist.".
+- One search box at the top, an unnamed `textbox`, the first editable field on the page. Type the style code, then click the `option` that appears, e.g. `option "NKDC1963 - Nike Dri-FIT Micro Pique 2.0 Polo"`.
+- A row of colour swatches appears. The swatches are not in the tree and `find` cannot see them; their names are hover tooltips only. Take a screenshot and click the swatch by coordinate; hover first if you need to confirm which colour it is. "All Colors" is the first swatch.
+- Clicking a swatch renders a table. In the tree it's `row "<Colour> <XS> <S> <M> <L> <XL> <2XL> <3XL> <4XL> <blank cost> <restock date>"`, with one `cell` per value. `get_page_text` gives the same numbers in order after "Colors / Dist.".
 - "No Restock Date" means no supplier restock is scheduled. A date there is the supplier's estimate.
 - Nothing on this page is saved. It only reads.
 
@@ -72,7 +74,7 @@ Live stock by size for one product and colour. The most direct answer to "do you
 - Opens as an overlay titled "Placing a Revision Request".
 - Print Type tabs: Screen Print, Embroidery, Digital, Applique, Transfers, Patches. Selecting one shows its sub-methods (Standard, Puff Ink, ...) and MOQ.
 - "# of Colors" and "Oversized" are per location.
-- "Describe the Art & Location" is a rich-text box. It starts with the current location name (e.g. "Front"). This is the field the art team reads. It shows in EDITABLE FIELDS as `[richtext] 'Describe the Art & Location'`.
+- "Describe the Art & Location" is a rich-text box. It starts with the current location name (e.g. "Front"). This is the field the art team reads. In the tree it is a `textbox` under the "Describe the Art & Location" heading.
 - "Upload Ref. Image" accepts a reference file (20 MB max).
 - "Change Product Info" (left) changes style code and color. "Change Licensing Info" (right) changes collegiate marks and organization.
 - "Estimate Quantity" is at the bottom.
@@ -84,8 +86,8 @@ The place to find products when the client asks for something not on the deal ("
 
 - Go straight to a filtered URL: `/products?search=<word>&mainColorGroup=<Colour>`. Example: `/products?search=polo&mainColorGroup=Green`. Colour groups: White, Grey, Black, Red, Brown, Orange, Yellow, Green, Blue, Purple, Pink.
 - Or use the page: textbox "Try “T-Shirt”" is the search box (type, press Enter); the colour swatches are buttons named by hex (#0CA80C is green, #2049C3 blue, #FF2B2B red, #000000 black, #FFFFFF white); category links are named "filter for Shirts", "filter for Hoodies", etc.
-- Results are product cards. In the tree each card shows as `link "Color Palette <Product Name>"` followed by `button "color tag for <Colour>"` for each colour it comes in. "mto" after a colour means made-to-order (longer lead time).
-- Each card's link href contains the style code: `/products/nike-nkdc1963-dri-fit-micro-pique-20-polo?color=Gorge%20Green` means brand Nike, style NKDC1963, colour Gorge Green. That style code is what the quoter's Style Code box wants.
+- Results are product cards: a product name, a link to the product, and one colour tag per colour it comes in. "mto" after a colour means made-to-order (longer lead time).
+- Each card's link URL contains the brand and style code: `/products/nike-nkdc1963-dri-fit-micro-pique-20-polo?color=Gorge%20Green` means brand Nike, style NKDC1963, colour Gorge Green. That style code is what the quoter's Style Code box wants.
 - The page has no prices. To price a product from here, take its style code and colour to the quoter.
 - Pick 2–3 candidates that fit the ask, then price them. Don't price all 27.
 
@@ -94,7 +96,7 @@ The place to find products when the client asks for something not on the deal ("
 Prices any product + decoration + quantity without touching a proof. Nothing here is saved.
 
 Top bar (updates live as you fill the form):
-- Qty box (placeholder "e.g. 12", shows in EDITABLE FIELDS as `[tel] 'e.g. 12'`). Fill this first.
+- Qty box (`textbox "e.g. 12"`, named by its placeholder). Fill this first.
 - Unit Price, Item Total, Item Shipping Total, Item Sales Tax Total ("TBD" until a zip is entered via "Enter Zip Code"), GPM, Total.
 - Stock Levels per size (S, M, L, XL, 2XL, 3XL, 4XL) appear once a style and color are chosen.
 
@@ -103,7 +105,7 @@ Product Info (left):
 - Color: same pattern. Type, then click the `option`.
 - MOQ for the product shows under Color.
 
-Licensed Marks (left, below): Collegiate Marks and Greek Marks, each a Yes / No pair. The radios have no accessible name; use `click_at` on the Yes or No button from the screenshot. Both default to No. Choosing Yes reveals a search box (`Collegiate Marks` / `Greek Marks` in EDITABLE FIELDS): type, then click the `option`. Licensing changes the price, so match what the proof shows under Greek Licensing / Collegiate Licensing.
+Licensed Marks (left, below): Collegiate Marks and Greek Marks, each a Yes / No pair of radios. Both default to No. Choosing Yes reveals a search box for the school or organization. Licensing changes the price, so match what the proof shows under Greek Licensing / Collegiate Licensing.
 
 Location #1 (centre). "Add Location" adds a second print location.
 - Print Type tabs: Screen Print, Embroidery, Digital, Applique, Transfers, Patches. Click by text.
@@ -118,10 +120,10 @@ Delivery (right):
 - Shipping tiers, one selectable card each, showing Est. Delivery By, Item Shipping Total and MOQ: Standard (free), Expedited, Fresh Prints Flash, Individual Shipping. The chosen tier drives the top-bar Item Shipping Total. Individual Shipping is internal; it is never shown to clients.
 - Colour names ending in " mto" are made to order, minimum 50.
 
-Reading the answer: after qty, style, color and a print method are set, the top bar shows Unit Price and Item Total. `read_text` returns them exactly. Before that they show as "— —".
+Reading the answer: after qty, style, color and a print method are set, the top bar shows Unit Price and Item Total. `get_page_text` returns them exactly. Before that they show as "— —".
 
 ## UI behaviour
 
 - Notification toasts appear top-right and can cover buttons for a few seconds.
 - The "⋯" menu next to the price panel contains an edit and a **delete** control. A delete confirmation dialog says "Are you sure you want to delete the proof?".
-- Some links open a new tab. You are always shown the newest tab.
+- Some links open a new tab. The result tells you a tab opened; switch to it with `switch_tab`.

@@ -2,6 +2,7 @@
 
 import os
 from pathlib import Path
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 
@@ -14,19 +15,24 @@ FP_LOGIN_URL = os.environ["FP_LOGIN_URL"]
 FP_USER = os.environ["FP_USER"]
 FP_PASSWORD = os.environ["FP_PASSWORD"]
 
-# Any OpenAI-compatible endpoint: OpenAI itself, Azure, a gateway, vLLM, LiteLLM...
-# Which API shape to speak.
-#   openai     -> api.openai.com (or leave LLM_BASE_URL empty for the default)
-#   anthropic  -> api.anthropic.com (or leave LLM_BASE_URL empty for the default)
-#   gateway    -> an OpenAI-compatible proxy in front of Claude; needs LLM_BASE_URL
-LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "gateway")
-LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "")
-LLM_API_KEY = os.environ["LLM_API_KEY"]
+# Claude via the Anthropic API. The model must support browser_toolset_20260801.
+# LLM_API_KEY is accepted too, so an older .env keeps working.
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY") or os.environ["LLM_API_KEY"]
 MODEL = os.environ["MODEL"]
 
 MAX_STEPS = int(os.environ.get("MAX_STEPS", "40"))
-SNAPSHOT_MAX_CHARS = int(os.environ.get("SNAPSHOT_MAX_CHARS", "30000"))
+PAGE_TEXT_MAX_CHARS = int(os.environ.get("PAGE_TEXT_MAX_CHARS", "30000"))
+READ_PAGE_MAX_CHARS = 50000   # the toolset contract caps read_page output here
 
+# Hosts the browser may navigate to. Anything else is refused.
+_default_hosts = {
+    urlparse(FP_BASE_URL).hostname,
+    urlparse(FP_LOGIN_URL).hostname,
+    "www.freshprints.com",
+}
+ALLOWED_HOSTS = {
+    host.strip() for host in os.environ.get("ALLOWED_HOSTS", "").split(",") if host.strip()
+} or _default_hosts
 
 AUTH_DIR = ROOT / "auth"          # persistent Chromium profile (logged-in session)
 RUNS_DIR = ROOT / os.environ.get("RUNS_DIR", "runs")
