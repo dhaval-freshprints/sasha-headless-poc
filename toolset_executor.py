@@ -1,5 +1,5 @@
 """
-Runs Anthropic's browser toolset (browser_toolset_20260801) against Playwright.
+Runs Anthropic's browser toolset and catalog verification against Playwright.
 
 One method per member. `run()` only routes. Every method returns the tool result content:
 a string, or a list of content blocks (image, browser_state). Errors are raised; the brain
@@ -11,12 +11,18 @@ navigates; a ref whose node is gone gets the stale-ref error the contract asks f
 """
 
 import base64
+import json
+import re
+import time
 from dataclasses import dataclass
 
 from playwright.sync_api import CDPSession, Page
 
 import config
+from catalog_state import inspect_catalog_product
 from browser import Browser
+from observation_state import CONTROL_STATE_JS
+from tool_policy import validate_tool_call
 
 NOT_EXECUTED = "Not executed: an earlier action in this turn failed."
 
@@ -129,7 +135,7 @@ BLUR_JS = "function() { " + ELEMENT_JS + " if (e.blur) e.blur(); }"
 # Elements the accessibility tree does not list as controls but the page treats as clickable:
 # role-less DIVs with a pointer cursor, a tabindex or a button class (React chips, tiles, cards).
 # Each one is tagged with data-sasha-click=<index> so CDP can find its DOM node afterwards.
-CLICKABLE_JS = """() => {
+CLICKABLE_JS = "() => {" + CONTROL_STATE_JS + """
     const skipTags = new Set(['A', 'BUTTON', 'INPUT', 'SELECT', 'TEXTAREA', 'LABEL', 'OPTION', 'HTML', 'BODY', 'CANVAS', 'SVG', 'PATH']);
     const found = [];
     for (const e of document.querySelectorAll('*')) {
@@ -138,23 +144,32 @@ CLICKABLE_JS = """() => {
         const r = e.getBoundingClientRect();
         if (r.width === 0 || r.height === 0 || !e.checkVisibility({checkVisibilityCSS: true})) continue;
         const cls = (e.className || '').toString();
-        const clickable = e.hasAttribute('tabindex') || /(^|[\\s_-])(btn|button)([\\s_-]|$)/.test(cls)
-            || getComputedStyle(e).cursor === 'pointer';
+        const cursor = getComputedStyle(e).cursor;
+        const parentCursor = e.parentElement ? getComputedStyle(e.parentElement).cursor : '';
+        const startsPointerRegion = cursor === 'pointer' && parentCursor !== 'pointer';
+        const control = cardControl(e);
+        const explicit = control || e.hasAttribute('tabindex') || e.hasAttribute('onclick') ||
+            /(^|[\\s_-])(btn|button)([\\s_-]|$)/.test(cls) || e.style.cursor === 'pointer' || startsPointerRegion;
+        const clickable = explicit || cursor === 'pointer';
         if (!clickable) continue;
         const text = (e.innerText || '').replace(/\\s+/g, ' ').trim();
-        if (text.length > 120) continue;                     // a whole card or panel, not a control
-        if (!text && !e.hasAttribute('tabindex') && !e.dataset.testid) continue;
-        found.push({el: e, text, hint: [e.dataset.testid, cls.split(' ')[0]].filter(Boolean).join(' ')});
+        if (text.length > (control ? 500 : 120)) continue;
+        if (!text && !e.hasAttribute('tabindex') && !e.dataset?.testid) continue;
+        found.push({el: e, text, explicit, hint: [e.dataset?.testid, cls.split(' ')[0]].filter(Boolean).join(' ')});
     }
-    // a wrapper and the label inside it share one text: keep the inner one.
+    // Keep an actionable wrapper over a child that only inherited its pointer cursor.
+    // When both carry the same strength of signal, keep the smaller inner target.
     // a container holding two or more named clickables (a card grid) is not a control itself.
     const keep = found.filter(f => {
+        const sameTextParents = found.filter(g => g !== f && g.el.contains(f.el) && g.text === f.text);
+        if (!f.explicit && sameTextParents.some(g => g.explicit)) return false;
         const inner = found.filter(g => g !== f && f.el.contains(g.el));
+        if (f.explicit && inner.some(g => g.text === f.text && !g.explicit)) return true;
         if (inner.some(g => g.text === f.text)) return false;
         return inner.filter(g => g.text).length < 2;
     });
     keep.forEach((f, i) => f.el.setAttribute('data-sasha-click', String(i)));
-    return keep.map(f => ({text: f.text, hint: f.hint}));
+    return keep.map(f => ({text: stateLabel(f.el) + f.text, hint: f.hint, disabled: isDisabled(f.el)}));
 }"""
 
 # The tooltip showing right now, if any. Colour swatches and icon buttons carry their name here.
@@ -167,6 +182,8 @@ TOOLTIP_JS = """() => {
 }"""
 
 MAX_TOOLTIP_HOVERS = 24      # unnamed tiles named by hovering, per read of the page
+OPTION_WAIT_SECONDS = 3.0
+OPTION_POLL_MS = 100
 
 CENTER_JS = """function() {
     """ + ELEMENT_JS + """
@@ -176,8 +193,95 @@ CENTER_JS = """function() {
     return [r.left + r.width / 2, r.top + r.height / 2];
 }"""
 
+# Only the open dropdown is inspected. Each option gets a temporary index so its backend
+# node id can be resolved without asking Chromium for the full accessibility tree.
+DROPDOWN_OPTIONS_JS = """() => {
+    for (const old of document.querySelectorAll('[data-sasha-option]')) {
+        old.removeAttribute('data-sasha-option');
+    }
+    const visible = element => {
+        const style = getComputedStyle(element);
+        const box = element.getBoundingClientRect();
+        return box.width > 0 && box.height > 0 && style.display !== 'none' &&
+            style.visibility !== 'hidden' && style.opacity !== '0';
+    };
+    const active = document.activeElement;
+    const combo = active && (active.closest('.ng-select') ||
+        active.closest('[role=combobox], [aria-autocomplete]'));
+    const controlledId = active?.getAttribute('aria-controls') || combo?.getAttribute('aria-controls');
+    const controlled = controlledId ? document.getElementById(controlledId) : null;
+    const panels = controlled && visible(controlled)
+        ? [controlled]
+        : [...document.querySelectorAll('[role=listbox], .ng-dropdown-panel, [class*=autocomplete]')]
+            .filter(visible);
+    const panel = panels.length === 1 ? panels[0] : null;
+    const input = active?.value;
+    const busy = element => element && (element.getAttribute('aria-busy') === 'true' ||
+        element.classList.contains('ng-select-loading') ||
+        [...element.querySelectorAll('[aria-busy=true], .ng-spinner-loader, [role=progressbar]')].some(visible));
+    const loading = busy(combo) || busy(panel) ||
+        !!panel && /^(loading|searching)(\\.\\.\\.|…)?$/im.test((panel.innerText || '').trim());
+    if (!panel) return {loading: !!loading, input, noMatch: false, items: []};
+    const noMatch = /^(no items found|no results found|no options|no matches found)$/im.test((panel.innerText || '').trim());
+    const choices = [...panel.querySelectorAll('[role=option], .ng-option, [class~=option]')]
+        .filter(element => visible(element) &&
+            !element.querySelector('[role=option], .ng-option') &&
+            !/loading/i.test((element.innerText || '').trim()));
+    const items = choices.map((element, index) => {
+        element.setAttribute('data-sasha-option', String(index));
+        return {
+            index,
+            disabled: element.matches(':disabled, [aria-disabled=true], .ng-option-disabled') ||
+                !!element.closest('[aria-disabled=true], [inert]'),
+            text: (element.innerText || element.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 120),
+            hint: (element.className || '').toString().split(' ')[0]
+        };
+    }).filter(item => item.text);
+    return {loading: !!loading, input, noMatch, items};
+}"""
+
+SELECTION_STATE_JS = """function() {
+    """ + ELEMENT_JS + """
+    const root = e.closest('.ng-select') || e.closest('[role=combobox]') || e;
+    const input = root.matches('input') ? root : root.querySelector('input');
+    const visible = element => {
+        if (!element) return false;
+        const style = getComputedStyle(element);
+        const box = element.getBoundingClientRect();
+        return box.width > 0 && box.height > 0 && style.display !== 'none' &&
+            style.visibility !== 'hidden' && style.opacity !== '0';
+    };
+    const panelSelector = '[role=listbox], .ng-dropdown-panel, [class*=autocomplete], ' +
+        '[class$="-menu"], [class*="__menu"]';
+    const controlledId = input?.getAttribute('aria-controls') || root.getAttribute('aria-controls');
+    const controlled = controlledId ? document.getElementById(controlledId) : null;
+    const optionPanel = panel => panel && visible(panel) &&
+        (panel === controlled || panel.matches('[role=listbox], .ng-dropdown-panel') ||
+            !!panel.querySelector('[role=option], .ng-option, [class~=option]'));
+    const related = [controlled, ...root.querySelectorAll(panelSelector)]
+        .filter((panel, index, all) => all.indexOf(panel) === index && optionPanel(panel));
+    const global = [...document.querySelectorAll(panelSelector)].filter(optionPanel);
+    const panels = related.length ? related : (global.length === 1 ? global : []);
+    const labels = [...root.querySelectorAll(
+        '.ng-value-label, .ng-value, [aria-selected=true], [data-selected=true], ' +
+        '.selected-value, [class*=singleValue]'
+    )].filter(node => !node.closest(panelSelector) && visible(node))
+        .map(node => (node.innerText || node.textContent || '').replace(/\\s+/g, ' ').trim())
+        .filter(text => text && text.length <= 120);
+    const expanded = root.getAttribute('aria-expanded') || input?.getAttribute('aria-expanded');
+    const panelOpen = panels.length > 0;
+    const rendered = (root.innerText || root.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 240);
+    return {labels: [...new Set(labels)], value: input?.value || '', rendered,
+        closed: expanded === 'false' || !panelOpen, panelOpen,
+        loading: root.classList.contains('ng-select-loading') || root.getAttribute('aria-busy') === 'true'};
+}"""
+
 
 class StaleRef(Exception):
+    pass
+
+
+class PageStillProcessing(Exception):
     pass
 
 
@@ -261,13 +365,18 @@ class TabRefs:
 
 
 class ToolsetExecutor:
-    def __init__(self, browser: Browser):
+    def __init__(self, browser: Browser, attachments=None):
         self.browser = browser
+        self.attachments = attachments          # AttachmentSet for this turn, or None
         self._refs: dict[str, TabRefs] = {}
         self._cdp: dict[str, CDPSession] = {}
         self._reported_tabs: set[str] = set(browser.tabs)
+        self.last_timings = self._empty_timings()
 
     def run(self, name: str, args: dict):
+        self.browser.invalidate_screenshot_cache()
+        self.last_timings = self._empty_timings()
+        validate_tool_call(name, args)
         match name:
             case "navigate":
                 return self.navigate(args)
@@ -281,6 +390,8 @@ class ToolsetExecutor:
                 return self.find(args)
             case "get_page_text":
                 return self.get_page_text(args)
+            case "inspect_catalog_product":
+                return self.inspect_catalog_product(args)
             case "left_click":
                 return self.click(args, button="left", count=1)
             case "right_click":
@@ -305,6 +416,8 @@ class ToolsetExecutor:
                 return self.wait(args)
             case "form_input":
                 return self.form_input(args)
+            case "attach_file":
+                return self.attach_file(args)
             case "new_tab":
                 return self.new_tab()
             case "list_tabs":
@@ -330,26 +443,32 @@ class ToolsetExecutor:
             page.reload(wait_until="domcontentloaded")
         else:
             page.goto(self._checked_url(url), wait_until="domcontentloaded")
-        self._after_action(page)
         self._checked_url(page.url)          # re-check after redirects
         self._refs[tab_id] = TabRefs()
+        self._after_action(page)
         return [{"type": "text", "text": f"Navigated to {page.url}"}, self._browser_state()]
 
     def screenshot(self, args: dict):
         page = self._page(self._tab(args))
-        return [_image_block(self.browser.screenshot(page))]
+        png = self._measure("capture_seconds", self.browser.screenshot, page)
+        return [_image_block(png)]
 
     def zoom(self, args: dict):
         page = self._page(self._tab(args))
         x0, y0, x1, y1 = args["region"]
         clip = {"x": x0, "y": y0, "width": max(1, x1 - x0), "height": max(1, y1 - y0)}
-        return [_image_block(self.browser.screenshot(page, clip=clip))]
+        png = self._measure("capture_seconds", self.browser.screenshot, page, clip)
+        return [_image_block(png)]
 
     # ---- reading ------------------------------------------------------------
 
     def read_page(self, args: dict) -> str:
         tab_id = self._tab(args)
-        nodes = self._collect_nodes(tab_id, args.get("filter"), int(args.get("depth", 15)), args.get("ref"))
+        filter_name = args.get("filter")
+        nodes = self._collect_nodes(
+            tab_id, filter_name, int(args.get("depth", 15)), args.get("ref"),
+            discover_tooltips=filter_name == "interactive",
+        )
         if not nodes:
             return "No elements found."
         text = "\n".join(node.line() for node in nodes)
@@ -359,7 +478,7 @@ class ToolsetExecutor:
 
     def find(self, args: dict) -> str:
         tab_id = self._tab(args)
-        nodes = self._collect_nodes(tab_id, None, 15, None)
+        nodes = self._collect_nodes(tab_id, None, 15, None, discover_tooltips=True)
         words, wanted_role = _query_words(args["query"])
         scored = [(node.score(words, wanted_role), node) for node in nodes]
         scored = [(score, node) for score, node in scored if score > 0]
@@ -373,6 +492,18 @@ class ToolsetExecutor:
         page = self._page(self._tab(args))
         return self.browser.page_text(page)
 
+    def inspect_catalog_product(self, args: dict) -> str:
+        tab_id = self._tab(args)
+        page = self._page(tab_id)
+        nodes = self._collect_nodes(tab_id, None, 15, None, discover_tooltips=False)
+        record = inspect_catalog_product(
+            page.url,
+            args["style_code"],
+            args["color"],
+            [_node_record(node) for node in nodes],
+        )
+        return json.dumps(record, sort_keys=True)
+
     # ---- pointer ------------------------------------------------------------
 
     def click(self, args: dict, button: str, count: int) -> str:
@@ -380,7 +511,6 @@ class ToolsetExecutor:
         page = self._page(tab_id)
         x, y = self._point(tab_id, args["target"])
         url_before = page.url
-        seen = self._interactive_ids(tab_id)
         with self._modifiers(page, args.get("modifiers")):
             page.mouse.click(x, y, button=button, click_count=count)
         self._after_action(page)
@@ -388,8 +518,6 @@ class ToolsetExecutor:
         dialog = page.evaluate(DIALOG_JS)
         if dialog:
             text += f" A dialog is open: {dialog!r}"
-        if page.url == url_before:
-            text += self._appeared_since(tab_id, seen)
         return self._action_result(text, page, url_before)
 
     def hover(self, args: dict) -> str:
@@ -397,7 +525,7 @@ class ToolsetExecutor:
         page = self._page(tab_id)
         x, y = self._point(tab_id, args["target"])
         page.mouse.move(x, y)
-        self.browser.settle(page)
+        self._after_action(page)
         text = f"Hovered {self._describe(args['target'])}."
         tip = page.evaluate(TOOLTIP_JS)
         if tip:
@@ -414,13 +542,13 @@ class ToolsetExecutor:
         dy = {"up": -notches, "down": notches}.get(direction, 0)
         page.mouse.move(x, y)
         page.mouse.wheel(dx, dy)
-        self.browser.settle(page)
+        self._after_action(page)
         return f"Scrolled {direction}."
 
     def scroll_to(self, args: dict) -> str:
         tab_id = self._tab(args)
         self._call_on_ref(tab_id, args["target"]["ref"], CENTER_JS)
-        self.browser.settle(self._page(tab_id))
+        self._after_action(self._page(tab_id))
         return f"Scrolled to {args['target']['ref']}."
 
     # ---- keyboard -----------------------------------------------------------
@@ -461,7 +589,6 @@ class ToolsetExecutor:
         ref = args["target"]["ref"]
         value = args["value"]
         kind = self._call_on_ref(tab_id, ref, FIELD_KIND_JS)
-        seen = self._interactive_ids(tab_id)
         match kind:
             case "select":
                 result = self._set_select(tab_id, ref, value)
@@ -474,7 +601,7 @@ class ToolsetExecutor:
             case _:
                 raise ValueError(f"{ref} is not an editable field. Use read_page to find the textbox, combobox or checkbox.")
         self._after_action(page)
-        return result + self._appeared_since(tab_id, seen)
+        return result
 
     def _set_select(self, tab_id: str, ref: str, value) -> str:
         outcome = self._call_on_ref(tab_id, ref, SET_SELECT_JS, value)
@@ -498,34 +625,104 @@ class ToolsetExecutor:
         center = self._call_on_ref(tab_id, ref, INNER_INPUT_JS)
         if center is None:
             raise ValueError(f"{ref} has no text input to type into.")
+        current = self._call_on_ref(tab_id, ref, SELECTION_STATE_JS)
+        if _selection_matches(current, text, text):
+            return f"Already selected and verified {text!r} in {ref}."
         page.mouse.click(center[0], center[1])
         page.keyboard.press("ControlOrMeta+a")
         page.keyboard.press("Backspace")
         page.keyboard.type(text, delay=10)
-        options = self._wait_for_options(tab_id)
+        search_deadline = time.monotonic() + OPTION_WAIT_SECONDS
+        options, state = self._wait_for_options(tab_id, search_deadline, text)
+        if state == "no_match":
+            raise ValueError(f"Search completed with no matching option for {text!r}. Nothing was selected.")
         if not options:
-            # Nothing matched what was typed. Clear it and show what the box does offer.
-            page.keyboard.press("ControlOrMeta+a")
-            page.keyboard.press("Backspace")
-            offered = [o.name for o in self._wait_for_options(tab_id)][:12]
-            raise ValueError(f"No option matches {text!r} in {ref}. The box offers: {offered or 'nothing yet; try clicking it'}.")
+            raise PageStillProcessing(
+                f"Search for {text!r} is still loading or uncertain. Nothing was selected; "
+                "inspect the current field and options before continuing. This is not a confirmed no-match."
+            )
         chosen = _best_option(options, text)
+        # Re-read immediately before clicking: options can change between polls.
+        fresh, state = self._scoped_options(tab_id, text)
+        if state != "empty" or not any(
+            option.backend_id == chosen.backend_id and option.name == chosen.name and not option.disabled
+            for option in fresh
+        ):
+            raise PageStillProcessing("The matching option changed or became unavailable. Inspect before selecting.")
         x, y = self._point(tab_id, {"type": "ref", "ref": chosen.ref})
         page.mouse.click(x, y)
-        self.browser.settle(page)
-        others = [o.name for o in options if o is not chosen][:6]
-        note = f" Other options were: {others}." if others else ""
-        return f"Selected {chosen.name!r} in {ref}.{note}"
+        selection_deadline = time.monotonic() + OPTION_WAIT_SECONDS
+        observed = self._verify_selection(tab_id, ref, chosen.name, text, selection_deadline)
+        return f"Selected and verified {chosen.name!r} in {ref}; observed {_selection_display(observed)!r}."
 
-    def _wait_for_options(self, tab_id: str) -> list[Node]:
-        page = self._page(tab_id)
-        for _ in range(25):
-            page.wait_for_timeout(300)
-            options = [n for n in self._collect_nodes(tab_id, "interactive", 15, None) if _is_option(n)]
-            still_loading = options and all("loading" in n.name.lower() for n in options)
-            if options and not still_loading:
-                return options
-        return []
+    def _verify_selection(self, tab_id: str, ref: str, name: str, query: str,
+                          deadline: float) -> dict:
+        previous = None
+        while True:
+            state = self._call_on_ref(tab_id, ref, SELECTION_STATE_JS)
+            signature = _selection_signature(state) if _selection_matches(state, name, query) else None
+            if signature is not None and signature == previous and not state["loading"]:
+                return state
+            previous = signature
+            if not self._poll_options(tab_id, deadline):
+                raise PageStillProcessing(
+                    "The option was clicked, but selection is unverified. Inspect the field before retrying."
+                )
+
+    def _poll_options(self, tab_id: str, deadline: float) -> bool:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        self._page(tab_id).wait_for_timeout(min(OPTION_POLL_MS, remaining * 1000))
+        return True
+
+    def _wait_for_options(self, tab_id: str, deadline: float, query: str | None = None) -> tuple[list[Node], str]:
+        saw_loading = False
+        previous_match = None
+        while True:
+            if query is None:
+                options, state = self._measure("enrichment_seconds", self._scoped_options, tab_id)
+            else:
+                options, state = self._measure("enrichment_seconds", self._scoped_options, tab_id, query)
+            saw_loading = saw_loading or state == "loading"
+            # A cached empty list can survive typing while a debounce timer runs.
+            # Require a processing cycle before calling this a completed no-match.
+            if state == "no_match" and saw_loading:
+                return [], "no_match"
+            if state == "empty" and options:
+                if query is None:
+                    return options, "ready"
+                try:
+                    chosen = _best_option(options, query)
+                except ValueError:
+                    chosen = None
+                match = (chosen.backend_id, chosen.name) if chosen else None
+                if match and match == previous_match:
+                    return options, "ready"
+                previous_match = match
+            else:
+                previous_match = None
+            if not self._poll_options(tab_id, deadline):
+                return [], "loading" if state == "loading" else "uncertain"
+
+    def _scoped_options(self, tab_id: str, query: str | None = None) -> tuple[list[Node], str]:
+        outcome = self._page(tab_id).evaluate(DROPDOWN_OPTIONS_JS)
+        backend_ids = self._backend_ids_by_index(tab_id, "[data-sasha-option]", "data-sasha-option")
+        refs = self._refs_for(tab_id)
+        options = []
+        for item in outcome["items"]:
+            backend_id = backend_ids.get(item["index"])
+            if backend_id is None:
+                continue
+            options.append(Node(
+                ref=refs.ref_for(backend_id), role="option", name=item["text"],
+                depth=0, backend_id=backend_id, hints=item["hint"], disabled=item.get("disabled", False),
+            ))
+        if query is not None and outcome.get("input") != query:
+            return [], "uncertain"
+        if outcome["loading"]:
+            return options, "loading"
+        return options, "no_match" if outcome.get("noMatch") else "empty"
 
     def _set_text(self, tab_id: str, ref: str, text: str, page: Page) -> str:
         x, y = self._point(tab_id, {"type": "ref", "ref": ref})
@@ -538,6 +735,43 @@ class ToolsetExecutor:
         return f"Filled {ref} with {len(text)} characters. Now contains: {now[:80]!r}"
 
     # ---- tabs ---------------------------------------------------------------
+
+    def attach_file(self, args: dict) -> str:
+        """
+        Give one of this turn's files to the page's file input.
+
+        The Design Tool's input is 0x0 and hidden, so it is not in the accessibility tree and
+        cannot be clicked: clicking the visible "Upload" tile opens the operating system's file
+        dialog, which the browser cannot answer. Setting the files on the input directly is the
+        only route, and it fires the same change event the page listens for.
+        """
+        if not self.attachments:
+            raise ValueError("No files came with this turn, so there is nothing to attach.")
+        path = self.attachments.path_for(str(args["file"]).strip())
+        tab_id = self._tab(args)
+        page = self._page(tab_id)
+
+        inputs = page.query_selector_all("input[type=file]")
+        if not inputs:
+            raise ValueError("No file input on this page. Open the page that takes the upload first.")
+        chosen = self._file_input(inputs, args.get("selector"))
+        chosen.set_input_files(str(path))
+
+        self._refs[tab_id] = TabRefs()
+        self._after_action(page)
+        return self._action_result(
+            f"Attached {path.name} to the file input. The page decides what happens next; "
+            f"look at it to see whether it was accepted.", page, page.url)
+
+    @staticmethod
+    def _file_input(inputs: list, selector: str | None):
+        """The one the page means: the caller's selector, else the only one, else the last."""
+        if selector:
+            for element in inputs:
+                if element.get_attribute("data-testid") == selector or element.get_attribute("id") == selector:
+                    return element
+            raise ValueError(f"No file input matching {selector!r} on this page.")
+        return inputs[-1] if len(inputs) > 1 else inputs[0]
 
     def new_tab(self):
         self.browser.new_tab()
@@ -577,8 +811,27 @@ class ToolsetExecutor:
         return self._cdp[tab_id].send(method, params or {})
 
     def _after_action(self, page: Page) -> None:
-        self.browser.settle(page)
+        self.browser.invalidate_screenshot_cache()
         self.browser.dismiss_toasts(page)
+        pending = self._measure("readiness_seconds", self.browser.wait_for_ready, page)
+        if pending:
+            raise PageStillProcessing(pending)
+
+    @staticmethod
+    def _empty_timings() -> dict[str, float]:
+        return {
+            "readiness_seconds": 0.0,
+            "tree_seconds": 0.0,
+            "enrichment_seconds": 0.0,
+            "capture_seconds": 0.0,
+        }
+
+    def _measure(self, phase: str, function, *args):
+        started = time.monotonic()
+        try:
+            return function(*args)
+        finally:
+            self.last_timings[phase] += time.monotonic() - started
 
     def _action_result(self, text: str, page: Page, url_before: str) -> list | str:
         """Attach a browser_state block when the tab set or the URL changed under the action."""
@@ -608,11 +861,18 @@ class ToolsetExecutor:
 
     # ---- helpers: the accessibility tree -----------------------------------
 
-    def _collect_nodes(self, tab_id: str, filter_name: str | None, max_depth: int, root_ref: str | None) -> list[Node]:
+    def _collect_nodes(
+        self,
+        tab_id: str,
+        filter_name: str | None,
+        max_depth: int,
+        root_ref: str | None,
+        discover_tooltips: bool = False,
+    ) -> list[Node]:
         page = self._page(tab_id)
-        self.browser.settle(page)
         self.browser.dismiss_toasts(page)
         refs = self._refs_for(tab_id)
+        tree_started = time.monotonic()
         raw = self._cdp_send(tab_id, "Accessibility.getFullAXTree")["nodes"]
         by_id = {node["nodeId"]: node for node in raw}
         root = raw[0]
@@ -629,8 +889,6 @@ class ToolsetExecutor:
                 printable = False     # the text inside a button, link or heading repeats its name
             if printable:
                 node = _to_node(raw_node, depth, refs)
-                if node.interactive and not node.name:
-                    node.near, node.hints = self._near_label(tab_id, node.backend_id)
                 if filter_name != "interactive" or node.interactive:
                     collected.append(node)
                 if node.role == "textbox":
@@ -645,12 +903,22 @@ class ToolsetExecutor:
                     walk(child, next_depth, name if printable else parent_name)
 
         walk(root, 0, "")
+        self.last_timings["tree_seconds"] += time.monotonic() - tree_started
+        for node in collected:
+            if node.interactive and not node.name:
+                node.near, node.hints = self._measure(
+                    "enrichment_seconds", self._near_label, tab_id, node.backend_id,
+                )
         if not root_ref:
-            collected.extend(self._clickable_dom_nodes(tab_id, {n.backend_id for n in collected}))
+            clickable = self._measure(
+                "enrichment_seconds", self._clickable_dom_nodes,
+                tab_id, {n.backend_id for n in collected}, discover_tooltips,
+            )
+            collected.extend(clickable)
         refs.last_read = collected
         return collected
 
-    def _clickable_dom_nodes(self, tab_id: str, known: set[int]) -> list[Node]:
+    def _clickable_dom_nodes(self, tab_id: str, known: set[int], discover_tooltips: bool) -> list[Node]:
         """Role-less elements the page treats as clickable (React chips, tiles, cards). The
         accessibility tree skips them; they are listed as buttons, named by text or tooltip."""
         refs = self._refs_for(tab_id)
@@ -665,8 +933,9 @@ class ToolsetExecutor:
             if backend_id is None or backend_id in known:
                 continue
             nodes.append(Node(ref=refs.ref_for(backend_id), role="button", name=item["text"],
-                              depth=0, backend_id=backend_id, hints=item["hint"]))
-        self._name_by_tooltip(tab_id, [n for n in nodes if not n.name])
+                              depth=0, backend_id=backend_id, hints=item["hint"],
+                              disabled=item.get("disabled", False)))
+        self._name_by_tooltip(tab_id, [n for n in nodes if not n.name], discover_tooltips)
         return nodes
 
     def _backend_ids_by_index(self, tab_id: str, selector: str, attribute: str) -> dict[int, int]:
@@ -680,17 +949,18 @@ class ToolsetExecutor:
             found[int(attrs[attrs.index(attribute) + 1])] = node["backendNodeId"]
         return found
 
-    def _name_by_tooltip(self, tab_id: str, nodes: list[Node]) -> None:
+    def _name_by_tooltip(self, tab_id: str, nodes: list[Node], discover: bool) -> None:
         """Unnamed tiles (colour swatches) show their name only on hover. Hover each once per page."""
         if not nodes:
             return
         refs = self._refs_for(tab_id)
         page = self._page(tab_id)
         for node in nodes[:MAX_TOOLTIP_HOVERS]:
-            if node.backend_id not in refs.tooltip_names:
+            if discover and node.backend_id not in refs.tooltip_names:
                 refs.tooltip_names[node.backend_id] = self._tooltip_after_hover(tab_id, node.backend_id, page)
-            node.name = refs.tooltip_names[node.backend_id]
-        page.mouse.move(1, 1)
+            node.name = refs.tooltip_names.get(node.backend_id, "")
+        if discover:
+            page.mouse.move(1, 1)
 
     def _tooltip_after_hover(self, tab_id: str, backend_id: int, page: Page) -> str:
         try:
@@ -702,27 +972,6 @@ class ToolsetExecutor:
             return page.evaluate(TOOLTIP_JS) or ""
         except Exception:
             return ""
-
-    def _interactive_ids(self, tab_id: str) -> set[int]:
-        """The interactive elements on the page right now, so an action can report what it revealed."""
-        try:
-            return {n.backend_id for n in self._collect_nodes(tab_id, "interactive", 15, None)}
-        except Exception:
-            return set()
-
-    def _appeared_since(self, tab_id: str, seen: set[int]) -> str:
-        """Interactive elements that were not there before the action: a colour box after a style, a form after a click."""
-        if not seen:
-            return ""
-        try:
-            nodes = [n for n in self._collect_nodes(tab_id, "interactive", 15, None) if n.backend_id not in seen]
-        except Exception:
-            return ""
-        if not nodes:
-            return ""
-        lines = _collapse_repeats([n.line().strip() for n in nodes])
-        more = f" (+{len(lines) - 10} more; use find to narrow)" if len(lines) > 10 else ""
-        return " New on the page: " + " | ".join(lines[:10]) + more
 
     def _near_label(self, tab_id: str, backend_id: int) -> tuple[str, str]:
         try:
@@ -790,6 +1039,70 @@ def stale_ref_message(ref: str) -> str:
     return f"Error: {ref} is stale or not found on the current page. Re-read the page to get fresh references."
 
 
+def _node_record(node: Node) -> dict:
+    return {
+        "role": node.role,
+        "name": node.name,
+        "value": node.value,
+        "near": node.near,
+        "url": node.url,
+        "disabled": node.disabled,
+    }
+
+
+def _selection_matches(state: dict, name: str, query: str) -> bool:
+    if state.get("loading"):
+        return False
+    labels = [str(label) for label in state.get("labels", [])]
+    if any(_observed_matches(label, name) for label in labels):
+        return True
+    value = str(state.get("value", ""))
+    if _observed_matches(value, name):
+        query_was_replaced = _normalize(value) != _normalize(query)
+        if state.get("closed") or query_was_replaced:
+            return True
+    rendered = str(state.get("rendered", ""))
+    return bool(state.get("closed") and _observed_matches(rendered, name))
+
+
+def _selection_signature(state: dict) -> tuple:
+    return (
+        tuple(sorted(_normalize(str(label)) for label in state.get("labels", []))),
+        _normalize(str(state.get("value", ""))),
+        _normalize(str(state.get("rendered", ""))),
+        bool(state.get("closed")),
+        bool(state.get("panelOpen")),
+    )
+
+
+def _selection_display(state: dict) -> str:
+    labels = [str(label).strip() for label in state.get("labels", []) if str(label).strip()]
+    if labels:
+        return labels[0]
+    return str(state.get("value") or state.get("rendered") or "selected option").strip()
+
+
+def _observed_matches(observed: str, wanted: str) -> bool:
+    observed_text = _normalize(observed)
+    wanted_text = _normalize(wanted)
+    if not observed_text or not wanted_text:
+        return False
+    if observed_text == wanted_text:
+        return True
+    if not _looks_like_style_code(wanted_text):
+        return False
+    pattern = rf"(?<![a-z0-9]){re.escape(wanted_text)}(?![a-z0-9])"
+    return bool(re.search(pattern, observed_text))
+
+
+def _looks_like_style_code(text: str) -> bool:
+    return " " not in text and any(char.isdigit() for char in text)
+
+
+def _normalize(text: str) -> str:
+    return " ".join(text.casefold().split())
+
+
 def _image_block(png: bytes) -> dict:
     return {
         "type": "image",
@@ -800,37 +1113,21 @@ def _image_block(png: bytes) -> dict:
 def _best_option(options: list, text: str):
     """Exact name first, then a name containing the text. Nothing else: a wrong pick is worse than an error."""
     wanted = text.strip().lower()
+    options = [option for option in options if not option.disabled and
+               not option.name.lower().startswith("add item")]
     for option in options:
         if option.name.strip().lower() == wanted:
             return option
     # "Add Item ..." creates a new entry; never pick it by accident.
     real = [o for o in options if not o.name.lower().startswith("add item")]
-    for option in real:
-        if wanted in option.name.lower():
-            return option
+    contained = [option for option in real if _observed_matches(option.name, wanted)]
+    if len(contained) == 1:
+        return contained[0]
+    if len(contained) > 1:
+        offered = [option.name for option in contained][:12]
+        raise ValueError(f"More than one existing option matches {text!r}: {offered}. Nothing was selected.")
     offered = [o.name for o in options][:12]
     raise ValueError(f"No existing option matches {text!r}. The box offers: {offered}. Nothing was selected.")
-
-
-def _is_option(node: Node) -> bool:
-    """A dropdown choice: a real option node, or a role-less menu entry whose class says option."""
-    return node.role == "option" or (node.role == "button" and "option" in node.hints.lower())
-
-
-def _collapse_repeats(lines: list[str]) -> list[str]:
-    """Ten identical 'button "Like"' entries (one per card) become one line with a count."""
-    counts: dict[str, int] = {}
-    for line in lines:
-        key = line.split(" [ref_")[0]
-        counts[key] = counts.get(key, 0) + 1
-    out, done = [], set()
-    for line in lines:
-        key = line.split(" [ref_")[0]
-        if key in done:
-            continue
-        done.add(key)
-        out.append(line if counts[key] == 1 else f"{line} (x{counts[key]})")
-    return out
 
 
 def _short(text: str, limit: int) -> str:

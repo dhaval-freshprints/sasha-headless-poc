@@ -14,7 +14,7 @@ deal_id (+ optional client message)
    toolset_executor.py — one method per toolset member: read_page/find (tree with [ref_N]),
         │                clicks by ref or coordinate, form_input, screenshot, tabs
         ▼
-   browser.py          — logged-in Chromium session, named tabs, settle, toasts
+   browser.py          — logged-in Chromium session, named tabs, readiness, toasts
         │
         ▼
    QA CRM / quoter / proofs
@@ -29,6 +29,8 @@ deal_id (+ optional client message)
 | `toolset_executor.py` | runs each toolset member against Playwright; owns refs and tab ids |
 | `browser.py` | the Chromium session and tabs |
 | `brain.py` | Sasha Brain — the loop + system prompt |
+| `run_limits.py` | action/time budgets and a reserved verification window |
+| `tool_policy.py` | shared disabled-tool policy and key-repeat bounds |
 | `prompts/workplace.md` | the map: pages, URLs, how each form works, incl. the Design Tool. Facts only, no opinions |
 | `prompts/playbook.md` | how Sasha works and writes: judgment, voice, outreach, client reply |
 | `run_cli.py` | terminal runner |
@@ -57,13 +59,20 @@ support the browser toolset: `claude-opus-5`, `claude-sonnet-5`, `claude-fable-5
 
 Nothing is pushed after an action. The model asks: `read_page` (accessibility tree, every
 element tagged `[ref_N]`), `find` (a query, up to 20 matching elements), `get_page_text`
-(visible text, exact), `screenshot`, `zoom`. It acts by ref (`left_click`, `form_input`,
+(visible text with control-state annotations), `screenshot`, `zoom`. It acts by ref (`left_click`, `form_input`,
 `scroll_to`) or by viewport coordinate when a control has no name (canvas, icon buttons).
 Refs live until the tab navigates; a stale ref returns an error and the model re-reads.
 
+Checkbox cards include enabled/disabled and selected state alongside their text. The shared
+`observation_state.py` helper reads native disabled controls and ARIA/inert state; it does not
+infer eligibility from colour, prices or delivery dates. Supplemental DOM controls retain
+that state in `read_page`/`find` too. Shipping recommendations use the current date mode and
+enabled options, rather than listing every visible tier.
+
 Controls the accessibility tree does not list (role-less DIVs with a pointer cursor, a tabindex
 or a button class: React chips, tiles, cards, the Design Tool's whole UI) are added to the tree
-as `button "<text>"`; unnamed tiles are named by their hover tooltip, hovered once per page.
+as `button "<text>"`. Tooltip discovery runs for `find` and interactive `read_page` requests;
+names are cached while the corresponding node refs remain live. Ordinary reads reuse known names.
 
 One model turn can carry several calls. They run in order and stop at the first failure;
 the rest are answered `Not executed: an earlier action in this turn failed.`
@@ -85,7 +94,58 @@ curl -X POST localhost:8100/simulate -H 'content-type: application/json' -d '{"d
 curl -X POST localhost:8100/simulate -H 'content-type: application/json' -d '{"deal_id": 303817, "client_message": "price for 50?"}'
 ```
 
-Every turn writes `runs/deal_<id>/turn_<timestamp>/run.json` plus one screenshot per batch (for humans; the model only gets the screenshots it asks for), and appends to `runs/deal_<id>/transcript.md`, which is Sasha's only memory of the deal. `run.json` also counts `screenshots_sent`, `stale_refs` and `batch_halts` per turn.
+Every turn writes `runs/deal_<id>/turn_<timestamp>/run.json` and appends to
+`runs/deal_<id>/transcript.md`, Sasha's only memory of the deal. Batches with executed browser
+work get a recording for humans; final-reply-only and rejected-only batches do not. A full
+screenshot that is the last browser observation in the batch is reused once for recording.
+Any subsequent browser tool invalidates reuse; a zoom never substitutes for a full image.
+The model only receives images it requests.
+
+## Work limits and timing
+
+Defaults are 40 work batches, 120 tool attempts and 600 seconds. `MAX_BATCHES` replaces
+`MAX_STEPS`; the old setting still works when `MAX_BATCHES` is absent. When a limit is reached,
+new mutations stop. Up to 8 inspection/navigation calls and 45 seconds remain to check an
+uncertain save and report what finished. Two model turns are reserved after the batch cap.
+Limits are checked between calls, so an in-flight browser call can finish after the work
+deadline. Model requests have a 60-second timeout, shortened to the remaining budget, with
+automatic SDK retries disabled. All settings are shown in `.env.example`.
+
+A key call may send at most 20 chords. Arrow movement requires a screenshot/zoom checkpoint
+after three calls or 20 arrow presses, whichever comes first; further movement waits until
+the next model turn can inspect that image. Determining that artwork actually moved remains
+a visual check. Disabled tools, including fixed `wait`, are rejected locally as well as
+withheld from the model's tool configuration.
+
+Reads and captures do not wait for network idle. Actions check visible processing indicators
+under a bounded readiness deadline. A pending action stops dependent calls in its batch;
+it does not establish a successful save. Proof persistence still needs inspection after saving.
+Dropdown polling uses one three-second deadline without full-page scans on each poll.
+Autocomplete checks input and dropdown loading state, confirms the typed query, and waits
+for a matching enabled option across consecutive observations. It rechecks that option before
+clicking and verifies the selected label/value afterward. A visible no-results message after
+an observed loading cycle is a confirmed no-match; a timeout or an unchanged unrelated list
+is uncertain. Widgets without recognizable completion/selection signals return uncertainty
+instead of reporting absence or success. These checks are shared by autocomplete fields on
+every page; they do not hardcode products or style codes.
+
+`run.json` retains existing totals and adds:
+
+- Per-step elapsed `seconds`, `outcome`, and disjoint readiness/tree/enrichment/capture timings.
+- Per-model-call duration, tokens, request ID and stop reason or error type.
+- Recording duration and screenshot reuse, separate from model-requested capture timings.
+- Prompt/source hashes, SDK version, effective non-secret limits and disabled tools.
+- A turn `stop_reason` and counts of reserved actions and verification actions.
+
+For compatibility, `browser_seconds` still includes recording. Subtract `recording_seconds`
+to isolate tool execution; do not add nested step phase timings to step totals. The model
+duration includes the complete SDK request, not just model inference.
+
+Focused local checks (no API calls or live browser):
+
+```bash
+python -m unittest discover -s tests -v
+```
 
 ## Evals
 

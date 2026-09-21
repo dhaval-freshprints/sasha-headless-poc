@@ -21,7 +21,21 @@ FP_PASSWORD = os.environ["FP_PASSWORD"]
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY") or os.environ["LLM_API_KEY"]
 MODEL = os.environ["MODEL"]
 
-MAX_STEPS = int(os.environ.get("MAX_STEPS", "40"))
+def positive_setting(name: str, default: str) -> int:
+    value = int(os.environ.get(name, default))
+    if value <= 0:
+        raise ValueError(f"{name} must be positive")
+    return value
+
+
+MAX_BATCHES = positive_setting("MAX_BATCHES", os.environ.get("MAX_STEPS", "40"))
+MAX_STEPS = MAX_BATCHES  # Compatibility with existing callers and .env files.
+MAX_ACTIONS = positive_setting("MAX_ACTIONS", "120")
+MAX_TURN_SECONDS = positive_setting("MAX_TURN_SECONDS", "600")
+MAX_VERIFICATION_ACTIONS = positive_setting("MAX_VERIFICATION_ACTIONS", "8")
+VERIFICATION_SECONDS = positive_setting("VERIFICATION_SECONDS", "45")
+MODEL_TIMEOUT_SECONDS = positive_setting("MODEL_TIMEOUT_SECONDS", "60")
+MAX_KEY_REPEAT = positive_setting("MAX_KEY_REPEAT", "20")
 PAGE_TEXT_MAX_CHARS = int(os.environ.get("PAGE_TEXT_MAX_CHARS", "30000"))
 READ_PAGE_MAX_CHARS = 50000   # the toolset contract caps read_page output here
 

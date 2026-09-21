@@ -1,8 +1,8 @@
 """
 Talk to Claude. Builds the request, reads the answer. Nothing else knows the wire format.
 
-Tools: Anthropic's browser toolset (executed by toolset_executor.py) plus one custom tool,
-reply_to_client, which ends the turn.
+Tools: Anthropic's browser toolset (executed by toolset_executor.py), catalog verification,
+file attachment, and reply_to_client, which ends the turn.
 """
 
 from dataclasses import dataclass, field
@@ -10,15 +10,51 @@ from dataclasses import dataclass, field
 from anthropic import Anthropic
 
 import config
-
-# Members we never need on this CRM. A smaller schema is cheaper and gives the model less to wander into.
-# `wait` is off because every action already waits for the page to settle (browser.settle); with it on,
-# the model padded almost every action with 2-3s.
-DISABLED_MEMBERS = ["left_mouse_down", "left_mouse_up", "hold_key", "left_click_drag", "middle_click", "wait"]
+from tool_policy import DISABLED_MEMBERS
 
 BROWSER_TOOLSET = {
     "type": "browser_toolset_20260801",
     "configs": {member: {"enabled": False} for member in DISABLED_MEMBERS},
+}
+
+# Uploading a client's file. Not a browser-toolset member: the toolset has file_upload, but the
+# Design Tool's input is hidden (0x0), so it is not in the page tree and cannot be targeted by ref.
+# This tool names the file by the handle the turn was given; the executor sets it on the input.
+ATTACH_TOOL = {
+    "name": "attach_file",
+    "description": (
+        "Give one of this turn's files to the file input on the current page, for pages that take "
+        "an upload (the Design Tool's Upload, the wizard's Upload Ref. Image). Use this instead of "
+        "clicking the Upload tile: clicking it opens the operating system's file dialog, which "
+        "cannot be answered. In the Design Tool, set selector to upload-file-input to target "
+        "artwork rather than the separate font input. Only files listed in this turn's message can be attached."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "file": {"type": "string", "description": "The handle you were given, e.g. file_1."},
+            "selector": {"type": "string",
+                         "description": "Optional data-testid or id of the input, e.g. upload-file-input."},
+        },
+        "required": ["file"],
+    },
+}
+
+CATALOG_TOOL = {
+    "name": "inspect_catalog_product",
+    "description": (
+        "Verify that an exact style appears as a product link on the current public Fresh Prints catalog page. "
+        "Use this before recommending a generic product option. An exact completed search with no matching "
+        "link returns not_found; an ambiguous page returns unknown."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "style_code": {"type": "string"},
+            "color": {"type": "string"},
+        },
+        "required": ["style_code", "color"],
+    },
 }
 
 REPLY_TOOL = {
@@ -31,7 +67,7 @@ REPLY_TOOL = {
     },
 }
 
-TOOLS = [BROWSER_TOOLSET, REPLY_TOOL]
+TOOLS = [BROWSER_TOOLSET, ATTACH_TOOL, CATALOG_TOOL, REPLY_TOOL]
 
 
 @dataclass
@@ -45,6 +81,14 @@ class ToolCall:
     def is_browser(self) -> bool:
         return self.toolset_name == "browser"
 
+    @property
+    def is_attach(self) -> bool:
+        return self.name == "attach_file"
+
+    @property
+    def is_local_read(self) -> bool:
+        return self.name == "inspect_catalog_product"
+
 
 @dataclass
 class Reply:
@@ -55,15 +99,22 @@ class Reply:
     output_tokens: int = 0
     cached_tokens: int = 0
     stop_reason: str = ""
+    request_id: str = ""
 
 
 class LLM:
     def __init__(self):
-        self.client = Anthropic(api_key=config.ANTHROPIC_API_KEY)
+        self.client = Anthropic(api_key=config.ANTHROPIC_API_KEY,
+                                timeout=config.MODEL_TIMEOUT_SECONDS, max_retries=0)
         self.model = config.MODEL
 
-    def send(self, system: str, messages: list[dict]) -> Reply:
-        response = self.client.messages.create(
+    def send(self, system: str, messages: list[dict], timeout_seconds: float | None = None) -> Reply:
+        timeout = config.MODEL_TIMEOUT_SECONDS
+        if timeout_seconds is not None:
+            if timeout_seconds <= 0:
+                raise TimeoutError("No model-call time remains")
+            timeout = min(timeout, timeout_seconds)
+        response = self.client.with_options(timeout=timeout).messages.create(
             model=self.model,
             max_tokens=4096,
             system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
@@ -86,6 +137,7 @@ class LLM:
             output_tokens=usage.output_tokens,
             cached_tokens=cached,
             stop_reason=response.stop_reason or "",
+            request_id=getattr(response, "_request_id", "") or "",
         )
 
     # ---- message builders ---------------------------------------------------

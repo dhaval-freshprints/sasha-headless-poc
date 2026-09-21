@@ -28,6 +28,7 @@ If a line needs the words "always", "never" or "prefer", it belongs in playbook.
 
 - Shows one product with: style, color, quantity box, unit price, item total, delivery estimate ("Est. Delivery By"), shipping method, order minimum. The quantity box is the `spinbutton` next to the style code (e.g. "#NKDM3978") in the Price panel; it has no label of its own.
 - Typing a quantity in the quantity box recalculates the price on screen. Nothing is saved until "Save Price" is clicked. "Cancel" discards it.
+- The delivery panel has Order On / Need By buttons and a Date field. Order On uses an order-placement date and shows estimated delivery dates. Need By uses an arrival deadline and shows order-by dates. Shipping Options opens cards with dates, costs or savings, MOQ and a checkbox. Disabled cards can still show all these numbers. The checkbox's disabled state determines availability; the selected checkbox identifies the current tier. After changing the date or quantity, the recalculated cards provide the current options. Save Price is separate from inspecting a quote.
 - Print details are under "Location & Decorations": print type, number of colors, art description per location.
 - Revision chips at the top ("Original Proof", "Revision 1", ...) switch which version is shown.
 - "Or Submit a Revision Request" (plain text, next to "Revise in Design Tool") opens the revision form. It is hidden while a revision is already pending.
@@ -62,18 +63,49 @@ Step 3, Print Info & Price Estimate (same layout as the revision form):
 
 ## Design Tool (https://dt-qa.internal-fp.com/)
 
-A canvas editor. Saving creates a proof on the deal in one step: the proof is Done at once, nothing goes to the art team. Same login as the CRM; it is a different host, so open it with `navigate`.
+A canvas editor that saves a finished mockup to the CRM. It uses the CRM login on a different host. `navigate` opens a new design; a proof's "Design in Design Tool" / "Revise in Design Tool" opens that proof in a new tab. `switch_tab` selects the opened tab. Existing proofs show their item number and revision in the editor.
 
-- The controls are chips and tiles; the tree lists them as `button "..."`. The garment and the design are on a canvas that is not in the tree: a screenshot shows it.
-- A "Need help?" chat panel at the bottom left opens by itself on stock warnings and covers the left rail. `button "Collapse"` closes it.
-- Left rail: `button "Add Text"`, `button "Upload"`, `button "Designs"` (a gallery of past designs; ignore it), `button "Clipart & logos"`, `button "Greek"`.
-- Right panel: the current product (name, style code, minimum), its colour tiles, Print Type tabs (Screen Print, Embroidery, Digital, ...) and method cards (Standard, Puff Ink, ...), all buttons named by their label. A new design starts on a Comfort Colors tee.
-- Change product: `button "Change Product"` opens a picker. Its search box is `textbox "Try "T-Shirt""` (the other search box, `textbox "Try "Alpha""`, is the designs gallery). Type a style code with `form_input`, e.g. NKDC1963; each result is a `button` named by the product, e.g. `button "Nike Dri-FIT Micro Pique 2.0 Polo"`. Click it, then `button "Switch to This"`. The picker closes and the right panel shows the new product.
-- Colour: the tiles under the product name are `button "<Colour> / <stock note>"`, e.g. `button "Black / Selling Out Fast in S"`. Click one to set the garment colour. The first read of a page with tiles takes a few seconds.
-- Text: `button "Add Text"` puts a placeholder "TEXT" object on the garment, about 11 inches below the collar. To write in it: take a screenshot, `double_click` the object by coordinate, `key ctrl+a`, `type` the words. The Text Tool panel on the left then shows `combobox "Font"`, format buttons, a colour palette, and `spinbutton "Width"`, `"Height"`, `"Distance from Collar"` and `"Rotate"` in inches; `form_input` on Distance from Collar moves the text (about 3 for the chest). The panel never shows the words; only the canvas does. `zoom` on the object to read them back.
-- Save: `button "Save"` at the top right opens a form: `textbox "Design Title"`, `combobox "Deal"` (type the deal title or id with `form_input`; the options take a few seconds), `textbox "Client"` (fills itself once the deal is chosen), "Send a Copy to Client" as `button "Yes"` / `button "No"` (starts on Yes; Yes emails the client), Est. Quantity, Price Per Item, and a second `button "Save"` at the bottom of the form. That bottom Save stays disabled while the canvas is empty.
-- After Save a "Design Saved" toast shows and the URL gains `?proofItemId=<n>`. The proof is on the deal page under its proof count, its status is Done, and its page shows "Original Proof" with the mockup image, the product and colour, the print method and the font. Its Art Description says only the location ("Front"); the words are only in the image. Licensing shows whatever the client record holds; the tool asks for none.
-- Changes to a Design Tool proof: "Revise in Design Tool" on the proof page, which opens the tool on that proof; Save there offers "Save as new revision".
+### Page and selection
+
+- Left rail: Add Text, Upload, Designs, Clipart & logos, Greek. Right panel: product, colour, print type and method. Many controls are clickable tiles rather than native buttons; `read_page`/`find` can expose them as buttons. The artwork itself is canvas content, visible through `screenshot`/`zoom`, not text in the page tree.
+- Opening a left panel changes the canvas position. Coordinates come from a current screenshot. A single click selects an object and shows its editing panel; double-clicking text enters text editing. Clicking empty canvas leaves editing and can deselect the object. Disabled Size & Placement fields can retain the last object's values; they do not establish a current selection.
+- A "Need help?" panel can cover the rail. Its Collapse control closes it.
+- A new design starts on a Comfort Colors tee. Change Product opens the product picker. Its search placeholder is `Try "T-Shirt"`; `Try "Alpha"` searches designs instead. Search by style, choose the matching product, then Switch to This. The right panel shows the selected product and style. Colour tiles are under the product name; their labels include colour and stock notes.
+- Print Type and its method cards are in the right panel. The selected state can be checked visually. An image upload's print-type choice can also change the method for existing artwork at that location.
+
+### Text: add or revise
+
+1. Add Text creates a new placeholder `TEXT`. For a wording revision, select the existing text instead of adding another object.
+2. Take a screenshot, double-click inside the words, send `key` with `text: "ctrl+a"`, then `type` the exact replacement text. Select-all belongs inside text editing, not on the whole canvas. Click blank canvas to leave editing, then reselect the text for styling.
+3. The left Text Tool panel has a Font combobox, formatting controls and ink swatches. Search a font, select its matching result, and check the selected font and rendered words after the change. Swatches for colours already used can appear separately from the main palette.
+4. Finish content, font and colour before size and placement. Font/content changes can change the bounding box, and an immediate field read can lag the rendered size. The exact words must be checked in the canvas image; the CRM Art Description may contain only `Front`.
+
+### Images: upload and inspect
+
+Only a handle supplied with this turn can be uploaded. A filename or URL is not a handle. The source file cannot be opened directly by Sasha; the editor's upload preview and canvas can be inspected after upload.
+
+1. On the Design Tool tab call `attach_file({"file":"file_1","selector":"upload-file-input"})`, substituting the actual handle. This names the artwork input by its data-testid. The page also contains a font file input, and the upload helper chooses the last file input if no selector is supplied. The visible Upload tile opens an OS picker that Sasha cannot answer; `attach_file` supplies the file directly to the hidden input.
+2. The Upload tooltip lists JPEG/JPG and PNG up to 10 MB, and SVG with no listed size limit. Uploading in progress is an intermediate state. Inspect the resulting page for a rejection or the Edit Image modal before continuing. A 64×64 PNG reached the canvas without a visible quality warning in the QA walkthrough; acceptance alone does not establish print quality.
+3. Edit Image shows the artwork, Remove Background, Crop Image and Next. Checkerboard outside an opaque white rectangle does not mean the rectangle is transparent. Remove Background is optional; processing disables Next, then the preview changes. Inspect the edges and interior details after processing, not just a toast. An already transparent image can proceed with Next without background removal.
+4. Crop Image enters a separate crop state with handles and accept/cancel icons; Next is disabled during that state. The current Sasha toolset has no drag action. The presence of crop handles alone does not establish that Sasha can apply a requested crop.
+5. Next opens Choose Print Type. Read the current "Image You Upload" row and select the desired type's pill, not its heading or the table's scroll arrows. The QA table says Screen Print/Embroidery need vectorization and may lose details; Digital and Transfers say they will not be vectorized. These are the tool's descriptions, not a guarantee of output fidelity. After processing, inspect the placed image and the selected method in the right panel.
+6. Upload adds another object, including when an existing image was selected. It does not automatically replace that image. The selected image exposes Edit Image, Remove BG, Crop, Size & Placement, Arrange and Align.
+
+### Size, placement and replacement
+
+- Width, Height and Distance from Collar are in inches; Rotate controls rotation. `form_input` edits a numeric field and blurs it. Check the rendered object and its size label after a change. If the field and canvas disagree, leave editing, reselect the object and read again before correcting it.
+- Width and Height scale together in the observed text/image workflows. Set one dimension, then read the resulting other dimension; setting both independently can rescale the first. Transparent margins may be trimmed on import: use the editor's resulting aspect ratio, not an assumed square.
+- A useful order is content/font/image edits, size, alignment, then Distance from Collar. Center can also reset the vertical distance; check both axes after alignment and set the collar distance last. Clicking only the Center label did not apply alignment in the walkthrough; the icon/button body did. A fresh screenshot supports a coordinate click when the text target has no effect.
+- With the canvas object selected and no text/numeric field being edited, arrow keys nudge it. `key` accepts, for example, `{"text":"right","repeat":5}`. Small batches followed by screenshots allow horizontal positioning without drag. The step is not an inch measurement. Vertical/Horizontal are separate controls from Align Center/Middle.
+- The Gildan G880 front has separate chest print regions. In QA, Right nudges stopped at the edge of the screen-left region. To move the existing artwork across: right-click the artwork and choose Cut, right-click the desired spot in the other chest region, then choose Paste. This placed the artwork around the clicked spot while preserving its 3.50-inch width; Distance from Collar changed and needed resetting. For a front-facing garment, the wearer's left chest is on screen-right. Inspect the resulting artwork, size and collar distance before saving. This sequence was saved and reopened as Revision 1 of QA proof 576469; it does not establish identical behavior for every garment.
+- To replace an image, note the old object's size/placement, upload and inspect the new image, then right-click the old object on the canvas and choose Delete from its context menu. This removes that canvas object, not the CRM proof. The editor's Undo control restored a removed object in the walkthrough. Check that the old artwork is gone and unrelated text/art remains, then size and position the new image.
+
+### Save a new proof or a revision
+
+- Top Save opens a menu; opening or closing it does not save. A new design's menu contains Design Title, Deal combobox, auto-filled Client, Send a Copy to Client Yes/No, Est. Quantity, Price Per Item, Block Checkout, and a second Save button. Deal search accepts a title or id; a transient empty result can precede the matching option. Choosing the actual option links the deal and fills Client. An empty canvas leaves the final Save disabled.
+- An existing proof's menu instead offers Save as new revision and keeps the existing proof link. Send a Copy to Client and quantity still appear. The selected Yes/No state is visually highlighted; a previous selection is not evidence of the current one.
+- The final action can show Saving... before completion. A completed save updates `?proofItemId=<id>` and the revision label. A Design Saved toast may appear, but it is transient. Reopening the CRM proof shows the persisted mockup and revision chips; a new proof is also linked on the deal. The proof lists product, colour and print method. Art Description and attachment thumbnails are not substitutes for inspecting the mockup itself.
+- Save can trigger Greek Marks Found / Licensed Marks Found dialogs. The QA text-only revision did so. The dialog offers "No marks in your design?" and can then show a "Sounds Good" acknowledgement. These prompts are a separate state from saving; the label is not evidence that the artwork contains those marks.
 
 ## Stock checker (/dashboard/stock-checker)
 
@@ -106,6 +138,7 @@ The place to find products when the client asks for something not on the deal ("
 - Each card's link URL contains the brand and style code: `/products/nike-nkdc1963-dri-fit-micro-pique-20-polo?color=Gorge%20Green` means brand Nike, style NKDC1963, colour Gorge Green. That style code is what the quoter's Style Code box wants.
 - The page has no prices. To price a product from here, take its style code and colour to the quoter.
 - Pick 2–3 candidates that fit the ask, then price them. Don't price all 27.
+- Before leaving the catalog, call `inspect_catalog_product` for each exact style you plan to quote. `verified` means a matching public product link was observed. `not_found` means an exact completed search had no matching link. `unknown` means the page was ambiguous or incomplete.
 
 ## Quoter page
 
@@ -133,13 +166,16 @@ Decorating Methods (centre, below): Custom Names, Custom Numbers, Cover Stitches
 
 Delivery (right):
 - "Order On" / "Need By" toggle with a date box.
-- Shipping tiers, one selectable card each, showing Est. Delivery By, Item Shipping Total and MOQ: Standard (free), Expedited, Fresh Prints Flash, Individual Shipping. The chosen tier drives the top-bar Item Shipping Total. Individual Shipping is internal; it is never shown to clients.
+- Shipping tiers appear as cards showing a date, Item Shipping Total and MOQ: Standard (free), Expedited, Fresh Prints Flash, Individual Shipping. Cards can be disabled while still showing dates and prices. Order On shows estimated delivery dates; Need By shows order-by dates. The chosen tier drives the top-bar Item Shipping Total. Individual Shipping is internal; it is never shown to clients.
 - Colour names ending in " mto" are made to order, minimum 50.
 
 Reading the answer: after qty, style, color and a print method are set, the top bar shows Unit Price and Item Total. `get_page_text` returns them exactly. Before that they show as "— —".
 
+Before using a current-turn quoter price in the client reply, call `get_page_text` after the fields and recalculation have settled. Confirm that the exact style, color, quantity, price, tax, shipping and delivery shown on the page match the reply.
+
 ## UI behaviour
 
 - Notification toasts appear top-right and can cover buttons for a few seconds.
+- Use `form_input` for searchable dropdowns. If it reports an unverified selection, inspect the field with `find` or `read_page`; do not append text with `type` or choose an option by coordinate. If the requested value is not selected, get a fresh field ref and retry `form_input` once.
 - The "⋯" menu next to the price panel contains an edit and a **delete** control. A delete confirmation dialog says "Are you sure you want to delete the proof?".
 - Some links open a new tab. The result tells you a tab opened; switch to it with `switch_tab`.

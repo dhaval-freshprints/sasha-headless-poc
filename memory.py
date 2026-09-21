@@ -1,10 +1,10 @@
 """
-Per-deal memory on disk: the transcript of what the client and Sasha said.
+Per-deal conversational memory: the transcript of what the client and Sasha said.
 
 runs/deal_<id>/transcript.md
 
-This is the only thing Sasha remembers between turns. Tool calls, page trees and
-screenshots from earlier turns are not carried forward; she re-reads the CRM each time.
+Tool calls, page trees and screenshots from earlier turns are not carried forward; Sasha
+re-reads the CRM each time. Verified product identity is stored separately by product_memory.py.
 """
 
 from datetime import datetime
@@ -36,7 +36,7 @@ def append_transcript(deal_id: int, client_message: str | None, sasha_reply: str
 
 
 def clear(deal_id: int) -> None:
-    for name in ("transcript.md", "history.json"):
+    for name in ("transcript.md", "history.json", "verified_products.json"):
         path = deal_dir(deal_id) / name
         if path.exists():
             path.unlink()

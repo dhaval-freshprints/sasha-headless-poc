@@ -14,6 +14,7 @@ In chat mode: type the client's next message and press Enter. Empty line or Ctrl
 import argparse
 from datetime import datetime
 
+import attachments as attachments_module
 import config
 import memory
 from brain import Brain, RunResult
@@ -27,6 +28,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--once", action="store_true", help="Run the outreach turn only, then exit.")
     parser.add_argument("--reset", action="store_true", help="Forget this deal's conversation first.")
     parser.add_argument("--headed", action="store_true", help="Show the browser window.")
+    parser.add_argument("-f", "--file", action="append", default=[], metavar="URL",
+                        help="A link to a client file (repeatable). Fetched before the turn.")
     return parser.parse_args()
 
 
@@ -40,37 +43,49 @@ def main() -> None:
 
     browser = Browser(headless=not args.headed)
     try:
+        files = fetch_files(args.deal_id, args.file)
         if args.message:
-            run_turn(browser, args.deal_id, args.message)
+            run_turn(browser, args.deal_id, args.message, files)
         elif args.once:
-            run_turn(browser, args.deal_id, None)
+            run_turn(browser, args.deal_id, None, files)
         else:
-            chat(browser, args.deal_id)
+            chat(browser, args.deal_id, files)
     except KeyboardInterrupt:
         pass
     finally:
         browser.close()
 
 
-def chat(browser: Browser, deal_id: int) -> None:
+def fetch_files(deal_id: int, urls: list[str]):
+    """Download the client's files before the turn, so Sasha never fetches a URL herself."""
+    if not urls:
+        return None
+    found = attachments_module.fetch_all(deal_id, urls)
+    for item in found.items:
+        print(f"  attached {item.describe()}")
+    return found
+
+
+def chat(browser: Browser, deal_id: int, files=None) -> None:
     if not memory.load_transcript(deal_id):
-        run_turn(browser, deal_id, None)
+        run_turn(browser, deal_id, None, files)
     else:
         print(f"[deal {deal_id}] resuming conversation (see runs/deal_{deal_id}/transcript.md)")
     while True:
         client_message = input("Client > ").strip()
         if not client_message:
             break
-        run_turn(browser, deal_id, client_message)
+        run_turn(browser, deal_id, client_message, files)
+        files = None          # the files came with the first message only
 
 
-def run_turn(browser: Browser, deal_id: int, client_message: str | None) -> RunResult:
+def run_turn(browser: Browser, deal_id: int, client_message: str | None, files=None) -> RunResult:
     run_dir = config.RUNS_DIR / f"deal_{deal_id}" / f"turn_{datetime.now():%Y%m%d_%H%M%S}"
     run_dir.mkdir(parents=True, exist_ok=True)
 
     label = "client reply" if client_message else "outreach"
     print(f"\n[deal {deal_id} · {label}] working...")
-    result = Brain(browser, run_dir, on_event=show_progress).run(deal_id, client_message)
+    result = Brain(browser, run_dir, on_event=show_progress).run(deal_id, client_message, files)
 
     print(" " * 40, end="\r")      # clear the last "thinking..." line
     print(f"\n--- Sasha ---")
@@ -90,7 +105,7 @@ def show_progress(kind: str, payload) -> None:
     short_result = step.result[:70].replace("\n", " ")
     marker = "ERR " if step.is_error else ""
     size = f"  [{step.tree_chars // 1000}K]" if step.tree_chars else ""
-    print(f"  [{step.index:02d}] {marker}{step.tool} {short_args} -> {short_result}{size}")
+    print(f"  [{step.index:02d}] {marker}{step.tool} {short_args} -> {short_result}{size} [{step.seconds:.2f}s, {step.outcome}]")
 
 
 if __name__ == "__main__":
