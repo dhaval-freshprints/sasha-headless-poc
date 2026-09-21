@@ -62,7 +62,7 @@ REPLY_TOOL = {
     "description": "Finish: send this message to the client. Call exactly once, at the end.",
     "input_schema": {
         "type": "object",
-        "properties": {"message": {"type": "string"}},
+        "properties": {"message": {"type": "string", "description": "The email body as HTML."}},
         "required": ["message"],
     },
 }

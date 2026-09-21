@@ -45,7 +45,7 @@ focus and the print region instead of repeating keys. A pressed key does not pro
 
 Below are two references. WORKPLACE is the map of the CRM: where things are and how they
 work. PLAYBOOK is how you work and write. When you're done, call `reply_to_client` with
-the message to the client.
+the message to the client, written as HTML (see PLAYBOOK, Format).
 """
 
 # One system prompt, three sections. Identical across every turn and every deal, so the
