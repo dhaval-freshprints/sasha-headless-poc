@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from openai_managed.outreach import OutreachTask
+from openai_managed.pricing import CostReporter
 from openai_managed.progress import ProgressReporter
 from openai_managed.runner import (
     ManagedRunnerSettings,
@@ -93,6 +94,17 @@ class FakeSessionsAPI:
     def delete(self, session_id):
         self.deleted = session_id
 
+    def retrieve(self, session_id):
+        return SimpleNamespace(
+            usage={
+                "input_tokens": 1000,
+                "input_tokens_details": {"cached_tokens": 400},
+                "output_tokens": 200,
+                "output_tokens_details": {"reasoning_tokens": 50},
+                "total_tokens": 1200,
+            }
+        )
+
 
 class FakeSandbox:
     def __init__(self, config, executor_api_key):
@@ -167,6 +179,22 @@ class ManagedRunnerTests(unittest.TestCase):
         self.assertIn("Sasha tool step 1: completed", output)
         self.assertIn("[6/6] Saving artifacts and cleaning up", output)
 
+    def test_collects_and_prints_pricing_when_requested(self):
+        pricing_messages = []
+        runner, _, _ = self._make_runner(
+            [], CostReporter(pricing_messages.append)
+        )
+
+        runner.run(
+            OutreachTask("303839", "task-1", "https://qa.example/deal?id=303839")
+        )
+
+        self.assertEqual(runner.last_cost_estimate.status, "estimated")
+        self.assertEqual(runner.last_cost_estimate.estimated_cost_usd, 0.0164)
+        self.assertIn("[pricing] Estimated OpenAI cost: $0.01640000", pricing_messages)
+        workspace = self.root / "runs" / "run-1" / "workspace"
+        self.assertTrue((workspace / "pricing.json").is_file())
+
     def test_extracts_final_answer_instead_of_earlier_text(self):
         items = [
             {"role": "assistant", "content": [{"type": "output_text", "text": "one"}]},
@@ -178,7 +206,7 @@ class ManagedRunnerTests(unittest.TestCase):
         ]
         self.assertEqual(_extract_final_assistant_text(items), "two")
 
-    def _make_runner(self, progress_messages):
+    def _make_runner(self, progress_messages, cost_reporter=None):
         sessions = FakeSessionsAPI("303839")
         client = SimpleNamespace(
             beta=SimpleNamespace(agents=SimpleNamespace(sessions=sessions))
@@ -202,7 +230,11 @@ class ManagedRunnerTests(unittest.TestCase):
 
         progress = ProgressReporter(progress_messages.append)
         runner = OpenAIManagedOutreachRunner(
-            client, settings, create_sandbox, progress
+            client,
+            settings,
+            create_sandbox,
+            progress,
+            cost_reporter=cost_reporter,
         )
         return runner, sessions, sandboxes
 

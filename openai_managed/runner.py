@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .outreach import OUTREACH_RESULT_JSON_SCHEMA, OutreachResult, OutreachTask
+from .pricing import CostEstimate, CostReporter, estimate_cost
 from .progress import ProgressReporter
 from .sandbox import DockerSandbox, SandboxConfig
 
@@ -159,22 +160,32 @@ class OpenAIManagedOutreachRunner:
         settings: ManagedRunnerSettings,
         sandbox_factory: Callable[[SandboxConfig, str], DockerSandbox] = DockerSandbox,
         progress: ProgressReporter | None = None,
+        cost_reporter: CostReporter | None = None,
     ) -> None:
         self.client = client
         self.settings = settings
         self.sandbox_factory = sandbox_factory
         self.progress = progress or ProgressReporter()
+        self.cost_reporter = cost_reporter
         self.last_run_directory: Path | None = None
+        self.last_cost_estimate: CostEstimate | None = None
 
     @classmethod
     def from_environment(
-        cls, progress: ProgressReporter | None = None
+        cls,
+        progress: ProgressReporter | None = None,
+        cost_reporter: CostReporter | None = None,
     ) -> "OpenAIManagedOutreachRunner":
         from openai import OpenAI
 
         application_api_key = _required_environment_value("OPENAI_API_KEY")
         client = OpenAI(api_key=application_api_key)
-        return cls(client, ManagedRunnerSettings.from_environment(), progress=progress)
+        return cls(
+            client,
+            ManagedRunnerSettings.from_environment(),
+            progress=progress,
+            cost_reporter=cost_reporter,
+        )
 
     def run(self, task: OutreachTask) -> OutreachResult:
         session_id = ""
@@ -237,6 +248,13 @@ class OpenAIManagedOutreachRunner:
         finally:
             self.progress.report("[6/6] Saving artifacts and cleaning up")
             cleanup_errors: list[str] = []
+            if self.cost_reporter is not None:
+                self.last_cost_estimate = self._collect_cost_estimate(session_id)
+                _write_json(
+                    handle.workspace_directory / "pricing.json",
+                    self.last_cost_estimate.to_dict(),
+                )
+                self.cost_reporter.report(self.last_cost_estimate)
             try:
                 (handle.workspace_directory / "executor.log").write_text(
                     sandbox.logs(), encoding="utf-8"
@@ -270,6 +288,20 @@ class OpenAIManagedOutreachRunner:
             _write_json(handle.workspace_directory / "result.json", result.to_dict())
 
         return result
+
+    def _collect_cost_estimate(self, session_id: str) -> CostEstimate:
+        if not session_id:
+            return estimate_cost(self.settings.model, None)
+        try:
+            session = self.client.beta.agents.sessions.retrieve(session_id)
+            usage = _to_plain_value(_read_value(session, "usage"))
+            return estimate_cost(self.settings.model, usage)
+        except Exception as error:
+            return CostEstimate(
+                model=self.settings.model,
+                status="unavailable",
+                note=f"Could not retrieve OpenAI usage: {error}",
+            )
 
     def _create_sandbox(self) -> DockerSandbox:
         return self.sandbox_factory(

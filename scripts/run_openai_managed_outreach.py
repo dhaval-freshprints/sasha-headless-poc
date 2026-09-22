@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from openai_managed.outreach import OutreachTask
+from openai_managed.pricing import CostReporter
 from openai_managed.progress import ProgressReporter
 from openai_managed.runner import OpenAIManagedOutreachRunner
 
@@ -28,6 +29,11 @@ def parse_arguments() -> argparse.Namespace:
         "--verbose",
         action="store_true",
         help="Print live orchestration and agent activity",
+    )
+    parser.add_argument(
+        "--pricing",
+        action="store_true",
+        help="Print estimated OpenAI token pricing for the complete run",
     )
     return parser.parse_args()
 
@@ -52,7 +58,12 @@ def main() -> int:
         if arguments.verbose
         else None
     )
-    runner = OpenAIManagedOutreachRunner.from_environment(progress)
+    cost_reporter = (
+        CostReporter(lambda message: print(message, file=sys.stderr))
+        if arguments.pricing
+        else None
+    )
+    runner = OpenAIManagedOutreachRunner.from_environment(progress, cost_reporter)
     result = runner.run(task)
     print(json.dumps(result.to_dict(), indent=2))
     if runner.last_run_directory:

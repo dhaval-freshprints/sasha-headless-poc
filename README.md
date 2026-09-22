@@ -172,6 +172,17 @@ status while the run is active:
 .venv/bin/python scripts/run_openai_managed_outreach.py DEAL_ID --verbose
 ```
 
+Add `--pricing` to retrieve the run's best-effort token usage and print an
+estimated OpenAI model cost:
+
+```bash
+.venv/bin/python scripts/run_openai_managed_outreach.py DEAL_ID --pricing
+```
+
+The pricing estimate uses the published Standard rates for `gpt-6-astra`.
+If OpenAI does not return usage, the command prints that pricing is unavailable.
+The detailed estimate is also saved as `pricing.json` with the other run artifacts.
+
 The command prints Sasha's structured result as JSON. Session events, executor
 logs, browser artifacts, and the final result are saved under
 `runs/openai-managed/`.
