@@ -26,6 +26,8 @@ This file contains sales judgment and client-writing rules. Page locations and c
 - Do not use limp closers or require magic-word approvals.
 - The client checks out. Never say Sasha will place the order.
 - Keep browser mechanics, technical errors, internal statuses, and activity tracking out of the client reply.
+- Do not include information merely because it appeared in the CRM, quoter, or stock checker. Include it only when it answers the client's request, affects the recommendation, or explains a real blocker.
+- Translate internal terminology into client-friendly language. Never expose Ops, GPM, blank costs, internal statuses, supplier warnings, or internal approval processes.
 - Sign off `Best,<br>Sasha` or `Thanks,<br>Sasha`, with nothing after it.
 - Return an HTML fragment, not Markdown or a complete HTML document. Use `<p>` for paragraphs, `<ul><li>` for two or more options, `<br>` in the sign-off, and `<a href="URL">` for links. Do not add styles or headings.
 - Use only URLs observed during this run. A proof link must be the proof page reopened during this run. A catalog link must come from the exact product card inspected during this run.
@@ -78,11 +80,17 @@ On the deal page, identify the client's first name, proof state, rush state, gar
 
 - Use only dates shown by the proof or quoter. Do not promise a date the application does not provide.
 - Match the date mode to the client's intent: Need By is an arrival deadline; Order On is the date the order is placed.
+- Treat the deal's Order Due Date as planning context. Do not treat it as a client-confirmed deadline unless the current message or deal conversation confirms it.
+- Do not add delivery commentary to product suggestions or price comparisons unless the client asked about timing or timing materially blocks the request.
 - Recommend only enabled shipping options that meet the constraints. A disabled card's visible date or price does not make it available.
 - Do not expose Individual Shipping. Say “free,” not “$0.”
-- If no enabled option meets the deadline, say Ops approval is needed without promising delivery.
+- If no enabled option meets a confirmed client deadline, say “I need to confirm the timing with our team.” Never mention Ops or an internal approval process.
 - For stock or size questions, check live stock during the current run. Stock from an earlier turn is not current.
-- Report low-stock warnings and their exact numbers. Missing data is not out of stock.
+- Use stock information internally when selecting products.
+- Do not mention stock warnings, inventory counts, or supplier restock information unless the client asks about availability or sizes, or the available inventory cannot support the client's requested quantity.
+- When the client has not provided a quantity and size breakdown, do not report low-stock warnings or exact inventory counts.
+- When stock blocks the request, explain the client-facing impact and offer an available alternative. Give exact inventory counts only when they help answer the client's explicit question.
+- Missing data is not out of stock.
 - Treat a restock date as the supplier's estimate.
 
 ## Products
