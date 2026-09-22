@@ -38,7 +38,6 @@ class ManagedRunnerSettings:
     login_user: str
     login_password: str
     sandbox_image: str
-    auth_directory: Path
     runs_directory: Path
     connection_timeout_seconds: float
     turn_timeout_seconds: float
@@ -58,12 +57,6 @@ class ManagedRunnerSettings:
             sandbox_image=os.environ.get(
                 "OPENAI_MANAGED_SANDBOX_IMAGE", "sasha-openai-managed:local"
             ).strip(),
-            auth_directory=Path(
-                os.environ.get(
-                    "OPENAI_MANAGED_AUTH_DIRECTORY",
-                    repository_root / "auth-openai-managed",
-                )
-            ).expanduser(),
             runs_directory=Path(
                 os.environ.get(
                     "OPENAI_MANAGED_RUNS_DIRECTORY",
@@ -214,23 +207,21 @@ class OpenAIManagedRunner:
         events: SessionEvents | None = None
         sandbox = self._create_sandbox()
         task_message = self._build_task_message(task)
-        self.progress.report("[1/7] Preparing disposable browser workspace")
+        self.progress.report("[1/7] Preparing disposable Sasha container")
         handle = sandbox.prepare(task, task_message)
         self.last_run_directory = handle.run_directory
         result: SashaResult | None = None
 
         try:
-            self.progress.report("[2/7] Checking QA authentication")
-            logged_in = sandbox.authenticate(
+            sandbox.start_container()
+            self.progress.report("[2/7] Signing into Fresh Prints QA")
+            sandbox.authenticate(
                 task.deal_url,
                 self.settings.login_url,
                 self.settings.login_user,
                 self.settings.login_password,
             )
-            if logged_in:
-                self.progress.report("      QA session expired; automatic login succeeded")
-            else:
-                self.progress.report("      Existing QA session is valid")
+            self.progress.report("      Fresh Prints QA authentication succeeded")
 
             self.progress.report("[3/7] Creating OpenAI managed agent session")
             session = self.client.beta.agents.sessions.create(
@@ -263,7 +254,7 @@ class OpenAIManagedRunner:
             events = SessionEvents(self.client, session_id, self.progress)
             events.start()
             self.progress.report("[4/7] Connecting the local Docker executor")
-            sandbox.start(environment_id, remote_url)
+            sandbox.connect_executor(environment_id, remote_url)
             self._wait_for_connection(events)
             self.progress.report("[5/7] Sasha is working on the task")
             self._send_task(session_id, task_message, task.task_id)
@@ -291,19 +282,9 @@ class OpenAIManagedRunner:
                 )
                 self.cost_reporter.report(self.last_cost_estimate)
             try:
-                (handle.workspace_directory / "executor.log").write_text(
-                    sandbox.logs(), encoding="utf-8"
-                )
-            except Exception as error:
-                cleanup_errors.append(f"executor log: {error}")
-            try:
                 sandbox.stop()
             except Exception as error:
                 cleanup_errors.append(f"container stop: {error}")
-            try:
-                sandbox.remove_browser_profile()
-            except Exception as error:
-                cleanup_errors.append(f"profile removal: {error}")
             if session_id:
                 try:
                     self.client.beta.agents.sessions.delete(session_id)
@@ -361,7 +342,6 @@ class OpenAIManagedRunner:
         return self.sandbox_factory(
             SandboxConfig(
                 image=self.settings.sandbox_image,
-                auth_directory=self.settings.auth_directory,
                 runs_directory=self.settings.runs_directory,
             ),
             self.settings.executor_api_key,
@@ -406,8 +386,8 @@ class OpenAIManagedRunner:
             f"{previous_conversation}\n"
             "--- END PREVIOUS CONVERSATION JSON ---\n\n"
             f"{turn_data}\n\n"
-            "Use Node.js Playwright in headless mode with the existing profile at "
-            "/workspace/browser-profile. Start at the exact deal URL, inspect the current "
+            "Use Node.js Playwright in headless mode with the authenticated profile at "
+            "/browser-profile. Start at the exact deal URL, inspect the current "
             "deal state, and determine the required work from the turn data and skill. "
             "Save screenshots under /workspace/artifacts and save the browser URLs visited "
             "as /workspace/artifacts/visited_urls.json. Close the browser before returning. "

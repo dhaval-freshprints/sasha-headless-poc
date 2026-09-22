@@ -216,23 +216,27 @@ Set these values in `.env`:
 
 ```dotenv
 FP_BASE_URL=https://v4-qa.internal-fp.com
+FP_LOGIN_URL=https://v3-qa.internal-fp.com/dashboard/login
+FP_USER=...
+FP_PASSWORD=...
 OPENAI_API_KEY=...
 OPENAI_EXECUTOR_API_KEY=...
 OPENAI_AGENT_MODEL=gpt-6-astra
 OPENAI_AGENT_REASONING_EFFORT=medium
 ```
 
-Build the executor image and create its authenticated browser profile once:
+Build the executor image:
 
 ```bash
 docker build -f Dockerfile.openai-managed -t sasha-openai-managed:local .
-.venv/bin/python scripts/setup_openai_managed_auth.py
 ```
 
-Before every managed turn, the runner checks the disposable browser profile.
-If the QA session has expired, it signs in automatically with `FP_USER` and
-`FP_PASSWORD` before creating the OpenAI agent session. Those credentials are
-not passed to Astra's executor container.
+Every managed turn starts one disposable container with an empty browser
+profile in container memory. Before creating the OpenAI agent session, the
+runner signs in with `FP_USER` and `FP_PASSWORD` and verifies the requested deal
+page. Astra then uses that same authenticated profile. The runner sends the
+credentials to the fixed login script over standard input; they are not passed
+to Astra or saved in the workspace. Stopping the container removes the profile.
 
 ### Run
 
@@ -260,8 +264,9 @@ If OpenAI does not return usage, the command prints that pricing is unavailable.
 The detailed estimate is also saved as `pricing.json` with the other run artifacts.
 
 The command prints only Sasha's structured result JSON to stdout. Session events,
-session items, executor logs, screenshots, visited URLs, pricing, the copied
-skill, and the final result remain under `runs/openai-managed/`.
+session items, executor logs, authentication status, screenshots, visited URLs,
+pricing, the copied skill, and the final result remain under
+`runs/openai-managed/`.
 
 The runner internally maintains one conversation file per deal at
 `runs/openai-managed/conversations/DEAL<deal_id>_conversation.json`. No filename

@@ -10,6 +10,7 @@ import subprocess
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
+from typing import IO
 from urllib.parse import urlparse
 
 from .task import SashaTask
@@ -23,7 +24,6 @@ AUTHENTICATION_SCRIPT = Path(__file__).with_name("setup_auth.js")
 @dataclass(frozen=True)
 class SandboxConfig:
     image: str
-    auth_directory: Path
     runs_directory: Path
 
 
@@ -32,7 +32,6 @@ class SandboxHandle:
     container_name: str
     run_directory: Path
     workspace_directory: Path
-    browser_profile_directory: Path
 
 
 class DockerSandbox:
@@ -40,28 +39,21 @@ class DockerSandbox:
         self.config = config
         self.executor_api_key = executor_api_key.strip()
         self.handle: SandboxHandle | None = None
+        self.executor_process: subprocess.Popen[str] | None = None
+        self.executor_log: IO[str] | None = None
         if not self.executor_api_key:
             raise ValueError("OPENAI_EXECUTOR_API_KEY must be set")
 
     def prepare(self, task: SashaTask, task_message: str) -> SandboxHandle:
-        auth_directory = self.config.auth_directory.resolve()
-        if not auth_directory.is_dir() or not any(auth_directory.iterdir()):
-            raise FileNotFoundError(
-                f"Managed browser profile not found at {auth_directory}. "
-                "Run scripts/setup_openai_managed_auth.py first."
-            )
-
         safe_task_id = SAFE_NAME.sub("-", task.task_id).strip("-.") or "sasha"
         run_directory = (
             self.config.runs_directory / f"{safe_task_id}-{uuid.uuid4().hex[:8]}"
         ).resolve()
         workspace_directory = run_directory / "workspace"
-        profile_directory = workspace_directory / "browser-profile"
         capabilities_directory = workspace_directory / "capabilities"
 
         workspace_directory.mkdir(parents=True, exist_ok=False)
         try:
-            shutil.copytree(auth_directory, profile_directory)
             (workspace_directory / "artifacts").mkdir()
             capabilities_directory.mkdir()
             shutil.copytree(
@@ -82,6 +74,7 @@ class DockerSandbox:
                 ),
                 encoding="utf-8",
             )
+            (workspace_directory / "executor.log").touch()
         except Exception:
             shutil.rmtree(run_directory)
             raise
@@ -90,20 +83,11 @@ class DockerSandbox:
             container_name=f"sasha-managed-{uuid.uuid4().hex[:12]}",
             run_directory=run_directory,
             workspace_directory=workspace_directory,
-            browser_profile_directory=profile_directory,
         )
         return self.handle
 
-    def start(self, environment_id: str, remote_url: str) -> None:
+    def start_container(self) -> None:
         handle = self._require_handle()
-        parsed_url = urlparse(remote_url)
-        if parsed_url.scheme not in {"https", "wss"} or not parsed_url.netloc:
-            raise ValueError("Agents API returned an invalid executor remote URL")
-        if not environment_id.strip():
-            raise ValueError("Agents API returned an empty environment ID")
-
-        process_environment = dict(os.environ)
-        process_environment["CODEX_API_KEY"] = self.executor_api_key
         subprocess.run(
             [
                 "docker",
@@ -118,22 +102,19 @@ class DockerSandbox:
                 "2",
                 "--shm-size",
                 "1g",
-                "--env",
-                "CODEX_API_KEY",
+                "--tmpfs",
+                "/browser-profile:rw,nosuid,nodev,noexec,size=512m",
                 "--mount",
                 f"type=bind,src={handle.workspace_directory},dst=/workspace",
+                "--mount",
+                f"type=bind,src={AUTHENTICATION_SCRIPT},dst=/opt/sasha/setup_auth.js,readonly",
                 self.config.image,
-                "codex",
-                "exec-server",
-                "--remote",
-                remote_url,
-                "--environment-id",
-                environment_id,
+                "sleep",
+                "infinity",
             ],
             check=True,
             capture_output=True,
             text=True,
-            env=process_environment,
         )
 
     def authenticate(
@@ -142,59 +123,84 @@ class DockerSandbox:
         login_url: str,
         login_user: str,
         login_password: str,
-    ) -> bool:
+    ) -> None:
         handle = self._require_handle()
-        environment = dict(os.environ)
-        environment.update(
+        credentials = json.dumps(
             {
-                "FP_DEAL_URL": deal_url,
-                "FP_LOGIN_URL": login_url,
-                "FP_USER": login_user,
-                "FP_PASSWORD": login_password,
+                "deal_url": deal_url,
+                "login_url": login_url,
+                "login_user": login_user,
+                "login_password": login_password,
             }
         )
         process = subprocess.run(
             [
                 "docker",
-                "run",
-                "--rm",
-                "--shm-size",
-                "1g",
-                "--env",
-                "FP_DEAL_URL",
-                "--env",
-                "FP_LOGIN_URL",
-                "--env",
-                "FP_USER",
-                "--env",
-                "FP_PASSWORD",
-                "--mount",
-                f"type=bind,src={handle.workspace_directory},dst=/workspace",
-                "--mount",
-                f"type=bind,src={AUTHENTICATION_SCRIPT},dst=/opt/sasha/setup_auth.js,readonly",
-                self.config.image,
+                "exec",
+                "--interactive",
+                handle.container_name,
                 "node",
                 "/opt/sasha/setup_auth.js",
             ],
+            input=credentials,
             check=False,
             capture_output=True,
             text=True,
-            env=environment,
         )
         if process.returncode != 0:
             details = (process.stderr or process.stdout).strip()
             raise RuntimeError(f"QA authentication failed: {details}")
-        return "AUTH_RELOGIN_SUCCEEDED" in process.stdout
+        try:
+            result = json.loads(process.stdout)
+        except json.JSONDecodeError as error:
+            raise RuntimeError("QA authentication returned invalid output") from error
+        if result.get("status") != "authenticated":
+            raise RuntimeError("QA authentication did not confirm the deal page")
+
+    def connect_executor(self, environment_id: str, remote_url: str) -> None:
+        handle = self._require_handle()
+        parsed_url = urlparse(remote_url)
+        if parsed_url.scheme not in {"https", "wss"} or not parsed_url.netloc:
+            raise ValueError("Agents API returned an invalid executor remote URL")
+        if not environment_id.strip():
+            raise ValueError("Agents API returned an empty environment ID")
+
+        process_environment = dict(os.environ)
+        process_environment["CODEX_API_KEY"] = self.executor_api_key
+        log_path = handle.workspace_directory / "executor.log"
+        self.executor_log = log_path.open("w", encoding="utf-8")
+        try:
+            self.executor_process = subprocess.Popen(
+                [
+                    "docker",
+                    "exec",
+                    "--env",
+                    "CODEX_API_KEY",
+                    handle.container_name,
+                    "codex",
+                    "exec-server",
+                    "--remote",
+                    remote_url,
+                    "--environment-id",
+                    environment_id,
+                ],
+                stdout=self.executor_log,
+                stderr=subprocess.STDOUT,
+                text=True,
+                env=process_environment,
+            )
+        except Exception:
+            self.executor_log.close()
+            self.executor_log = None
+            raise
 
     def logs(self) -> str:
         handle = self._require_handle()
-        process = subprocess.run(
-            ["docker", "logs", "--tail", "300", handle.container_name],
-            check=False,
-            capture_output=True,
-            text=True,
+        if self.executor_log is not None:
+            self.executor_log.flush()
+        return (handle.workspace_directory / "executor.log").read_text(
+            encoding="utf-8"
         )
-        return (process.stdout + process.stderr).strip()
 
     def stop(self) -> None:
         if self.handle is None:
@@ -205,16 +211,16 @@ class DockerSandbox:
             capture_output=True,
             text=True,
         )
-
-    def remove_browser_profile(self) -> None:
-        if self.handle is None:
-            return
-        profile = self.handle.browser_profile_directory.resolve()
-        workspace = self.handle.workspace_directory.resolve()
-        if profile.parent != workspace:
-            raise RuntimeError("Refusing to remove a profile outside the run workspace")
-        if profile.exists():
-            shutil.rmtree(profile)
+        if self.executor_process is not None:
+            try:
+                self.executor_process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.executor_process.terminate()
+                self.executor_process.wait(timeout=5)
+            self.executor_process = None
+        if self.executor_log is not None:
+            self.executor_log.close()
+            self.executor_log = None
 
     def _require_handle(self) -> SandboxHandle:
         if self.handle is None:

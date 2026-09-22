@@ -23,25 +23,29 @@ flowchart LR
     CLI["2. Generic Sasha CLI<br/>build task and deal URL"]
     History["Per-deal conversation JSON<br/>previous client + Sasha messages"]
     Runner["3. OpenAIManagedRunner<br/>session, timeout, artifacts, cleanup"]
-    Workspace["4. Disposable workspace<br/>browser profile + copied skill"]
-    API["5. OpenAI Agents API<br/>managed session"]
-    Astra["6. Astra<br/>choose next action"]
+    Container["4. Disposable container<br/>empty in-memory browser profile"]
+    Login["5. Runner login script<br/>authenticate + verify exact deal"]
+    Workspace["Disposable workspace<br/>task + copied skill + artifacts"]
+    API["6. OpenAI Agents API<br/>managed session"]
+    Astra["7. Astra<br/>choose next action"]
     Skill["Sasha skill<br/>SKILL + Playbook + Workplace"]
-    Executor["7. Self-hosted Codex executor<br/>Docker container"]
-    Browser["8. Node.js Playwright<br/>headless Chrome"]
-    FP["9. Fresh Prints QA<br/>deal and relevant pages"]
-    Observe["10. Observation<br/>DOM text + screenshots"]
+    Executor["8. Self-hosted Codex executor<br/>same Docker container"]
+    Browser["9. Node.js Playwright<br/>same authenticated profile"]
+    FP["10. Fresh Prints QA<br/>deal and relevant pages"]
+    Observe["11. Observation<br/>DOM text + screenshots"]
     Complete{"Requested work<br/>complete or blocked?"}
-    Output["11. SashaResult JSON<br/>generated HTML message"]
-    Caller["12. Caller receives draft<br/>message is not sent"]
+    Output["12. SashaResult JSON<br/>generated HTML message"]
+    Caller["13. Caller receives draft<br/>message is not sent"]
     Artifacts["Run evidence<br/>events, commands, URLs,<br/>screenshots, pricing, skill"]
 
     Input --> CLI --> Runner
     History -- "load" --> Runner
     Runner -- "append completed turn" --> History
+    Runner --> Container --> Login --> FP
     Runner --> Workspace
     Runner --> API --> Astra
     Skill -.-> Astra
+    Container --> Executor
     Workspace --> Executor
     API --> Executor --> Browser --> FP --> Observe --> Complete
     Complete -- "No: continue managed loop" --> Astra
@@ -60,29 +64,36 @@ flowchart LR
 3. It creates one `SashaTask`. `client_message is None` is the only mode choice
    in Python; no client intent is classified. Previous history and the current
    client message are labeled separately as untrusted data.
-4. The runner creates a disposable workspace and copies the authenticated
-   browser profile and `sasha-sales` capability into it.
-5. The runner creates one OpenAI Agents API session with generic Sasha
+4. The runner creates one disposable container with an empty browser profile
+   stored in container memory. It also creates a disposable workspace and
+   copies the `sasha-sales` capability into it.
+5. A fixed runner-owned Playwright script signs in to Fresh Prints QA and
+   verifies the exact requested deal page. Credentials arrive over standard
+   input and are not stored in the workspace or given to Astra.
+6. The authentication browser closes, releasing the profile lock while keeping
+   its authenticated state in the running container.
+7. The runner creates one OpenAI Agents API session with generic Sasha
    instructions, the shared JSON result schema, and
    `/workspace/capabilities` registered for skill discovery.
-6. The local Docker container starts `codex exec-server` and connects the
+8. The same Docker container starts `codex exec-server` and connects the
    self-hosted environment to the managed session.
-7. Astra reads the task and skill, then begins at the exact supplied deal URL.
-8. Astra decides which page and Playwright action are needed from the previous
+9. Astra reads the task and skill, launches Playwright with the already
+   authenticated in-memory profile, and begins at the exact supplied deal URL.
+10. Astra decides which page and Playwright action are needed from the previous
    conversation, current client message, deal history, linked proofs, Playbook,
    and Workplace. Python does not select a quotation, product, stock, proof, or
    revision route.
-9. Commands run inside the container. Browser observations return to Astra.
-10. Astra repeats the decide-act-observe cycle until the requested work is
+11. Commands run inside the container. Browser observations return to Astra.
+12. Astra repeats the decide-act-observe cycle until the requested work is
    complete or it establishes a real blocker.
-11. Astra returns one `SashaResult` JSON object containing the generated HTML
+13. Astra returns one `SashaResult` JSON object containing the generated HTML
     message or a failure description.
-12. The runner saves run evidence, stops the container, removes the disposable
-    browser profile, and deletes the managed session.
-13. For a completed result, the runner atomically appends the current client
+14. The runner saves run evidence, stops the container—which removes the
+    in-memory browser profile—and deletes the managed session.
+15. For a completed result, the runner atomically appends the current client
     message and exact Sasha HTML to the deal's conversation file. The Sasha
     entry is marked `generated`, not `sent`. Failed turns are not appended.
-14. The CLI prints result JSON to stdout. The generated message is not sent.
+16. The CLI prints result JSON to stdout. The generated message is not sent.
 
 ## Instruction layers
 
@@ -103,12 +114,13 @@ the Playbook and Workplace can change without adding Python intent routes.
 | --- | --- | --- |
 | Generic CLI and task contract | Sasha repository | Accept input and construct one `SashaTask` |
 | Per-deal conversation store | Sasha repository | Derive the internal file, load previous turns, and atomically append completed turns |
-| Runner | Sasha repository | Session creation, timeouts, result parsing, progress, pricing, artifacts, and cleanup |
+| Runner | Sasha repository | Fresh authentication, session creation, timeouts, result parsing, progress, pricing, artifacts, and cleanup |
 | Sasha skill | Sasha repository | Company policy, sales judgment, workflow guidance, and page knowledge |
 | Managed agent loop | OpenAI | Repeated model and command turns until completion or failure |
 | Astra | OpenAI | Interpret context, select actions, observe results, and draft the message |
 | Self-hosted executor | Sasha infrastructure | Execute Astra's commands in the disposable Docker environment |
-| Playwright and Chrome | Sasha container | Interact with Fresh Prints QA using the copied authenticated profile |
+| Authentication script | Sasha repository | Sign in and verify the requested deal before Astra starts; never expose credentials to Astra |
+| Playwright and Chrome | Sasha container | Authenticate and interact with Fresh Prints QA using one in-memory profile per run |
 | Fresh Prints QA | Fresh Prints | Source of current deal, proof, product, price, stock, and workflow state |
 | Calling application | Future integration | Decide whether and how to deliver the generated message |
 
@@ -122,9 +134,10 @@ The shared result contains:
 - `failure_code`
 - `failure_message`
 
-Each run retains `task.json`, `TASK.md`, the copied skill, session events,
-session items, executor logs, screenshots, visited URLs, best-effort pricing,
-and `result.json`. The browser profile is removed during cleanup.
+Each run retains `task.json`, `TASK.md`, the copied skill, non-secret
+authentication status, session events, session items, executor logs,
+screenshots, visited URLs, best-effort pricing, and `result.json`. The browser
+profile exists only in container memory and is removed when the container stops.
 
 Conversation continuity is stored separately from disposable run evidence in
 `runs/openai-managed/conversations/DEAL<deal_id>_conversation.json`. The CLI

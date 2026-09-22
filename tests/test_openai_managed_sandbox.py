@@ -3,29 +3,25 @@ import tempfile
 import unittest
 from pathlib import Path
 from subprocess import CompletedProcess
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from openai_managed.sandbox import DockerSandbox, SandboxConfig
 from openai_managed.task import SashaTask
 
 
-class DockerSandboxPreparationTests(unittest.TestCase):
+class DockerSandboxTests(unittest.TestCase):
     def setUp(self):
         self.temporary_directory = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary_directory.name)
-        self.auth_directory = self.root / "auth"
-        self.auth_directory.mkdir()
-        (self.auth_directory / "profile-marker").write_text("authenticated")
         self.config = SandboxConfig(
             image="test-image",
-            auth_directory=self.auth_directory,
             runs_directory=self.root / "runs",
         )
 
     def tearDown(self):
         self.temporary_directory.cleanup()
 
-    def test_prepares_outreach_with_null_client_message(self):
+    def test_prepares_outreach_without_a_saved_browser_profile(self):
         sandbox = DockerSandbox(self.config, "executor-key")
         task = SashaTask(
             "303839",
@@ -40,9 +36,8 @@ class DockerSandboxPreparationTests(unittest.TestCase):
         )
         self.assertIsNone(task_data["client_message"])
         self.assertTrue(handle.container_name.startswith("sasha-managed-"))
-        self.assertTrue(
-            (handle.browser_profile_directory / "profile-marker").is_file()
-        )
+        self.assertFalse((handle.workspace_directory / "browser-profile").exists())
+        self.assertTrue((handle.workspace_directory / "executor.log").is_file())
 
     def test_prepares_client_response_with_supplied_message(self):
         sandbox = DockerSandbox(self.config, "executor-key")
@@ -78,13 +73,27 @@ class DockerSandboxPreparationTests(unittest.TestCase):
         self.assertTrue((skill_directory / "references" / "playbook.md").is_file())
         self.assertTrue((skill_directory / "references" / "workplace.md").is_file())
 
+    @patch("openai_managed.sandbox.subprocess.Popen")
     @patch("openai_managed.sandbox.subprocess.run")
-    def test_authenticates_before_start_without_exposing_credentials_to_executor(
-        self, run
+    def test_authenticates_in_the_same_container_without_exposing_credentials(
+        self, run, popen
     ):
-        run.return_value = CompletedProcess(
-            args=[], returncode=0, stdout="AUTH_RELOGIN_SUCCEEDED\n", stderr=""
-        )
+        run.side_effect = [
+            CompletedProcess(args=[], returncode=0, stdout="container-id\n", stderr=""),
+            CompletedProcess(
+                args=[],
+                returncode=0,
+                stdout=json.dumps(
+                    {
+                        "status": "authenticated",
+                        "deal_url": "https://qa.example/deal?id=303839",
+                    }
+                ),
+                stderr="",
+            ),
+            CompletedProcess(args=[], returncode=0, stdout="", stderr=""),
+        ]
+        popen.return_value = MagicMock()
         sandbox = DockerSandbox(self.config, "executor-key")
         task = SashaTask(
             "303839",
@@ -94,21 +103,32 @@ class DockerSandboxPreparationTests(unittest.TestCase):
         )
         sandbox.prepare(task, "client-response task")
 
-        logged_in = sandbox.authenticate(
+        sandbox.start_container()
+        sandbox.authenticate(
             task.deal_url,
             "https://qa.example/login",
             "qa-user",
             "qa-password",
         )
-        sandbox.start("environment-1", "wss://executor.example/connect")
+        sandbox.connect_executor("environment-1", "wss://executor.example/connect")
 
-        self.assertTrue(logged_in)
-        authentication_command = run.call_args_list[0].args[0]
-        executor_command = run.call_args_list[1].args[0]
-        self.assertIn("FP_USER", authentication_command)
-        self.assertIn("FP_PASSWORD", authentication_command)
-        self.assertNotIn("FP_USER", executor_command)
-        self.assertNotIn("FP_PASSWORD", executor_command)
+        container_command = run.call_args_list[0].args[0]
+        authentication_call = run.call_args_list[1]
+        authentication_command = authentication_call.args[0]
+        executor_command = popen.call_args.args[0]
+        credentials = json.loads(authentication_call.kwargs["input"])
+
+        self.assertIn("/browser-profile:rw,nosuid,nodev,noexec,size=512m", container_command)
+        self.assertEqual(authentication_command[:3], ["docker", "exec", "--interactive"])
+        self.assertEqual(credentials["login_user"], "qa-user")
+        self.assertEqual(credentials["login_password"], "qa-password")
+        for command in (container_command, authentication_command, executor_command):
+            self.assertNotIn("qa-user", command)
+            self.assertNotIn("qa-password", command)
+            self.assertNotIn("FP_USER", command)
+            self.assertNotIn("FP_PASSWORD", command)
+        self.assertIn("CODEX_API_KEY", executor_command)
+        sandbox.stop()
 
 
 if __name__ == "__main__":

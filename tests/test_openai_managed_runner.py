@@ -118,9 +118,9 @@ class FakeSandbox:
     def __init__(self, config, executor_api_key, number):
         self.config = config
         self.number = number
-        self.started = False
+        self.container_started = False
+        self.executor_started = False
         self.stopped = False
-        self.profile_removed = False
         self.handle = None
         self.task_message = ""
         self.authenticated = False
@@ -130,30 +130,28 @@ class FakeSandbox:
         self.task_message = task_message
         run_directory = self.config.runs_directory / f"run-{self.number}"
         workspace = run_directory / "workspace"
-        profile = workspace / "browser-profile"
-        profile.mkdir(parents=True)
+        workspace.mkdir(parents=True)
         (workspace / "artifacts").mkdir()
-        self.handle = SandboxHandle("container-1", run_directory, workspace, profile)
+        (workspace / "executor.log").write_text("connected")
+        self.handle = SandboxHandle("container-1", run_directory, workspace)
         return self.handle
+
+    def start_container(self):
+        self.container_started = True
 
     def authenticate(self, deal_url, login_url, login_user, login_password):
         if self.authentication_error is not None:
             raise self.authentication_error
         self.authenticated = True
-        return True
 
-    def start(self, environment_id, remote_url):
-        self.started = True
+    def connect_executor(self, environment_id, remote_url):
+        self.executor_started = True
 
     def logs(self):
         return "connected"
 
     def stop(self):
         self.stopped = True
-
-    def remove_browser_profile(self):
-        self.profile_removed = True
-
 
 class ManagedRunnerTests(unittest.TestCase):
     def setUp(self):
@@ -174,10 +172,10 @@ class ManagedRunnerTests(unittest.TestCase):
         self.assertEqual(result.status, "completed")
         self.assertEqual(result.message_html, MESSAGE)
         self.assertEqual(sessions.deleted, "session-1")
-        self.assertTrue(sandboxes[0].started)
+        self.assertTrue(sandboxes[0].container_started)
+        self.assertTrue(sandboxes[0].executor_started)
         self.assertTrue(sandboxes[0].authenticated)
         self.assertTrue(sandboxes[0].stopped)
-        self.assertTrue(sandboxes[0].profile_removed)
         workspace = self.root / "runs" / "run-1" / "workspace"
         self.assertTrue((workspace / "session-events.json").is_file())
         self.assertTrue((workspace / "session-items.json").is_file())
@@ -193,9 +191,9 @@ class ManagedRunnerTests(unittest.TestCase):
         )
 
         output = "\n".join(progress_messages)
-        self.assertIn("[1/7] Preparing disposable browser workspace", output)
-        self.assertIn("[2/7] Checking QA authentication", output)
-        self.assertIn("QA session expired; automatic login succeeded", output)
+        self.assertIn("[1/7] Preparing disposable Sasha container", output)
+        self.assertIn("[2/7] Signing into Fresh Prints QA", output)
+        self.assertIn("Fresh Prints QA authentication succeeded", output)
         self.assertIn("[5/7] Sasha is working on the task", output)
         self.assertIn("Sasha: I am inspecting the deal and its proof.", output)
         self.assertIn("Sasha tool step 1 started", output)
@@ -401,7 +399,6 @@ class ManagedRunnerTests(unittest.TestCase):
         self.assertEqual(result.failure_code, "turn_not_completed")
         self.assertEqual(result.failure_message, "agent.session.turn.failed")
         self.assertTrue(sandboxes[0].stopped)
-        self.assertTrue(sandboxes[0].profile_removed)
         self.assertEqual(sessions.deleted, "session-1")
 
     def test_authentication_failure_stops_before_openai_session_creation(self):
@@ -417,8 +414,9 @@ class ManagedRunnerTests(unittest.TestCase):
         self.assertEqual(result.failure_code, "managed_runner_error")
         self.assertIn("QA authentication failed", result.failure_message)
         self.assertIsNone(sessions.create_arguments)
-        self.assertFalse(sandboxes[0].started)
-        self.assertTrue(sandboxes[0].profile_removed)
+        self.assertTrue(sandboxes[0].container_started)
+        self.assertFalse(sandboxes[0].executor_started)
+        self.assertTrue(sandboxes[0].stopped)
 
     def test_connection_timeout_returns_failure_and_cleans_up(self):
         runner, sessions, sandboxes = self._make_runner(
@@ -435,7 +433,6 @@ class ManagedRunnerTests(unittest.TestCase):
         self.assertEqual(result.failure_code, "managed_runner_error")
         self.assertIn("Timed out waiting", result.failure_message)
         self.assertTrue(sandboxes[0].stopped)
-        self.assertTrue(sandboxes[0].profile_removed)
         self.assertEqual(sessions.deleted, "session-1")
 
     def test_turn_timeout_cancels_turn_and_returns_failure(self):
@@ -457,7 +454,6 @@ class ManagedRunnerTests(unittest.TestCase):
             sessions.events.sent,
         )
         self.assertTrue(sandboxes[0].stopped)
-        self.assertTrue(sandboxes[0].profile_removed)
 
     def test_progress_and_pricing_are_optional(self):
         runner, sessions, _ = self._make_runner(None)
@@ -515,7 +511,6 @@ class ManagedRunnerTests(unittest.TestCase):
             login_user="qa-user",
             login_password="qa-password",
             sandbox_image="test-image",
-            auth_directory=self.root / "auth",
             runs_directory=self.root / "runs",
             connection_timeout_seconds=connection_timeout,
             turn_timeout_seconds=turn_timeout,
