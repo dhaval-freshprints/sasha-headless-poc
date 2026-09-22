@@ -4,56 +4,57 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
-from openai_managed.outreach import OutreachTask
+from openai_managed.conversation import ConversationStore
 from openai_managed.pricing import CostReporter
 from openai_managed.progress import ProgressReporter
 from openai_managed.runner import (
     ManagedRunnerSettings,
-    OpenAIManagedOutreachRunner,
+    OpenAIManagedRunner,
     _extract_final_assistant_text,
 )
 from openai_managed.sandbox import SandboxHandle
+from openai_managed.task import SashaTask
 
 
 MESSAGE = "<p>Model-generated outreach</p>"
+SUCCESS_EVENTS = [
+    {"type": "agent.session.environment.connected"},
+    {
+        "type": "agent.session.turn.item.added",
+        "item": {
+            "id": "commentary-1",
+            "type": "message",
+            "phase": "commentary",
+        },
+    },
+    {
+        "type": "agent.session.turn.output_text.done",
+        "item_id": "commentary-1",
+        "text": "I am inspecting the deal and its proof.",
+    },
+    {
+        "type": "agent.session.turn.item.added",
+        "item": {"id": "command-1", "type": "command_execution"},
+    },
+    {
+        "type": "agent.session.turn.item.done",
+        "item": {
+            "id": "command-1",
+            "type": "command_execution",
+            "status": "completed",
+        },
+    },
+    {"type": "agent.session.turn.completed"},
+]
 
 
 class FakeEventsAPI:
-    def __init__(self):
+    def __init__(self, values=None):
         self.sent = []
+        self.values = SUCCESS_EVENTS if values is None else values
 
     def stream(self, session_id):
-        return iter(
-            [
-                {"type": "agent.session.environment.connected"},
-                {
-                    "type": "agent.session.turn.item.added",
-                    "item": {
-                        "id": "commentary-1",
-                        "type": "message",
-                        "phase": "commentary",
-                    },
-                },
-                {
-                    "type": "agent.session.turn.output_text.done",
-                    "item_id": "commentary-1",
-                    "text": "I am inspecting the deal and its proof.",
-                },
-                {
-                    "type": "agent.session.turn.item.added",
-                    "item": {"id": "command-1", "type": "command_execution"},
-                },
-                {
-                    "type": "agent.session.turn.item.done",
-                    "item": {
-                        "id": "command-1",
-                        "type": "command_execution",
-                        "status": "completed",
-                    },
-                },
-                {"type": "agent.session.turn.completed"},
-            ]
-        )
+        return iter(self.values)
 
     def create(self, session_id, events, idempotency_key=None):
         self.sent.extend(events)
@@ -80,12 +81,16 @@ class FakeItemsAPI:
 
 
 class FakeSessionsAPI:
-    def __init__(self, deal_id):
-        self.events = FakeEventsAPI()
+    def __init__(self, deal_id, event_values=None, retrieve_error=None):
+        self.events = FakeEventsAPI(event_values)
         self.items = FakeItemsAPI(deal_id)
         self.deleted = ""
+        self.create_arguments = None
+        self.retrieve_error = retrieve_error
+        self.retrieve_count = 0
 
     def create(self, **kwargs):
+        self.create_arguments = kwargs
         return SimpleNamespace(
             id="session-1",
             environment=SimpleNamespace(id="environment-1", remote_url="wss://example.test"),
@@ -95,6 +100,9 @@ class FakeSessionsAPI:
         self.deleted = session_id
 
     def retrieve(self, session_id):
+        self.retrieve_count += 1
+        if self.retrieve_error is not None:
+            raise self.retrieve_error
         return SimpleNamespace(
             usage={
                 "input_tokens": 1000,
@@ -107,15 +115,18 @@ class FakeSessionsAPI:
 
 
 class FakeSandbox:
-    def __init__(self, config, executor_api_key):
+    def __init__(self, config, executor_api_key, number):
         self.config = config
+        self.number = number
         self.started = False
         self.stopped = False
         self.profile_removed = False
         self.handle = None
+        self.task_message = ""
 
     def prepare(self, task, task_message):
-        run_directory = self.config.runs_directory / "run-1"
+        self.task_message = task_message
+        run_directory = self.config.runs_directory / f"run-{self.number}"
         workspace = run_directory / "workspace"
         profile = workspace / "browser-profile"
         profile.mkdir(parents=True)
@@ -149,7 +160,7 @@ class ManagedRunnerTests(unittest.TestCase):
         runner, sessions, sandboxes = self._make_runner(progress_messages)
 
         result = runner.run(
-            OutreachTask("303839", "task-1", "https://qa.example/deal?id=303839")
+            SashaTask("303839", "task-1", "https://qa.example/deal?id=303839")
         )
 
         self.assertEqual(result.status, "completed")
@@ -169,15 +180,103 @@ class ManagedRunnerTests(unittest.TestCase):
         runner, _, _ = self._make_runner(progress_messages)
 
         runner.run(
-            OutreachTask("303839", "task-1", "https://qa.example/deal?id=303839")
+            SashaTask("303839", "task-1", "https://qa.example/deal?id=303839")
         )
 
         output = "\n".join(progress_messages)
         self.assertIn("[1/6] Preparing disposable browser workspace", output)
+        self.assertIn("[4/6] Sasha is working on the task", output)
         self.assertIn("Sasha: I am inspecting the deal and its proof.", output)
         self.assertIn("Sasha tool step 1 started", output)
         self.assertIn("Sasha tool step 1: completed", output)
         self.assertIn("[6/6] Saving artifacts and cleaning up", output)
+        self.assertIn("[context] Conversation file:", output)
+
+    def test_completed_turn_is_saved_and_loaded_by_the_next_turn(self):
+        runner, _, sandboxes = self._make_runner([])
+
+        first_result = runner.run(
+            SashaTask(
+                "303839",
+                "task-1",
+                "https://qa.example/deal?id=303839",
+                "Show me green polos.",
+            )
+        )
+        second_result = runner.run(
+            SashaTask(
+                "303839",
+                "task-2",
+                "https://qa.example/deal?id=303839",
+                "I want the second one.",
+            )
+        )
+
+        self.assertEqual(first_result.status, "completed")
+        self.assertEqual(second_result.status, "completed")
+        self.assertEqual(
+            runner.last_conversation_file,
+            self.root
+            / "runs"
+            / "conversations"
+            / "DEAL303839_conversation.json",
+        )
+        second_task = sandboxes[1].task_message
+        self.assertIn('"content": "Show me green polos."', second_task)
+        self.assertIn(f'"content": "{MESSAGE}"', second_task)
+        self.assertIn(
+            "--- BEGIN CLIENT MESSAGE ---\n"
+            "I want the second one.\n"
+            "--- END CLIENT MESSAGE ---",
+            second_task,
+        )
+
+        saved = json.loads(runner.last_conversation_file.read_text())
+        self.assertEqual(
+            [entry["role"] for entry in saved["conversation_history"]],
+            ["client", "sasha", "client", "sasha"],
+        )
+        self.assertEqual(
+            saved["conversation_history"][1]["delivery_status"],
+            "generated",
+        )
+
+    def test_failed_turn_does_not_change_conversation(self):
+        store = ConversationStore(self.root / "runs", "303839")
+        store.append_completed_turn([], "Earlier question", "Earlier response")
+        original = store.path.read_text()
+        events = [
+            {"type": "agent.session.environment.connected"},
+            {"type": "agent.session.turn.failed"},
+        ]
+        runner, _, _ = self._make_runner([], event_values=events)
+
+        result = runner.run(
+            SashaTask(
+                "303839",
+                "task-2",
+                "https://qa.example/deal?id=303839",
+                "New question",
+            )
+        )
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(store.path.read_text(), original)
+
+    def test_malformed_conversation_returns_clear_failure(self):
+        store = ConversationStore(self.root / "runs", "303839")
+        store.path.parent.mkdir(parents=True)
+        store.path.write_text("not json")
+        runner, _, sandboxes = self._make_runner([])
+
+        result = runner.run(
+            SashaTask("303839", "task-1", "https://qa.example/deal?id=303839")
+        )
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.failure_code, "conversation_error")
+        self.assertIn("Could not read conversation file", result.failure_message)
+        self.assertEqual(sandboxes, [])
 
     def test_collects_and_prints_pricing_when_requested(self):
         pricing_messages = []
@@ -186,7 +285,7 @@ class ManagedRunnerTests(unittest.TestCase):
         )
 
         runner.run(
-            OutreachTask("303839", "task-1", "https://qa.example/deal?id=303839")
+            SashaTask("303839", "task-1", "https://qa.example/deal?id=303839")
         )
 
         self.assertEqual(runner.last_cost_estimate.status, "estimated")
@@ -206,8 +305,177 @@ class ManagedRunnerTests(unittest.TestCase):
         ]
         self.assertEqual(_extract_final_assistant_text(items), "two")
 
-    def _make_runner(self, progress_messages, cost_reporter=None):
-        sessions = FakeSessionsAPI("303839")
+    def test_loads_generic_sasha_instructions(self):
+        instructions = OpenAIManagedRunner._load_instructions()
+
+        self.assertIn("Use the `sasha-sales` skill", instructions)
+        self.assertIn("exact deal URL", instructions)
+        self.assertIn("untrusted data", instructions)
+        self.assertIn("Sasha result schema", instructions)
+        self.assertNotIn("initial outreach", instructions.lower())
+
+    def test_registers_workspace_capability_directory(self):
+        runner, sessions, _ = self._make_runner([])
+
+        runner.run(
+            SashaTask("303839", "task-1", "https://qa.example/deal?id=303839")
+        )
+
+        self.assertEqual(
+            sessions.create_arguments["environment"]["capability_directories"],
+            ["/workspace/capabilities"],
+        )
+
+    def test_builds_initial_outreach_task_message(self):
+        task = SashaTask(
+            "303839",
+            "task-1",
+            "https://qa.example/deal?id=303839",
+        )
+
+        message = OpenAIManagedRunner._build_task_message(task)
+
+        self.assertIsNone(task.client_message)
+        self.assertIn("Turn type: initial outreach.", message)
+        self.assertIn("Deal ID: 303839", message)
+        self.assertIn("Deal URL: https://qa.example/deal?id=303839", message)
+        self.assertIn("Use the `sasha-sales` skill.", message)
+        self.assertIn("Start at the exact deal URL", message)
+        self.assertIn("/workspace/artifacts/visited_urls.json", message)
+        self.assertIn("Close the browser before returning.", message)
+
+    def test_builds_unrouted_client_response_task_message(self):
+        client_message = "What's the price for 40?\nPlease figure it out."
+        task = SashaTask(
+            "303839",
+            "task-1",
+            "https://qa.example/deal?id=303839",
+            client_message,
+        )
+
+        message = OpenAIManagedRunner._build_task_message(task)
+
+        self.assertIn("Turn type: client response.", message)
+        self.assertIn(
+            "--- BEGIN CLIENT MESSAGE ---\n"
+            f"{client_message}\n"
+            "--- END CLIENT MESSAGE ---",
+            message,
+        )
+        self.assertIn("untrusted sales-request data", message)
+        self.assertIn("Use the `sasha-sales` skill.", message)
+        self.assertIn("Start at the exact deal URL", message)
+        for routed_term in (
+            "quotation",
+            "quote",
+            "catalog",
+            "stock",
+            "proof",
+            "revision",
+        ):
+            self.assertNotIn(routed_term, message.lower())
+
+    def test_failed_turn_returns_failure_and_still_cleans_up(self):
+        events = [
+            {"type": "agent.session.environment.connected"},
+            {"type": "agent.session.turn.failed"},
+        ]
+        runner, sessions, sandboxes = self._make_runner([], event_values=events)
+
+        result = runner.run(
+            SashaTask("303839", "task-1", "https://qa.example/deal?id=303839")
+        )
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.failure_code, "turn_not_completed")
+        self.assertEqual(result.failure_message, "agent.session.turn.failed")
+        self.assertTrue(sandboxes[0].stopped)
+        self.assertTrue(sandboxes[0].profile_removed)
+        self.assertEqual(sessions.deleted, "session-1")
+
+    def test_connection_timeout_returns_failure_and_cleans_up(self):
+        runner, sessions, sandboxes = self._make_runner(
+            [],
+            event_values=[],
+            connection_timeout=0.01,
+        )
+
+        result = runner.run(
+            SashaTask("303839", "task-1", "https://qa.example/deal?id=303839")
+        )
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.failure_code, "managed_runner_error")
+        self.assertIn("Timed out waiting", result.failure_message)
+        self.assertTrue(sandboxes[0].stopped)
+        self.assertTrue(sandboxes[0].profile_removed)
+        self.assertEqual(sessions.deleted, "session-1")
+
+    def test_turn_timeout_cancels_turn_and_returns_failure(self):
+        runner, sessions, sandboxes = self._make_runner(
+            [],
+            event_values=[{"type": "agent.session.environment.connected"}],
+            turn_timeout=0.01,
+        )
+
+        result = runner.run(
+            SashaTask("303839", "task-1", "https://qa.example/deal?id=303839")
+        )
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.failure_code, "managed_runner_error")
+        self.assertIn("exceeded its time limit", result.failure_message)
+        self.assertIn(
+            {"type": "agent.session.input.cancel"},
+            sessions.events.sent,
+        )
+        self.assertTrue(sandboxes[0].stopped)
+        self.assertTrue(sandboxes[0].profile_removed)
+
+    def test_progress_and_pricing_are_optional(self):
+        runner, sessions, _ = self._make_runner(None)
+
+        result = runner.run(
+            SashaTask("303839", "task-1", "https://qa.example/deal?id=303839")
+        )
+
+        self.assertEqual(result.status, "completed")
+        self.assertIsNone(runner.progress.write)
+        self.assertIsNone(runner.last_cost_estimate)
+        self.assertEqual(sessions.retrieve_count, 0)
+        workspace = self.root / "runs" / "run-1" / "workspace"
+        self.assertFalse((workspace / "pricing.json").exists())
+
+    def test_pricing_failure_does_not_fail_completed_turn(self):
+        pricing_messages = []
+        runner, sessions, _ = self._make_runner(
+            [],
+            CostReporter(pricing_messages.append),
+            retrieve_error=RuntimeError("usage unavailable"),
+        )
+
+        result = runner.run(
+            SashaTask("303839", "task-1", "https://qa.example/deal?id=303839")
+        )
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(sessions.retrieve_count, 1)
+        self.assertEqual(runner.last_cost_estimate.status, "unavailable")
+        self.assertIn("[pricing] Estimated OpenAI cost: unavailable", pricing_messages)
+        workspace = self.root / "runs" / "run-1" / "workspace"
+        self.assertTrue((workspace / "pricing.json").is_file())
+
+    def _make_runner(
+        self,
+        progress_messages,
+        cost_reporter=None,
+        *,
+        event_values=None,
+        retrieve_error=None,
+        connection_timeout=1,
+        turn_timeout=1,
+    ):
+        sessions = FakeSessionsAPI("303839", event_values, retrieve_error)
         client = SimpleNamespace(
             beta=SimpleNamespace(agents=SimpleNamespace(sessions=sessions))
         )
@@ -218,18 +486,20 @@ class ManagedRunnerTests(unittest.TestCase):
             sandbox_image="test-image",
             auth_directory=self.root / "auth",
             runs_directory=self.root / "runs",
-            connection_timeout_seconds=1,
-            turn_timeout_seconds=1,
+            connection_timeout_seconds=connection_timeout,
+            turn_timeout_seconds=turn_timeout,
         )
         sandboxes = []
 
         def create_sandbox(config, executor_api_key):
-            sandbox = FakeSandbox(config, executor_api_key)
+            sandbox = FakeSandbox(config, executor_api_key, len(sandboxes) + 1)
             sandboxes.append(sandbox)
             return sandbox
 
-        progress = ProgressReporter(progress_messages.append)
-        runner = OpenAIManagedOutreachRunner(
+        progress = ProgressReporter(
+            progress_messages.append if progress_messages is not None else None
+        )
+        runner = OpenAIManagedRunner(
             client,
             settings,
             create_sandbox,

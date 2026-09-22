@@ -147,10 +147,80 @@ Focused local checks (no API calls or live browser):
 python -m unittest discover -s tests -v
 ```
 
-## OpenAI-managed outreach POC
+## OpenAI-managed Sasha POC
 
-This isolated path reads one QA deal and returns an outreach draft. It does not
-send a message or change Fresh Prints data.
+This isolated path uses one `OpenAIManagedRunner` for both initial outreach and
+client responses against Fresh Prints QA. Without `--message`, the task is
+initial outreach. With `--message`, the exact client message is passed to Astra
+as untrusted data. Python does not classify quotations, products, alternatives,
+proofs, revisions, or other client intents. Astra starts at the supplied deal,
+reads its current context, chooses the workflow, and continues its managed
+observe-act-observe loop until it can return a result or a real blocker.
+
+The POC generates a client-facing HTML message but does not send it. It does not
+purchase anything or delete CRM records. It has no contract validator, semantic
+message validator, or independent before/after browser checker.
+
+### Architecture
+
+```text
+deal ID + optional client message
+              |
+              v
+     run_openai_managed_sasha.py
+              |
+              v
+ per-deal conversation JSON
+       load + append
+              |
+              v
+       OpenAIManagedRunner
+     session, timeout, artifacts
+              |
+              v
+      OpenAI managed harness
+              |
+              v
+ Astra + sasha-sales skill
+ decide -> Playwright action -> observe
+    ^                              |
+    |______________________________|
+              |
+              v
+        SashaResult JSON
+```
+
+There is no outreach runner and client-response runner. Both modes use the same
+task contract, result schema, sandbox, managed session lifecycle, and CLI.
+
+### Instructions and skills
+
+The managed runner supplies four distinct knowledge layers:
+
+- `openai_managed/SASHA01_agent_instructions.md` contains stable identity,
+  Fresh Prints QA boundaries, prohibited actions, and the required result.
+- `openai_managed/capabilities/sasha-sales/SKILL.md` tells Astra how to begin a
+  sales turn, choose a workflow, and run the browser loop.
+- `openai_managed/capabilities/sasha-sales/references/playbook.md` contains sales
+  judgment, pricing policy, MOQ rules, verification, and client-writing style.
+- `openai_managed/capabilities/sasha-sales/references/workplace.md` contains page
+  URLs, fields, controls, and observed Fresh Prints UI behavior.
+
+The skill directory is copied into every disposable run workspace and registered
+with the Agents API. The task message names the skill but does not paste the
+Playbook or Workplace into every run.
+
+### Setup
+
+Set these values in `.env`:
+
+```dotenv
+FP_BASE_URL=https://v4-qa.internal-fp.com
+OPENAI_API_KEY=...
+OPENAI_EXECUTOR_API_KEY=...
+OPENAI_AGENT_MODEL=gpt-6-astra
+OPENAI_AGENT_REASONING_EFFORT=medium
+```
 
 Build the executor image and create its authenticated browser profile once:
 
@@ -159,33 +229,56 @@ docker build -f Dockerfile.openai-managed -t sasha-openai-managed:local .
 .venv/bin/python scripts/setup_openai_managed_auth.py
 ```
 
-Then run outreach for an explicitly authorized QA deal:
+### Run
+
+Initial outreach for an explicitly authorized QA deal:
 
 ```bash
-.venv/bin/python scripts/run_openai_managed_outreach.py DEAL_ID
+.venv/bin/python scripts/run_openai_managed_sasha.py DEAL_ID --verbose
 ```
 
-Add `--verbose` to see orchestration milestones, Sasha commentary, and tool-step
-status while the run is active:
+Client response through the same runner:
 
 ```bash
-.venv/bin/python scripts/run_openai_managed_outreach.py DEAL_ID --verbose
+.venv/bin/python scripts/run_openai_managed_sasha.py DEAL_ID \
+  --message "What's the price for 40?" \
+  --verbose \
+  --pricing
 ```
 
-Add `--pricing` to retrieve the run's best-effort token usage and print an
-estimated OpenAI model cost:
-
-```bash
-.venv/bin/python scripts/run_openai_managed_outreach.py DEAL_ID --pricing
-```
+`--verbose` prints orchestration milestones, Sasha commentary, and tool-step
+status to stderr. `--pricing` requests best-effort token usage and prints the
+cost estimate to stderr. Neither flag changes the task or result.
 
 The pricing estimate uses the published Standard rates for `gpt-6-astra`.
 If OpenAI does not return usage, the command prints that pricing is unavailable.
 The detailed estimate is also saved as `pricing.json` with the other run artifacts.
 
-The command prints Sasha's structured result as JSON. Session events, executor
-logs, browser artifacts, and the final result are saved under
-`runs/openai-managed/`.
+The command prints only Sasha's structured result JSON to stdout. Session events,
+session items, executor logs, screenshots, visited URLs, pricing, the copied
+skill, and the final result remain under `runs/openai-managed/`.
+
+The runner internally maintains one conversation file per deal at
+`runs/openai-managed/conversations/DEAL<deal_id>_conversation.json`. No filename
+or path argument is required. Before each turn, the runner gives Astra the
+deal's previous conversation as reference data. After a completed turn, it
+atomically appends the current client message when present and Sasha's exact
+HTML response. POC responses are marked `delivery_status: generated` because
+this runner does not send them. Failed turns do not add a Sasha response.
+
+### Tested scope
+
+At this phase, the managed path has been tested for initial outreach and one
+client-response scenario: an existing-proof quotation. In the quotation test,
+Astra independently followed the proof from the deal, entered quantity 40,
+read the recalculated price, and cancelled without saving. A two-turn test also
+confirmed that a fresh second managed session received the first turn's exact
+client and Sasha messages from the internal deal conversation file. Product
+suggestions, alternatives, stock questions, proof creation, attachments, and
+revision submission have not yet been validated through this managed path.
+
+See `SASHA02_openai_managed_sasha_architecture.md` for component ownership and
+the full end-to-end flow.
 
 ## Evals
 

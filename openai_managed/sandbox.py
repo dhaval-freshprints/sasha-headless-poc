@@ -1,4 +1,4 @@
-"""Disposable Docker environment for one managed outreach run."""
+"""Disposable Docker environment for one managed Sasha turn."""
 
 from __future__ import annotations
 
@@ -12,10 +12,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
 
-from .outreach import OutreachTask
+from .task import SashaTask
 
 
 SAFE_NAME = re.compile(r"[^a-zA-Z0-9_.-]+")
+SASHA_SKILL_DIRECTORY = Path(__file__).with_name("capabilities") / "sasha-sales"
 
 
 @dataclass(frozen=True)
@@ -41,7 +42,7 @@ class DockerSandbox:
         if not self.executor_api_key:
             raise ValueError("OPENAI_EXECUTOR_API_KEY must be set")
 
-    def prepare(self, task: OutreachTask, task_message: str) -> SandboxHandle:
+    def prepare(self, task: SashaTask, task_message: str) -> SandboxHandle:
         auth_directory = self.config.auth_directory.resolve()
         if not auth_directory.is_dir() or not any(auth_directory.iterdir()):
             raise FileNotFoundError(
@@ -49,17 +50,23 @@ class DockerSandbox:
                 "Run scripts/setup_openai_managed_auth.py first."
             )
 
-        safe_task_id = SAFE_NAME.sub("-", task.task_id).strip("-.") or "outreach"
+        safe_task_id = SAFE_NAME.sub("-", task.task_id).strip("-.") or "sasha"
         run_directory = (
             self.config.runs_directory / f"{safe_task_id}-{uuid.uuid4().hex[:8]}"
         ).resolve()
         workspace_directory = run_directory / "workspace"
         profile_directory = workspace_directory / "browser-profile"
+        capabilities_directory = workspace_directory / "capabilities"
 
         workspace_directory.mkdir(parents=True, exist_ok=False)
         try:
             shutil.copytree(auth_directory, profile_directory)
             (workspace_directory / "artifacts").mkdir()
+            capabilities_directory.mkdir()
+            shutil.copytree(
+                SASHA_SKILL_DIRECTORY,
+                capabilities_directory / "sasha-sales",
+            )
             (workspace_directory / "TASK.md").write_text(task_message, encoding="utf-8")
             (workspace_directory / "task.json").write_text(
                 json.dumps(
@@ -67,6 +74,8 @@ class DockerSandbox:
                         "deal_id": task.deal_id,
                         "task_id": task.task_id,
                         "deal_url": task.deal_url,
+                        "client_message": task.client_message,
+                        "conversation_history": list(task.conversation_history),
                     },
                     indent=2,
                 ),
@@ -77,7 +86,7 @@ class DockerSandbox:
             raise
 
         self.handle = SandboxHandle(
-            container_name=f"sasha-outreach-{uuid.uuid4().hex[:12]}",
+            container_name=f"sasha-managed-{uuid.uuid4().hex[:12]}",
             run_directory=run_directory,
             workspace_directory=workspace_directory,
             browser_profile_directory=profile_directory,

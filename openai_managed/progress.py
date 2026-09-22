@@ -1,4 +1,4 @@
-"""Optional progress output for a managed outreach run."""
+"""Optional progress output for a managed Sasha run."""
 
 from collections.abc import Callable
 

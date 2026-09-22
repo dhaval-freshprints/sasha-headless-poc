@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate one read-only outreach draft for a Fresh Prints QA deal."""
+"""Run one Fresh Prints QA sales turn through OpenAI-managed Sasha."""
 
 import argparse
 import json
@@ -14,17 +14,21 @@ from dotenv import load_dotenv
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from openai_managed.outreach import OutreachTask
 from openai_managed.pricing import CostReporter
 from openai_managed.progress import ProgressReporter
-from openai_managed.runner import OpenAIManagedOutreachRunner
+from openai_managed.runner import OpenAIManagedRunner
+from openai_managed.task import SashaTask
 
 
-def parse_arguments() -> argparse.Namespace:
+def parse_arguments(arguments: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Generate an outreach draft through OpenAI-managed Sasha."
+        description="Run one Fresh Prints QA sales turn through OpenAI-managed Sasha."
     )
     parser.add_argument("deal_id", help="Fresh Prints QA deal ID")
+    parser.add_argument(
+        "--message",
+        help="Inbound client message; omit it to generate initial outreach",
+    )
     parser.add_argument(
         "--verbose",
         action="store_true",
@@ -35,7 +39,7 @@ def parse_arguments() -> argparse.Namespace:
         action="store_true",
         help="Print estimated OpenAI token pricing for the complete run",
     )
-    return parser.parse_args()
+    return parser.parse_args(arguments)
 
 
 def main() -> int:
@@ -46,12 +50,13 @@ def main() -> int:
     if not base_url:
         raise ValueError("FP_BASE_URL must be set")
 
-    task = OutreachTask(
+    task = SashaTask(
         deal_id=arguments.deal_id,
-        task_id=f"outreach-{arguments.deal_id}-{uuid.uuid4().hex[:8]}",
+        task_id=f"sasha-{arguments.deal_id}-{uuid.uuid4().hex[:8]}",
         deal_url=(
             f"{base_url}/dashboard/sales-pipeline/deal?id={arguments.deal_id}"
         ),
+        client_message=arguments.message,
     )
     progress = ProgressReporter(
         (lambda message: print(message, file=sys.stderr))
@@ -63,7 +68,7 @@ def main() -> int:
         if arguments.pricing
         else None
     )
-    runner = OpenAIManagedOutreachRunner.from_environment(progress, cost_reporter)
+    runner = OpenAIManagedRunner.from_environment(progress, cost_reporter)
     result = runner.run(task)
     print(json.dumps(result.to_dict(), indent=2))
     if runner.last_run_directory:

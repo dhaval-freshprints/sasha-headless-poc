@@ -1,11 +1,11 @@
-"""Input and output values for managed outreach."""
+"""Input and output values for one managed Sasha turn."""
 
 from dataclasses import asdict, dataclass
 import json
-from typing import Literal
+from typing import Any, Literal
 
 
-OUTREACH_RESULT_JSON_SCHEMA = {
+SASHA_RESULT_JSON_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
     "required": [
@@ -26,14 +26,16 @@ OUTREACH_RESULT_JSON_SCHEMA = {
 
 
 @dataclass(frozen=True)
-class OutreachTask:
+class SashaTask:
     deal_id: str
     task_id: str
     deal_url: str
+    client_message: str | None = None
+    conversation_history: tuple[dict[str, Any], ...] = ()
 
 
 @dataclass(frozen=True)
-class OutreachResult:
+class SashaResult:
     deal_id: str
     status: Literal["completed", "failed"]
     message_html: str = ""
@@ -44,5 +46,5 @@ class OutreachResult:
         return asdict(self)
 
     @classmethod
-    def from_json(cls, value: str) -> "OutreachResult":
+    def from_json(cls, value: str) -> "SashaResult":
         return cls(**json.loads(value))
