@@ -1,0 +1,8 @@
+.env
+.git
+.idea
+.venv
+__pycache__
+auth
+auth-openai-managed
+runs

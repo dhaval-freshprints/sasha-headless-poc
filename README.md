@@ -147,6 +147,35 @@ Focused local checks (no API calls or live browser):
 python -m unittest discover -s tests -v
 ```
 
+## OpenAI-managed outreach POC
+
+This isolated path reads one QA deal and returns an outreach draft. It does not
+send a message or change Fresh Prints data.
+
+Build the executor image and create its authenticated browser profile once:
+
+```bash
+docker build -f Dockerfile.openai-managed -t sasha-openai-managed:local .
+.venv/bin/python scripts/setup_openai_managed_auth.py
+```
+
+Then run outreach for an explicitly authorized QA deal:
+
+```bash
+.venv/bin/python scripts/run_openai_managed_outreach.py DEAL_ID
+```
+
+Add `--verbose` to see orchestration milestones, Sasha commentary, and tool-step
+status while the run is active:
+
+```bash
+.venv/bin/python scripts/run_openai_managed_outreach.py DEAL_ID --verbose
+```
+
+The command prints Sasha's structured result as JSON. Session events, executor
+logs, browser artifacts, and the final result are saved under
+`runs/openai-managed/`.
+
 ## Evals
 
 `evals/asks.json` is a fixed set of client asks on QA deals, each with checks the harness can

@@ -2,6 +2,7 @@
 .venv/
 auth
 auth/
+auth-openai-managed/
 runs/
 __pycache__/
 .idea
