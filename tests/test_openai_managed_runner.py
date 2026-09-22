@@ -123,6 +123,8 @@ class FakeSandbox:
         self.profile_removed = False
         self.handle = None
         self.task_message = ""
+        self.authenticated = False
+        self.authentication_error = None
 
     def prepare(self, task, task_message):
         self.task_message = task_message
@@ -133,6 +135,12 @@ class FakeSandbox:
         (workspace / "artifacts").mkdir()
         self.handle = SandboxHandle("container-1", run_directory, workspace, profile)
         return self.handle
+
+    def authenticate(self, deal_url, login_url, login_user, login_password):
+        if self.authentication_error is not None:
+            raise self.authentication_error
+        self.authenticated = True
+        return True
 
     def start(self, environment_id, remote_url):
         self.started = True
@@ -167,6 +175,7 @@ class ManagedRunnerTests(unittest.TestCase):
         self.assertEqual(result.message_html, MESSAGE)
         self.assertEqual(sessions.deleted, "session-1")
         self.assertTrue(sandboxes[0].started)
+        self.assertTrue(sandboxes[0].authenticated)
         self.assertTrue(sandboxes[0].stopped)
         self.assertTrue(sandboxes[0].profile_removed)
         workspace = self.root / "runs" / "run-1" / "workspace"
@@ -184,12 +193,14 @@ class ManagedRunnerTests(unittest.TestCase):
         )
 
         output = "\n".join(progress_messages)
-        self.assertIn("[1/6] Preparing disposable browser workspace", output)
-        self.assertIn("[4/6] Sasha is working on the task", output)
+        self.assertIn("[1/7] Preparing disposable browser workspace", output)
+        self.assertIn("[2/7] Checking QA authentication", output)
+        self.assertIn("QA session expired; automatic login succeeded", output)
+        self.assertIn("[5/7] Sasha is working on the task", output)
         self.assertIn("Sasha: I am inspecting the deal and its proof.", output)
         self.assertIn("Sasha tool step 1 started", output)
         self.assertIn("Sasha tool step 1: completed", output)
-        self.assertIn("[6/6] Saving artifacts and cleaning up", output)
+        self.assertIn("[7/7] Saving artifacts and cleaning up", output)
         self.assertIn("[context] Conversation file:", output)
 
     def test_completed_turn_is_saved_and_loaded_by_the_next_turn(self):
@@ -393,6 +404,22 @@ class ManagedRunnerTests(unittest.TestCase):
         self.assertTrue(sandboxes[0].profile_removed)
         self.assertEqual(sessions.deleted, "session-1")
 
+    def test_authentication_failure_stops_before_openai_session_creation(self):
+        runner, sessions, sandboxes = self._make_runner(
+            [], authentication_error=RuntimeError("QA authentication failed")
+        )
+
+        result = runner.run(
+            SashaTask("303839", "task-1", "https://qa.example/deal?id=303839")
+        )
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.failure_code, "managed_runner_error")
+        self.assertIn("QA authentication failed", result.failure_message)
+        self.assertIsNone(sessions.create_arguments)
+        self.assertFalse(sandboxes[0].started)
+        self.assertTrue(sandboxes[0].profile_removed)
+
     def test_connection_timeout_returns_failure_and_cleans_up(self):
         runner, sessions, sandboxes = self._make_runner(
             [],
@@ -472,6 +499,7 @@ class ManagedRunnerTests(unittest.TestCase):
         *,
         event_values=None,
         retrieve_error=None,
+        authentication_error=None,
         connection_timeout=1,
         turn_timeout=1,
     ):
@@ -483,6 +511,9 @@ class ManagedRunnerTests(unittest.TestCase):
             model="gpt-6-astra",
             reasoning_effort="medium",
             executor_api_key="executor-key",
+            login_url="https://qa.example/login",
+            login_user="qa-user",
+            login_password="qa-password",
             sandbox_image="test-image",
             auth_directory=self.root / "auth",
             runs_directory=self.root / "runs",
@@ -493,6 +524,7 @@ class ManagedRunnerTests(unittest.TestCase):
 
         def create_sandbox(config, executor_api_key):
             sandbox = FakeSandbox(config, executor_api_key, len(sandboxes) + 1)
+            sandbox.authentication_error = authentication_error
             sandboxes.append(sandbox)
             return sandbox
 

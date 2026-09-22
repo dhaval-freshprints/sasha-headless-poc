@@ -2,6 +2,8 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from subprocess import CompletedProcess
+from unittest.mock import patch
 
 from openai_managed.sandbox import DockerSandbox, SandboxConfig
 from openai_managed.task import SashaTask
@@ -75,6 +77,38 @@ class DockerSandboxPreparationTests(unittest.TestCase):
         self.assertTrue((skill_directory / "SKILL.md").is_file())
         self.assertTrue((skill_directory / "references" / "playbook.md").is_file())
         self.assertTrue((skill_directory / "references" / "workplace.md").is_file())
+
+    @patch("openai_managed.sandbox.subprocess.run")
+    def test_authenticates_before_start_without_exposing_credentials_to_executor(
+        self, run
+    ):
+        run.return_value = CompletedProcess(
+            args=[], returncode=0, stdout="AUTH_RELOGIN_SUCCEEDED\n", stderr=""
+        )
+        sandbox = DockerSandbox(self.config, "executor-key")
+        task = SashaTask(
+            "303839",
+            "response-303839",
+            "https://qa.example/deal?id=303839",
+            "Show me orange polos.",
+        )
+        sandbox.prepare(task, "client-response task")
+
+        logged_in = sandbox.authenticate(
+            task.deal_url,
+            "https://qa.example/login",
+            "qa-user",
+            "qa-password",
+        )
+        sandbox.start("environment-1", "wss://executor.example/connect")
+
+        self.assertTrue(logged_in)
+        authentication_command = run.call_args_list[0].args[0]
+        executor_command = run.call_args_list[1].args[0]
+        self.assertIn("FP_USER", authentication_command)
+        self.assertIn("FP_PASSWORD", authentication_command)
+        self.assertNotIn("FP_USER", executor_command)
+        self.assertNotIn("FP_PASSWORD", executor_command)
 
 
 if __name__ == "__main__":

@@ -17,6 +17,7 @@ from .task import SashaTask
 
 SAFE_NAME = re.compile(r"[^a-zA-Z0-9_.-]+")
 SASHA_SKILL_DIRECTORY = Path(__file__).with_name("capabilities") / "sasha-sales"
+AUTHENTICATION_SCRIPT = Path(__file__).with_name("setup_auth.js")
 
 
 @dataclass(frozen=True)
@@ -134,6 +135,56 @@ class DockerSandbox:
             text=True,
             env=process_environment,
         )
+
+    def authenticate(
+        self,
+        deal_url: str,
+        login_url: str,
+        login_user: str,
+        login_password: str,
+    ) -> bool:
+        handle = self._require_handle()
+        environment = dict(os.environ)
+        environment.update(
+            {
+                "FP_DEAL_URL": deal_url,
+                "FP_LOGIN_URL": login_url,
+                "FP_USER": login_user,
+                "FP_PASSWORD": login_password,
+            }
+        )
+        process = subprocess.run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "--shm-size",
+                "1g",
+                "--env",
+                "FP_DEAL_URL",
+                "--env",
+                "FP_LOGIN_URL",
+                "--env",
+                "FP_USER",
+                "--env",
+                "FP_PASSWORD",
+                "--mount",
+                f"type=bind,src={handle.workspace_directory},dst=/workspace",
+                "--mount",
+                f"type=bind,src={AUTHENTICATION_SCRIPT},dst=/opt/sasha/setup_auth.js,readonly",
+                self.config.image,
+                "node",
+                "/opt/sasha/setup_auth.js",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            env=environment,
+        )
+        if process.returncode != 0:
+            details = (process.stderr or process.stdout).strip()
+            raise RuntimeError(f"QA authentication failed: {details}")
+        return "AUTH_RELOGIN_SUCCEEDED" in process.stdout
 
     def logs(self) -> str:
         handle = self._require_handle()

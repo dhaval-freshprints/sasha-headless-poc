@@ -229,6 +229,11 @@ docker build -f Dockerfile.openai-managed -t sasha-openai-managed:local .
 .venv/bin/python scripts/setup_openai_managed_auth.py
 ```
 
+Before every managed turn, the runner checks the disposable browser profile.
+If the QA session has expired, it signs in automatically with `FP_USER` and
+`FP_PASSWORD` before creating the OpenAI agent session. Those credentials are
+not passed to Astra's executor container.
+
 ### Run
 
 Initial outreach for an explicitly authorized QA deal:

@@ -34,6 +34,9 @@ class ManagedRunnerSettings:
     model: str
     reasoning_effort: str
     executor_api_key: str
+    login_url: str
+    login_user: str
+    login_password: str
     sandbox_image: str
     auth_directory: Path
     runs_directory: Path
@@ -49,6 +52,9 @@ class ManagedRunnerSettings:
                 "OPENAI_AGENT_REASONING_EFFORT", "medium"
             ).strip(),
             executor_api_key=_required_environment_value("OPENAI_EXECUTOR_API_KEY"),
+            login_url=_required_environment_value("FP_LOGIN_URL"),
+            login_user=_required_environment_value("FP_USER"),
+            login_password=_required_environment_value("FP_PASSWORD"),
             sandbox_image=os.environ.get(
                 "OPENAI_MANAGED_SANDBOX_IMAGE", "sasha-openai-managed:local"
             ).strip(),
@@ -208,13 +214,25 @@ class OpenAIManagedRunner:
         events: SessionEvents | None = None
         sandbox = self._create_sandbox()
         task_message = self._build_task_message(task)
-        self.progress.report("[1/6] Preparing disposable browser workspace")
+        self.progress.report("[1/7] Preparing disposable browser workspace")
         handle = sandbox.prepare(task, task_message)
         self.last_run_directory = handle.run_directory
         result: SashaResult | None = None
 
         try:
-            self.progress.report("[2/6] Creating OpenAI managed agent session")
+            self.progress.report("[2/7] Checking QA authentication")
+            logged_in = sandbox.authenticate(
+                task.deal_url,
+                self.settings.login_url,
+                self.settings.login_user,
+                self.settings.login_password,
+            )
+            if logged_in:
+                self.progress.report("      QA session expired; automatic login succeeded")
+            else:
+                self.progress.report("      Existing QA session is valid")
+
+            self.progress.report("[3/7] Creating OpenAI managed agent session")
             session = self.client.beta.agents.sessions.create(
                 agent={
                     "model": self.settings.model,
@@ -244,14 +262,14 @@ class OpenAIManagedRunner:
 
             events = SessionEvents(self.client, session_id, self.progress)
             events.start()
-            self.progress.report("[3/6] Connecting the local Docker executor")
+            self.progress.report("[4/7] Connecting the local Docker executor")
             sandbox.start(environment_id, remote_url)
             self._wait_for_connection(events)
-            self.progress.report("[4/6] Sasha is working on the task")
+            self.progress.report("[5/7] Sasha is working on the task")
             self._send_task(session_id, task_message, task.task_id)
             self._wait_for_turn(events, session_id)
 
-            self.progress.report("[5/6] Collecting Sasha's structured JSON output")
+            self.progress.report("[6/7] Collecting Sasha's structured JSON output")
             items = self._list_items(session_id)
             _write_json(handle.workspace_directory / "session-items.json", items)
             result = self._make_result(task, events, items)
@@ -263,7 +281,7 @@ class OpenAIManagedRunner:
                 failure_message=str(error),
             )
         finally:
-            self.progress.report("[6/6] Saving artifacts and cleaning up")
+            self.progress.report("[7/7] Saving artifacts and cleaning up")
             cleanup_errors: list[str] = []
             if self.cost_reporter is not None:
                 self.last_cost_estimate = self._collect_cost_estimate(session_id)
