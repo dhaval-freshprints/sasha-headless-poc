@@ -1,7 +1,7 @@
 """Estimate and print the OpenAI model cost for one managed run."""
 
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from decimal import Decimal
 from typing import Any
 
@@ -22,6 +22,10 @@ class CostEstimate:
     reasoning_tokens: int | None = None
     estimated_cost_usd: float | None = None
     note: str = ""
+    session_id: str = ""
+    raw_usage: Any = None
+    rates_usd_per_million: dict[str, str] = field(default_factory=dict)
+    usage_attempts: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -59,6 +63,11 @@ def estimate_cost(model: str, usage: Any) -> CostEstimate:
         output_tokens=output_tokens,
         reasoning_tokens=reasoning_tokens,
         estimated_cost_usd=round(float(cost), 8),
+        rates_usd_per_million={
+            "input": str(ASTRA_INPUT_PRICE_PER_MILLION),
+            "cached_input": str(ASTRA_CACHED_INPUT_PRICE_PER_MILLION),
+            "output": str(ASTRA_OUTPUT_PRICE_PER_MILLION),
+        },
         note=(
             "Uses published Standard input, cached-input, and output token rates. "
             "It excludes cache-write, long-context, service-tier, and separate tool charges."

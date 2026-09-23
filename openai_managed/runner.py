@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import os
 import threading
+import time
+from datetime import datetime, timezone
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable
@@ -327,16 +329,38 @@ class OpenAIManagedRunner:
     def _collect_cost_estimate(self, session_id: str) -> CostEstimate:
         if not session_id:
             return estimate_cost(self.settings.model, None)
+        attempts = []
+        for delay in (0, 1, 2, 4, 8):
+            if delay:
+                time.sleep(delay)
+            estimate, usage = self._retrieve_cost_estimate(session_id)
+            attempts.append({
+                "retrieved_at": datetime.now(timezone.utc).isoformat(),
+                "raw_usage": usage,
+                "status": estimate.status,
+                "note": estimate.note,
+            })
+            estimate = replace(
+                estimate,
+                session_id=session_id,
+                raw_usage=usage,
+                usage_attempts=attempts,
+            )
+            if estimate.note != "OpenAI did not return token usage":
+                break
+        return estimate
+
+    def _retrieve_cost_estimate(self, session_id: str) -> tuple[CostEstimate, Any]:
         try:
             session = self.client.beta.agents.sessions.retrieve(session_id)
             usage = _to_plain_value(_read_value(session, "usage"))
-            return estimate_cost(self.settings.model, usage)
+            return estimate_cost(self.settings.model, usage), usage
         except Exception as error:
             return CostEstimate(
                 model=self.settings.model,
                 status="unavailable",
                 note=f"Could not retrieve OpenAI usage: {error}",
-            )
+            ), None
 
     def _create_sandbox(self) -> DockerSandbox:
         return self.sandbox_factory(

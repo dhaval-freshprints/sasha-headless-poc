@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from openai_managed.conversation import ConversationStore
 from openai_managed.pricing import CostReporter
@@ -487,6 +488,45 @@ class ManagedRunnerTests(unittest.TestCase):
         self.assertIn("[pricing] Estimated OpenAI cost: unavailable", pricing_messages)
         workspace = self.root / "runs" / "run-1" / "workspace"
         self.assertTrue((workspace / "pricing.json").is_file())
+
+    @patch("openai_managed.runner.time.sleep")
+    def test_delayed_usage_is_saved_before_cleanup(self, sleep):
+        runner, sessions, sandboxes = self._make_runner([], CostReporter(lambda value: None))
+        available = sessions.retrieve("session-1")
+        with patch.object(sessions, "retrieve", side_effect=[
+            SimpleNamespace(usage=None), SimpleNamespace(usage=None), available,
+        ]) as retrieve:
+            result = runner.run(SashaTask("303839", "task-1", "https://qa.example/deal?id=303839"))
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(retrieve.call_count, 3)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [1, 2])
+        evidence = json.loads((runner.last_run_directory / "workspace" / "pricing.json").read_text())
+        self.assertEqual(evidence["session_id"], "session-1")
+        self.assertEqual(evidence["raw_usage"], available.usage)
+        self.assertEqual(evidence["rates_usd_per_million"]["input"], "10.00")
+        self.assertEqual(evidence["estimated_cost_usd"], 0.0164)
+        self.assertEqual(len(evidence["usage_attempts"]), 3)
+        self.assertEqual(sessions.deleted, "session-1")
+        self.assertTrue(sandboxes[0].stopped)
+
+    @patch("openai_managed.runner.time.sleep")
+    def test_missing_usage_retries_are_bounded_and_cleanup_runs(self, sleep):
+        runner, sessions, sandboxes = self._make_runner([], CostReporter(lambda value: None))
+        def missing_usage(session_id):
+            self.assertEqual(sessions.deleted, "")
+            return SimpleNamespace(usage=None)
+        with patch.object(sessions, "retrieve", side_effect=missing_usage) as retrieve:
+            result = runner.run(SashaTask("303839", "task-1", "https://qa.example/deal?id=303839"))
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(retrieve.call_count, 5)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [1, 2, 4, 8])
+        self.assertEqual(runner.last_cost_estimate.status, "unavailable")
+        self.assertIsNone(runner.last_cost_estimate.estimated_cost_usd)
+        self.assertEqual(len(runner.last_cost_estimate.usage_attempts), 5)
+        self.assertEqual(sessions.deleted, "session-1")
+        self.assertTrue(sandboxes[0].stopped)
 
     def _make_runner(
         self,

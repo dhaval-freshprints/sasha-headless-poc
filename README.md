@@ -263,7 +263,10 @@ stderr in minutes and seconds, including failed runs (for example,
 
 The pricing estimate uses the published Standard rates for `gpt-6-astra`.
 If OpenAI does not return usage, the command prints that pricing is unavailable.
-The detailed estimate is also saved as `pricing.json` with the other run artifacts.
+Missing usage is checked again after waits of 1, 2, 4, and 8 seconds before
+session cleanup. These retries cannot guarantee usage availability.
+The detailed estimate is saved as `pricing.json`, including the session ID,
+raw usage, rates used for a successful estimate, and timestamped lookup attempts.
 
 The command prints only Sasha's structured result JSON to stdout. Session events,
 session items, executor logs, authentication status, screenshots, visited URLs,
