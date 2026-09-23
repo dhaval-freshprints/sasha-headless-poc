@@ -31,6 +31,14 @@ def parse_arguments(arguments: list[str] | None = None) -> argparse.Namespace:
         help="Inbound client message; omit it to generate initial outreach",
     )
     parser.add_argument(
+        "-f",
+        "--file",
+        action="append",
+        default=[],
+        metavar="URL",
+        help="Direct URL to a client artwork file; repeat for multiple files",
+    )
+    parser.add_argument(
         "--verbose",
         action="store_true",
         help="Print live orchestration and agent activity",
@@ -58,6 +66,7 @@ def main() -> int:
             f"{base_url}/dashboard/sales-pipeline/deal?id={arguments.deal_id}"
         ),
         client_message=arguments.message,
+        file_urls=tuple(arguments.file),
     )
     progress = ProgressReporter(
         (lambda message: print(message, file=sys.stderr))

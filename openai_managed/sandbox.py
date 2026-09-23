@@ -44,7 +44,7 @@ class DockerSandbox:
         if not self.executor_api_key:
             raise ValueError("OPENAI_EXECUTOR_API_KEY must be set")
 
-    def prepare(self, task: SashaTask, task_message: str) -> SandboxHandle:
+    def prepare(self, task: SashaTask) -> SandboxHandle:
         safe_task_id = SAFE_NAME.sub("-", task.task_id).strip("-.") or "sasha"
         run_directory = (
             self.config.runs_directory / f"{safe_task_id}-{uuid.uuid4().hex[:8]}"
@@ -60,7 +60,6 @@ class DockerSandbox:
                 SASHA_SKILL_DIRECTORY,
                 capabilities_directory / "sasha-sales",
             )
-            (workspace_directory / "TASK.md").write_text(task_message, encoding="utf-8")
             (workspace_directory / "task.json").write_text(
                 json.dumps(
                     {
@@ -85,6 +84,18 @@ class DockerSandbox:
             workspace_directory=workspace_directory,
         )
         return self.handle
+
+    def save_task_message(self, task_message: str) -> None:
+        handle = self._require_handle()
+        (handle.workspace_directory / "TASK.md").write_text(
+            task_message, encoding="utf-8"
+        )
+
+    def remove_client_files(self) -> None:
+        handle = self._require_handle()
+        directory = handle.workspace_directory / "client-files"
+        if directory.exists():
+            shutil.rmtree(directory)
 
     def start_container(self) -> None:
         handle = self._require_handle()

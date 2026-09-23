@@ -1,13 +1,7 @@
-"""
-Client files, fetched once per turn and handed to Sasha as opaque handles.
+"""Fetch client artwork before a Sasha turn and assign local file handles.
 
-The upstream workflow puts a client's file on S3 and gives us a link. Sasha never sees the
-link and never fetches anything herself: a URL in a client message is text the client
-controls, so letting the browser follow it would make her a proxy for whatever is behind it.
-
-Instead the link is fetched here, before the turn starts, into runs/deal_<id>/files/, and
-Sasha is told only "file_1 (kotlin_icon.png, 12 KB)". `attach_file` resolves that handle
-back to a path. A handle she was not given does not resolve.
+The Claude runner keeps files under its deal directory. The managed runner uses a
+temporary workspace directory. Neither runner needs to give the remote URL to Sasha.
 """
 
 import mimetypes
@@ -16,8 +10,6 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import unquote, urlparse
-
-import config
 
 MAX_BYTES = 20 * 1024 * 1024          # the wizard's stated limit for a reference image
 FETCH_TIMEOUT = 30
@@ -61,9 +53,15 @@ class AttachmentSet:
 
 def fetch_all(deal_id: int, urls: list[str]) -> AttachmentSet:
     """Download each link into the deal's folder. Raises if one cannot be used."""
+    import config
+
+    return fetch_to_directory(urls, config.RUNS_DIR / f"deal_{deal_id}" / "files")
+
+
+def fetch_to_directory(urls: list[str], target_dir: Path) -> AttachmentSet:
+    """Download this turn's files into a caller-selected directory."""
     if not urls:
         return AttachmentSet()
-    target_dir = config.RUNS_DIR / f"deal_{deal_id}" / "files"
     target_dir.mkdir(parents=True, exist_ok=True)
     items = []
     for index, url in enumerate(urls, start=1):
@@ -72,18 +70,29 @@ def fetch_all(deal_id: int, urls: list[str]) -> AttachmentSet:
 
 
 def _fetch_one(url: str, handle: str, target_dir: Path) -> Attachment:
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError(f"{handle}: use an HTTP or HTTPS artwork URL.")
     name = _file_name(url)
     suffix = Path(name).suffix.lower()
     if suffix not in ALLOWED_SUFFIXES:
         raise ValueError(f"{handle}: {suffix or 'no extension'} is not a file type we accept.")
 
     request = urllib.request.Request(url, headers={"User-Agent": "sasha-poc"})
-    with urllib.request.urlopen(request, timeout=FETCH_TIMEOUT) as response:
-        payload = response.read(MAX_BYTES + 1)
+    try:
+        with urllib.request.urlopen(request, timeout=FETCH_TIMEOUT) as response:
+            content_type = response.headers.get_content_type()
+            payload = response.read(MAX_BYTES + 1)
+    except Exception as error:
+        raise ValueError(f"{handle}: could not download artwork.") from error
     if len(payload) > MAX_BYTES:
         raise ValueError(f"{handle}: larger than {MAX_BYTES // 1024 // 1024} MB.")
     if not payload:
         raise ValueError(f"{handle}: the link returned nothing.")
+    if content_type == "text/html" or payload.lstrip().lower().startswith(
+        (b"<!doctype html", b"<html")
+    ):
+        raise ValueError(f"{handle}: the link is a web page, not a direct artwork file.")
 
     path = target_dir / f"{handle}{suffix}"
     path.write_bytes(payload)

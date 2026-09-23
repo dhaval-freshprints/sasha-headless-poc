@@ -19,6 +19,7 @@ class ManagedSashaCliTests(unittest.TestCase):
         self.assertIsNone(arguments.message)
         self.assertTrue(arguments.verbose)
         self.assertFalse(arguments.pricing)
+        self.assertEqual(arguments.file, [])
 
     def test_client_response_arguments_preserve_message(self):
         client_message = "What's the price for 40?"
@@ -31,6 +32,16 @@ class ManagedSashaCliTests(unittest.TestCase):
         self.assertEqual(arguments.message, client_message)
         self.assertFalse(arguments.verbose)
         self.assertTrue(arguments.pricing)
+        self.assertEqual(arguments.file, [])
+
+    def test_accepts_multiple_artwork_urls(self):
+        arguments = cli.parse_arguments(
+            ["303839", "--file", "https://example.test/one.png", "-f", "https://example.test/two.svg"]
+        )
+        self.assertEqual(
+            arguments.file,
+            ["https://example.test/one.png", "https://example.test/two.svg"],
+        )
 
     def test_client_response_prints_json_and_keeps_diagnostics_on_stderr(self):
         client_message = "What's the price for 40?"
@@ -40,6 +51,7 @@ class ManagedSashaCliTests(unittest.TestCase):
             message=client_message,
             verbose=True,
             pricing=True,
+            file=["https://example.test/logo.png"],
         )
         stdout = io.StringIO()
         stderr = io.StringIO()
@@ -62,6 +74,7 @@ class ManagedSashaCliTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(json.loads(stdout.getvalue())["status"], "completed")
         self.assertEqual(fake_runner.task.client_message, client_message)
+        self.assertEqual(fake_runner.task.file_urls, ("https://example.test/logo.png",))
         self.assertIn("Sasha is working", stderr.getvalue())
         self.assertIn("[pricing] test estimate", stderr.getvalue())
         self.assertIn("[timing] Total run: 1 min 03 sec", stderr.getvalue())
@@ -74,6 +87,7 @@ class ManagedSashaCliTests(unittest.TestCase):
             message=None,
             verbose=False,
             pricing=False,
+            file=[],
         )
         stdout = io.StringIO()
         stderr = io.StringIO()

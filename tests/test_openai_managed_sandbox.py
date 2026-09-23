@@ -29,7 +29,8 @@ class DockerSandboxTests(unittest.TestCase):
             "https://qa.example/deal?id=303839",
         )
 
-        handle = sandbox.prepare(task, "outreach task")
+        handle = sandbox.prepare(task)
+        sandbox.save_task_message("outreach task")
 
         task_data = json.loads(
             (handle.workspace_directory / "task.json").read_text()
@@ -38,6 +39,9 @@ class DockerSandboxTests(unittest.TestCase):
         self.assertTrue(handle.container_name.startswith("sasha-managed-"))
         self.assertFalse((handle.workspace_directory / "browser-profile").exists())
         self.assertTrue((handle.workspace_directory / "executor.log").is_file())
+        self.assertEqual(
+            (handle.workspace_directory / "TASK.md").read_text(), "outreach task"
+        )
 
     def test_prepares_client_response_with_supplied_message(self):
         sandbox = DockerSandbox(self.config, "executor-key")
@@ -48,7 +52,7 @@ class DockerSandboxTests(unittest.TestCase):
             "What's the price for 40?",
         )
 
-        handle = sandbox.prepare(task, "client-response task")
+        handle = sandbox.prepare(task)
 
         task_data = json.loads(
             (handle.workspace_directory / "task.json").read_text()
@@ -64,7 +68,7 @@ class DockerSandboxTests(unittest.TestCase):
             "What's the price for 40?",
         )
 
-        handle = sandbox.prepare(task, "client-response task")
+        handle = sandbox.prepare(task)
 
         skill_directory = (
             handle.workspace_directory / "capabilities" / "sasha-sales"
@@ -101,7 +105,7 @@ class DockerSandboxTests(unittest.TestCase):
             "https://qa.example/deal?id=303839",
             "Show me orange polos.",
         )
-        sandbox.prepare(task, "client-response task")
+        sandbox.prepare(task)
 
         sandbox.start_container()
         sandbox.authenticate(

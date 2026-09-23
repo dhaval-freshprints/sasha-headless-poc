@@ -11,6 +11,8 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable
 
+from attachments import AttachmentSet, fetch_to_directory
+
 from .conversation import ConversationStore
 from .pricing import CostEstimate, CostReporter, estimate_cost
 from .progress import ProgressReporter
@@ -208,13 +210,20 @@ class OpenAIManagedRunner:
         session_id = ""
         events: SessionEvents | None = None
         sandbox = self._create_sandbox()
-        task_message = self._build_task_message(task)
         self.progress.report("[1/7] Preparing disposable Sasha container")
-        handle = sandbox.prepare(task, task_message)
+        handle = sandbox.prepare(task)
         self.last_run_directory = handle.run_directory
         result: SashaResult | None = None
 
         try:
+            files = AttachmentSet()
+            if task.file_urls:
+                self.progress.report(f"      Downloading {len(task.file_urls)} client file(s)")
+                files = fetch_to_directory(
+                    list(task.file_urls), handle.workspace_directory / "client-files"
+                )
+            task_message = self._build_task_message(task, files)
+            sandbox.save_task_message(task_message)
             sandbox.start_container()
             self.progress.report("[2/7] Signing into Fresh Prints QA")
             sandbox.authenticate(
@@ -287,6 +296,10 @@ class OpenAIManagedRunner:
                 sandbox.stop()
             except Exception as error:
                 cleanup_errors.append(f"container stop: {error}")
+            try:
+                sandbox.remove_client_files()
+            except Exception as error:
+                cleanup_errors.append(f"client file removal: {error}")
             if session_id:
                 try:
                     self.client.beta.agents.sessions.delete(session_id)
@@ -378,7 +391,9 @@ class OpenAIManagedRunner:
         )
 
     @staticmethod
-    def _build_task_message(task: SashaTask) -> str:
+    def _build_task_message(
+        task: SashaTask, files: AttachmentSet | None = None
+    ) -> str:
         previous_conversation = json.dumps(
             list(task.conversation_history),
             indent=2,
@@ -398,6 +413,22 @@ class OpenAIManagedRunner:
                 "--- END CLIENT MESSAGE ---"
             )
 
+        file_data = ""
+        if files:
+            file_lines = "\n".join(
+                f"- {item.handle}: {item.name} ({item.size} bytes), "
+                f"/workspace/client-files/{item.path.name}"
+                for item in files.items
+            )
+            file_data = (
+                "The client supplied these local artwork files for this turn. "
+                "Use only these paths for uploads; do not fetch a remote URL.\n"
+                f"{file_lines}\n"
+                "When artwork is needed, use Playwright's setInputFiles on the "
+                "Design Tool input identified by upload-file-input, then inspect "
+                "the preview and canvas before saving.\n\n"
+            )
+
         return (
             "Handle one Fresh Prints QA sales turn.\n"
             "Use the `sasha-sales` skill.\n\n"
@@ -410,6 +441,7 @@ class OpenAIManagedRunner:
             f"{previous_conversation}\n"
             "--- END PREVIOUS CONVERSATION JSON ---\n\n"
             f"{turn_data}\n\n"
+            f"{file_data}"
             "Use Node.js Playwright in headless mode with the authenticated profile at "
             "/browser-profile. Start at the exact deal URL, inspect the current "
             "deal state, and determine the required work from the turn data and skill. "

@@ -32,6 +32,7 @@ class SashaTask:
     deal_url: str
     client_message: str | None = None
     conversation_history: tuple[dict[str, Any], ...] = ()
+    file_urls: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

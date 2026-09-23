@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from attachments import Attachment, AttachmentSet
 from openai_managed.conversation import ConversationStore
 from openai_managed.pricing import CostReporter
 from openai_managed.progress import ProgressReporter
@@ -127,15 +128,28 @@ class FakeSandbox:
         self.authenticated = False
         self.authentication_error = None
 
-    def prepare(self, task, task_message):
-        self.task_message = task_message
+    def prepare(self, task):
         run_directory = self.config.runs_directory / f"run-{self.number}"
         workspace = run_directory / "workspace"
         workspace.mkdir(parents=True)
         (workspace / "artifacts").mkdir()
         (workspace / "executor.log").write_text("connected")
+        (workspace / "task.json").write_text(
+            json.dumps({"deal_id": task.deal_id, "client_message": task.client_message})
+        )
         self.handle = SandboxHandle("container-1", run_directory, workspace)
         return self.handle
+
+    def save_task_message(self, task_message):
+        self.task_message = task_message
+        (self.handle.workspace_directory / "TASK.md").write_text(task_message)
+
+    def remove_client_files(self):
+        directory = self.handle.workspace_directory / "client-files"
+        if directory.exists():
+            import shutil
+
+            shutil.rmtree(directory)
 
     def start_container(self):
         self.container_started = True
@@ -182,6 +196,61 @@ class ManagedRunnerTests(unittest.TestCase):
         self.assertTrue((workspace / "session-items.json").is_file())
         self.assertTrue((workspace / "executor.log").is_file())
         self.assertTrue((workspace / "result.json").is_file())
+
+    @patch("openai_managed.runner.fetch_to_directory")
+    def test_supplied_artwork_is_staged_for_astra_then_removed(self, fetch):
+        remote_url = "https://example.test/logo.svg?signature=secret"
+
+        def download(urls, directory):
+            self.assertEqual(urls, [remote_url])
+            directory.mkdir()
+            file_path = directory / "file_1.svg"
+            file_path.write_text("<svg></svg>")
+            return AttachmentSet([Attachment("file_1", file_path, "logo.svg", 11)])
+
+        fetch.side_effect = download
+        runner, sessions, sandboxes = self._make_runner([])
+        result = runner.run(
+            SashaTask(
+                "303839",
+                "task-1",
+                "https://qa.example/deal?id=303839",
+                "Put my logo on the back.",
+                file_urls=(remote_url,),
+            )
+        )
+
+        self.assertEqual(result.status, "completed")
+        self.assertIsNotNone(sessions.create_arguments)
+        workspace = sandboxes[0].handle.workspace_directory
+        self.assertIn("/workspace/client-files/file_1.svg", sandboxes[0].task_message)
+        self.assertIn("upload-file-input", sandboxes[0].task_message)
+        self.assertNotIn(remote_url, sandboxes[0].task_message)
+        self.assertNotIn(remote_url, (workspace / "task.json").read_text())
+        self.assertFalse((workspace / "client-files").exists())
+
+    @patch("openai_managed.runner.fetch_to_directory")
+    def test_failed_download_never_creates_openai_session(self, fetch):
+        remote_url = "https://example.test/logo.png?signature=secret"
+        fetch.side_effect = ValueError("file_1: could not download artwork.")
+        runner, sessions, sandboxes = self._make_runner([])
+
+        result = runner.run(
+            SashaTask(
+                "303839",
+                "task-1",
+                "https://qa.example/deal?id=303839",
+                "Put my logo on the back.",
+                file_urls=(remote_url,),
+            )
+        )
+
+        self.assertEqual(result.status, "failed")
+        self.assertIn("could not download artwork", result.failure_message)
+        self.assertNotIn("signature", result.failure_message)
+        self.assertIsNone(sessions.create_arguments)
+        self.assertFalse(sandboxes[0].container_started)
+        self.assertTrue(sandboxes[0].stopped)
 
     def test_progress_reporter_shows_orchestration_and_agent_activity(self):
         progress_messages = []

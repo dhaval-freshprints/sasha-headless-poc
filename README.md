@@ -255,6 +255,16 @@ Client response through the same runner:
   --pricing
 ```
 
+When the client supplies artwork, add one or more direct file URLs with
+`--file URL`, as with the Claude CLI. The runner downloads each file before
+starting the managed session and gives Astra a local path for the Design Tool.
+Downloaded client files are removed when the run ends; pass the URL again if a
+later turn needs the artwork. A webpage showing an image is not a direct file
+URL and is rejected rather than uploaded as artwork.
+The downloader accepts the Claude POC's artwork file types, but the QA design
+tools can still reject a particular file. For example, the Kotlin logo SVG's
+gradient was rejected during QA testing; a direct PNG rendering worked.
+
 `--verbose` prints orchestration milestones, Sasha commentary, and tool-step
 status to stderr. `--pricing` requests best-effort token usage and prints the
 cost estimate to stderr. Every run also prints its total elapsed time to
