@@ -19,6 +19,11 @@ from openai_managed.task import SashaTask
 
 
 MESSAGE = "<p>Model-generated outreach</p>"
+ASTRA_PRICES = {
+    "OPENAI_AGENT_INPUT_USD_PER_MILLION": "10.00",
+    "OPENAI_AGENT_CACHED_INPUT_USD_PER_MILLION": "1.00",
+    "OPENAI_AGENT_OUTPUT_USD_PER_MILLION": "50.00",
+}
 SUCCESS_EVENTS = [
     {"type": "agent.session.environment.connected"},
     {
@@ -357,6 +362,7 @@ class ManagedRunnerTests(unittest.TestCase):
         self.assertIn("Could not read conversation file", result.failure_message)
         self.assertEqual(sandboxes, [])
 
+    @patch.dict("os.environ", ASTRA_PRICES)
     def test_collects_and_prints_pricing_when_requested(self):
         pricing_messages = []
         runner, _, _ = self._make_runner(
@@ -558,6 +564,7 @@ class ManagedRunnerTests(unittest.TestCase):
         workspace = self.root / "runs" / "run-1" / "workspace"
         self.assertTrue((workspace / "pricing.json").is_file())
 
+    @patch.dict("os.environ", ASTRA_PRICES)
     @patch("openai_managed.runner.time.sleep")
     def test_delayed_usage_is_saved_before_cleanup(self, sleep):
         runner, sessions, sandboxes = self._make_runner([], CostReporter(lambda value: None))

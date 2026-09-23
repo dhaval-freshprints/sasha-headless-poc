@@ -221,7 +221,10 @@ FP_USER=...
 FP_PASSWORD=...
 OPENAI_API_KEY=...
 OPENAI_EXECUTOR_API_KEY=...
-OPENAI_AGENT_MODEL=gpt-6-astra
+OPENAI_AGENT_MODEL=gpt-6-sol
+OPENAI_AGENT_INPUT_USD_PER_MILLION=2.00
+OPENAI_AGENT_CACHED_INPUT_USD_PER_MILLION=0.20
+OPENAI_AGENT_OUTPUT_USD_PER_MILLION=10.00
 OPENAI_AGENT_REASONING_EFFORT=medium
 ```
 
@@ -271,7 +274,9 @@ cost estimate to stderr. Every run also prints its total elapsed time to
 stderr in minutes and seconds, including failed runs (for example,
 `[timing] Total run: 4 min 13 sec`). Neither flag changes the task or result.
 
-The pricing estimate uses the published Standard rates for `gpt-6-astra`.
+The pricing estimate uses the per-million-token rates configured alongside the
+model in `.env`. Update the model and all three rates together when switching
+models.
 If OpenAI does not return usage, the command prints that pricing is unavailable.
 Missing usage is checked again after waits of 1, 2, 4, and 8 seconds before
 session cleanup. These retries cannot guarantee usage availability.

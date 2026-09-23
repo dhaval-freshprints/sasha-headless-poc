@@ -1,15 +1,18 @@
 """Estimate and print the OpenAI model cost for one managed run."""
 
+import os
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 
-ASTRA_INPUT_PRICE_PER_MILLION = Decimal("10.00")
-ASTRA_CACHED_INPUT_PRICE_PER_MILLION = Decimal("1.00")
-ASTRA_OUTPUT_PRICE_PER_MILLION = Decimal("50.00")
 TOKENS_PER_MILLION = Decimal("1000000")
+PRICE_ENVIRONMENT_VARIABLES = {
+    "input": "OPENAI_AGENT_INPUT_USD_PER_MILLION",
+    "cached_input": "OPENAI_AGENT_CACHED_INPUT_USD_PER_MILLION",
+    "output": "OPENAI_AGENT_OUTPUT_USD_PER_MILLION",
+}
 
 
 @dataclass(frozen=True)
@@ -32,8 +35,9 @@ class CostEstimate:
 
 
 def estimate_cost(model: str, usage: Any) -> CostEstimate:
-    if model != "gpt-6-astra":
-        return _unavailable(model, f"No pricing is configured for model {model}")
+    prices, pricing_error = _prices_from_environment()
+    if pricing_error:
+        return _unavailable(model, pricing_error)
     if not isinstance(usage, dict):
         return _unavailable(model, "OpenAI did not return token usage")
 
@@ -50,9 +54,9 @@ def estimate_cost(model: str, usage: Any) -> CostEstimate:
     cached_input_tokens = min(max(cached_input_tokens, 0), input_tokens)
     uncached_input_tokens = max(input_tokens - cached_input_tokens, 0)
     cost = (
-        Decimal(uncached_input_tokens) * ASTRA_INPUT_PRICE_PER_MILLION
-        + Decimal(cached_input_tokens) * ASTRA_CACHED_INPUT_PRICE_PER_MILLION
-        + Decimal(output_tokens) * ASTRA_OUTPUT_PRICE_PER_MILLION
+        Decimal(uncached_input_tokens) * prices["input"]
+        + Decimal(cached_input_tokens) * prices["cached_input"]
+        + Decimal(output_tokens) * prices["output"]
     ) / TOKENS_PER_MILLION
 
     return CostEstimate(
@@ -64,12 +68,12 @@ def estimate_cost(model: str, usage: Any) -> CostEstimate:
         reasoning_tokens=reasoning_tokens,
         estimated_cost_usd=round(float(cost), 8),
         rates_usd_per_million={
-            "input": str(ASTRA_INPUT_PRICE_PER_MILLION),
-            "cached_input": str(ASTRA_CACHED_INPUT_PRICE_PER_MILLION),
-            "output": str(ASTRA_OUTPUT_PRICE_PER_MILLION),
+            "input": str(prices["input"]),
+            "cached_input": str(prices["cached_input"]),
+            "output": str(prices["output"]),
         },
         note=(
-            "Uses published Standard input, cached-input, and output token rates. "
+            "Uses configured input, cached-input, and output token rates. "
             "It excludes cache-write, long-context, service-tier, and separate tool charges."
         ),
     )
@@ -98,3 +102,19 @@ class CostReporter:
 
 def _unavailable(model: str, reason: str) -> CostEstimate:
     return CostEstimate(model=model, status="unavailable", note=reason)
+
+
+def _prices_from_environment() -> tuple[dict[str, Decimal], str]:
+    prices = {}
+    for price_name, variable_name in PRICE_ENVIRONMENT_VARIABLES.items():
+        value = os.environ.get(variable_name, "").strip()
+        if not value:
+            return {}, f"{variable_name} is not configured"
+        try:
+            price = Decimal(value)
+        except InvalidOperation:
+            return {}, f"{variable_name} must be a number"
+        if price < 0:
+            return {}, f"{variable_name} cannot be negative"
+        prices[price_name] = price
+    return prices, ""
