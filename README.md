@@ -257,7 +257,9 @@ Client response through the same runner:
 
 `--verbose` prints orchestration milestones, Sasha commentary, and tool-step
 status to stderr. `--pricing` requests best-effort token usage and prints the
-cost estimate to stderr. Neither flag changes the task or result.
+cost estimate to stderr. Every run also prints its total elapsed time to
+stderr in minutes and seconds, including failed runs (for example,
+`[timing] Total run: 4 min 13 sec`). Neither flag changes the task or result.
 
 The pricing estimate uses the published Standard rates for `gpt-6-astra`.
 If OpenAI does not return usage, the command prints that pricing is unavailable.

@@ -53,6 +53,7 @@ class ManagedSashaCliTests(unittest.TestCase):
                 "from_environment",
                 side_effect=fake_runner.connect,
             ),
+            patch.object(cli.time, "perf_counter", side_effect=[100.0, 163.25]),
             redirect_stdout(stdout),
             redirect_stderr(stderr),
         ):
@@ -63,11 +64,43 @@ class ManagedSashaCliTests(unittest.TestCase):
         self.assertEqual(fake_runner.task.client_message, client_message)
         self.assertIn("Sasha is working", stderr.getvalue())
         self.assertIn("[pricing] test estimate", stderr.getvalue())
+        self.assertIn("[timing] Total run: 1 min 03 sec", stderr.getvalue())
         self.assertIn("Artifacts: /tmp/sasha-run", stderr.getvalue())
+
+    def test_failed_run_also_prints_elapsed_time(self):
+        fake_runner = FakeRunner(status="failed")
+        arguments = argparse.Namespace(
+            deal_id="303839",
+            message=None,
+            verbose=False,
+            pricing=False,
+        )
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+
+        with (
+            patch.object(cli, "parse_arguments", return_value=arguments),
+            patch.object(cli, "load_dotenv"),
+            patch.dict(os.environ, {"FP_BASE_URL": "https://qa.example"}),
+            patch.object(
+                cli.OpenAIManagedRunner,
+                "from_environment",
+                side_effect=fake_runner.connect,
+            ),
+            patch.object(cli.time, "perf_counter", side_effect=[10.0, 12.5]),
+            redirect_stdout(stdout),
+            redirect_stderr(stderr),
+        ):
+            exit_code = cli.main()
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(json.loads(stdout.getvalue())["status"], "failed")
+        self.assertIn("[timing] Total run: 0 min 03 sec", stderr.getvalue())
 
 
 class FakeRunner:
-    def __init__(self):
+    def __init__(self, status="completed"):
+        self.status = status
         self.task = None
         self.progress = None
         self.cost_reporter = None
@@ -81,11 +114,14 @@ class FakeRunner:
     def run(self, task):
         self.task = task
         self.progress.report("Sasha is working")
-        self.cost_reporter.write("[pricing] test estimate")
+        if self.cost_reporter is not None:
+            self.cost_reporter.write("[pricing] test estimate")
         return SashaResult(
             deal_id=task.deal_id,
-            status="completed",
-            message_html="<p>Draft</p>",
+            status=self.status,
+            message_html="<p>Draft</p>" if self.status == "completed" else "",
+            failure_code="test_failure" if self.status == "failed" else "",
+            failure_message="Test failed" if self.status == "failed" else "",
         )
 
 

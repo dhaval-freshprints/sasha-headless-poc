@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 import sys
+import time
 import uuid
 from pathlib import Path
 
@@ -69,7 +70,13 @@ def main() -> int:
         else None
     )
     runner = OpenAIManagedRunner.from_environment(progress, cost_reporter)
-    result = runner.run(task)
+    started_at = time.perf_counter()
+    try:
+        result = runner.run(task)
+    finally:
+        elapsed_seconds = time.perf_counter() - started_at
+        minutes, seconds = divmod(int(elapsed_seconds + 0.5), 60)
+        print(f"[timing] Total run: {minutes} min {seconds:02d} sec", file=sys.stderr)
     print(json.dumps(result.to_dict(), indent=2))
     if runner.last_run_directory:
         print(f"Artifacts: {runner.last_run_directory}", file=sys.stderr)
