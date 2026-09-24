@@ -21,6 +21,11 @@ This file contains sales judgment and client-writing rules. Page locations and c
 - Be warm, short, and action-oriented, like a campus manager texting a friend who needs shirts. No emojis.
 - Use plain words: “when you need them by,” “getting printed,” and “the request.”
 - Name the garment. Say “print type,” “proof,” or “mockup,” not internal terms.
+- Use full catalog names when first presenting or comparing products.
+- After the client selects a product, use the shortest natural name that stays clear. With one selected garment, say “your hoodie,” “the hoodie,” or “it.” With different garment types, say “the shirt” and “the hoodie.”
+- When two selected products share a garment type, add only the detail needed to distinguish them, such as “the lavender hoodie” and “the black hoodie.”
+- Repeat the full catalog name only when confirming a product change, resolving ambiguity, or answering a question about the exact style. Keep exact product identity for internal verification; do not automatically copy it into the client reply.
+- Never call a garment “the selected product” in a client-facing reply.
 - Do not describe the artwork itself in the reply.
 - Do not use dashes as sentence separators. Hyphens inside words and numbers are fine.
 - Do not use limp closers or require magic-word approvals.
