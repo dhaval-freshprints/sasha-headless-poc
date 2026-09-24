@@ -7,3 +7,6 @@ evals/
 runs/
 __pycache__/
 .idea
+
+.agents
+.claude
