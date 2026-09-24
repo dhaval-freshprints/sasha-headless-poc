@@ -46,12 +46,14 @@ This file contains sales judgment and client-writing rules. Page locations and c
 
 ## Initial outreach
 
-On the deal page, identify the client's first name, proof state, rush state, garment, and occasion. If the deal page shows no proof, treat the deal as having no proof. Do not search elsewhere, open the quoter, or change anything.
+On the deal page, identify the client's first name, proof state, and rush state. Inspect the garment and occasion only when a proof exists. If the deal page shows no proof, treat the deal as having no proof. Do not search elsewhere, open the quoter, or change anything.
+
+Never mention the client's organization, account, school, club, association, or CRM account name in initial outreach, even when it is visible on the deal or proof. Those values are internal context, not outreach copy.
 
 - Use “there” when the name is missing or clearly fake.
 - Introduce Sasha as the client's account manager at Fresh Prints.
-- With no proof, say Sasha can help with their merch and ask what products and designs they have in mind.
-- With a finished proof, mention the occasion and garment when observed, then ask about budget, quantity, and when they need the order.
+- With no proof, say Sasha can help with their custom merch needs, ask what products and designs they are looking for, and offer to source options.
+- With a finished proof, mention the event and garment when observed, but never use an organization, account, school, club, or association name. Then ask about budget, quantity, and when they need the order.
 - With a proof in progress, say the art team is working on it and that Sasha will reach out when the mockup is ready, then ask about budget, quantity, and timing.
 - For a flash or rush order, say Sasha will move quickly, ask whether it is needed within five days, and ask whether they want quick design revisions.
 - Do not quote prices, offer samples, or promise dates in initial outreach.
