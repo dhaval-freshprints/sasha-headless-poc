@@ -205,6 +205,11 @@ class DockerSandbox:
             self.executor_log = None
             raise
 
+    def executor_exit_code(self) -> int | None:
+        if self.executor_process is None:
+            return None
+        return self.executor_process.poll()
+
     def logs(self) -> str:
         handle = self._require_handle()
         if self.executor_log is not None:

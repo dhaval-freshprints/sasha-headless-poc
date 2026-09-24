@@ -1,5 +1,7 @@
 import json
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -10,6 +12,7 @@ from openai_managed.conversation import ConversationStore
 from openai_managed.pricing import CostReporter
 from openai_managed.progress import ProgressReporter
 from openai_managed.runner import (
+    STREAM_ERROR_EVENT,
     ManagedRunnerSettings,
     OpenAIManagedRunner,
     _extract_final_assistant_text,
@@ -53,18 +56,47 @@ SUCCESS_EVENTS = [
     },
     {"type": "agent.session.turn.completed"},
 ]
+CONNECTED_ONLY = [{"type": "agent.session.environment.connected"}]
+CANCEL_EVENT = {"type": "agent.session.input.cancel"}
+TASK_URL = "https://qa.example/deal?id=303839"
+
+
+class FakeConflictError(Exception):
+    status_code = 409
 
 
 class FakeEventsAPI:
-    def __init__(self, values=None):
+    def __init__(self, values, operations):
         self.sent = []
         self.values = SUCCESS_EVENTS if values is None else values
+        self.operations = operations
+        self.stays_open = False
+        self.stream_error = None
+        self.send_error = None
+        self.cancel_error = None
+        self.released = threading.Event()
 
     def stream(self, session_id):
-        return iter(self.values)
+        yield from self.values
+        if self.stream_error is not None:
+            raise self.stream_error
+        if self.stays_open:
+            self.released.wait(5)
+            if CANCEL_EVENT in self.sent:
+                yield {"type": "agent.session.turn.cancelled"}
 
     def create(self, session_id, events, idempotency_key=None):
+        if CANCEL_EVENT in events:
+            self._cancel()
+        elif self.send_error is not None:
+            raise self.send_error
         self.sent.extend(events)
+
+    def _cancel(self):
+        self.operations.append("cancel")
+        if self.cancel_error is not None:
+            raise self.cancel_error
+        self.released.set()
 
 
 class FakeItemsAPI:
@@ -88,10 +120,13 @@ class FakeItemsAPI:
 
 
 class FakeSessionsAPI:
-    def __init__(self, deal_id, event_values=None, retrieve_error=None):
-        self.events = FakeEventsAPI(event_values)
+    def __init__(self, deal_id, event_values=None, retrieve_error=None, operations=None):
+        self.operations = [] if operations is None else operations
+        self.events = FakeEventsAPI(event_values, self.operations)
         self.items = FakeItemsAPI(deal_id)
         self.deleted = ""
+        self.delete_outcomes = []
+        self.delete_attempts = 0
         self.create_arguments = None
         self.retrieve_error = retrieve_error
         self.retrieve_count = 0
@@ -104,6 +139,13 @@ class FakeSessionsAPI:
         )
 
     def delete(self, session_id):
+        self.operations.append("delete")
+        self.delete_attempts += 1
+        self.events.released.set()
+        if self.delete_outcomes:
+            error = self.delete_outcomes.pop(0)
+            if error is not None:
+                raise error
         self.deleted = session_id
 
     def retrieve(self, session_id):
@@ -122,9 +164,10 @@ class FakeSessionsAPI:
 
 
 class FakeSandbox:
-    def __init__(self, config, executor_api_key, number):
+    def __init__(self, config, executor_api_key, number, operations=None):
         self.config = config
         self.number = number
+        self.operations = [] if operations is None else operations
         self.container_started = False
         self.executor_started = False
         self.stopped = False
@@ -170,7 +213,11 @@ class FakeSandbox:
     def logs(self):
         return "connected"
 
+    def executor_exit_code(self):
+        return None
+
     def stop(self):
+        self.operations.append("stop")
         self.stopped = True
 
 class ManagedRunnerTests(unittest.TestCase):
@@ -201,6 +248,14 @@ class ManagedRunnerTests(unittest.TestCase):
         self.assertTrue((workspace / "session-items.json").is_file())
         self.assertTrue((workspace / "executor.log").is_file())
         self.assertTrue((workspace / "result.json").is_file())
+        self.assertNotIn(CANCEL_EVENT, sessions.events.sent)
+        self.assertEqual(sessions.operations, ["delete", "stop"])
+        cleanup = json.loads((workspace / "cleanup.json").read_text())
+        self.assertEqual(cleanup["session_id"], "session-1")
+        self.assertEqual(cleanup["delete_attempts"], 1)
+        self.assertTrue(cleanup["session_deleted"])
+        self.assertFalse(cleanup["cancel_sent"])
+        self.assertEqual(cleanup["errors"], [])
 
     @patch("openai_managed.runner.fetch_to_directory")
     def test_supplied_artwork_is_staged_for_astra_then_removed(self, fetch):
@@ -525,6 +580,7 @@ class ManagedRunnerTests(unittest.TestCase):
         self.assertEqual(result.failure_message, "agent.session.turn.failed")
         self.assertTrue(sandboxes[0].stopped)
         self.assertEqual(sessions.deleted, "session-1")
+        self.assertNotIn("cancel", sessions.operations)
 
     def test_authentication_failure_stops_before_openai_session_creation(self):
         runner, sessions, sandboxes = self._make_runner(
@@ -548,6 +604,7 @@ class ManagedRunnerTests(unittest.TestCase):
             [],
             event_values=[],
             connection_timeout=0.01,
+            stays_open=True,
         )
 
         result = runner.run(
@@ -559,12 +616,14 @@ class ManagedRunnerTests(unittest.TestCase):
         self.assertIn("Timed out waiting", result.failure_message)
         self.assertTrue(sandboxes[0].stopped)
         self.assertEqual(sessions.deleted, "session-1")
+        self.assertEqual(sessions.operations, ["delete", "stop"])
 
     def test_turn_timeout_cancels_turn_and_returns_failure(self):
         runner, sessions, sandboxes = self._make_runner(
             [],
-            event_values=[{"type": "agent.session.environment.connected"}],
+            event_values=CONNECTED_ONLY,
             turn_timeout=0.01,
+            stays_open=True,
         )
 
         result = runner.run(
@@ -574,10 +633,7 @@ class ManagedRunnerTests(unittest.TestCase):
         self.assertEqual(result.status, "failed")
         self.assertEqual(result.failure_code, "managed_runner_error")
         self.assertIn("exceeded its time limit", result.failure_message)
-        self.assertIn(
-            {"type": "agent.session.input.cancel"},
-            sessions.events.sent,
-        )
+        self.assertEqual(sessions.operations, ["cancel", "delete", "stop"])
         self.assertTrue(sandboxes[0].stopped)
 
     def test_progress_and_pricing_are_optional(self):
@@ -635,6 +691,7 @@ class ManagedRunnerTests(unittest.TestCase):
         self.assertEqual(sessions.deleted, "session-1")
         self.assertTrue(sandboxes[0].stopped)
 
+    @patch.dict("os.environ", ASTRA_PRICES)
     @patch("openai_managed.runner.time.sleep")
     def test_missing_usage_retries_are_bounded_and_cleanup_runs(self, sleep):
         runner, sessions, sandboxes = self._make_runner([], CostReporter(lambda value: None))
@@ -653,6 +710,213 @@ class ManagedRunnerTests(unittest.TestCase):
         self.assertEqual(sessions.deleted, "session-1")
         self.assertTrue(sandboxes[0].stopped)
 
+    def test_stream_exception_cancels_turn_and_keeps_stream_error(self):
+        runner, sessions, sandboxes = self._make_runner(
+            [],
+            event_values=CONNECTED_ONLY,
+            stream_error=ConnectionError("stream dropped"),
+        )
+
+        result = runner.run(SashaTask("303839", "task-1", TASK_URL))
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.failure_code, "managed_runner_error")
+        self.assertIn("Session event stream failed: stream dropped", result.failure_message)
+        self.assertEqual(sessions.operations, ["cancel", "delete", "stop"])
+        workspace = runner.last_run_directory / "workspace"
+        saved_events = json.loads((workspace / "session-events.json").read_text())
+        self.assertIn(
+            {
+                "type": STREAM_ERROR_EVENT,
+                "error_type": "ConnectionError",
+                "message": "stream dropped",
+            },
+            saved_events,
+        )
+        cleanup = json.loads((workspace / "cleanup.json").read_text())
+        self.assertTrue(cleanup["cancel_sent"])
+
+    def test_error_event_fails_turn_fast_and_keeps_its_message(self):
+        error_event = {
+            "type": "error",
+            "error": {"type": "server_error", "message": "model crashed"},
+        }
+        runner, sessions, _ = self._make_runner(
+            [],
+            event_values=CONNECTED_ONLY + [error_event],
+            turn_timeout=30,
+            stays_open=True,
+        )
+
+        started = time.monotonic()
+        result = runner.run(SashaTask("303839", "task-1", TASK_URL))
+
+        self.assertLess(time.monotonic() - started, 5)
+        self.assertEqual(result.failure_code, "turn_not_completed")
+        self.assertEqual(result.failure_message, "error: model crashed")
+        self.assertEqual(sessions.operations, ["cancel", "delete", "stop"])
+
+    def test_environment_failure_keeps_its_message(self):
+        failed_event = {
+            "type": "agent.session.environment.failed",
+            "environment": {
+                "status": "failed",
+                "error": {"type": "executor_error", "message": "executor rejected"},
+            },
+        }
+        runner, sessions, _ = self._make_runner(
+            [],
+            event_values=[failed_event],
+            connection_timeout=30,
+            stays_open=True,
+        )
+
+        started = time.monotonic()
+        result = runner.run(SashaTask("303839", "task-1", TASK_URL))
+
+        self.assertLess(time.monotonic() - started, 5)
+        self.assertEqual(result.failure_code, "managed_runner_error")
+        self.assertIn(
+            "failed to connect (agent.session.environment.failed: executor rejected)",
+            result.failure_message,
+        )
+        self.assertEqual(sessions.operations, ["delete", "stop"])
+
+    def test_stream_ending_without_terminal_event_fails_fast(self):
+        runner, sessions, _ = self._make_runner(
+            [],
+            event_values=CONNECTED_ONLY,
+            turn_timeout=30,
+        )
+
+        started = time.monotonic()
+        result = runner.run(SashaTask("303839", "task-1", TASK_URL))
+
+        self.assertLess(time.monotonic() - started, 5)
+        self.assertEqual(result.failure_code, "managed_runner_error")
+        self.assertIn("ended before the turn finished", result.failure_message)
+        self.assertEqual(sessions.operations, ["cancel", "delete", "stop"])
+        workspace = runner.last_run_directory / "workspace"
+        saved_events = json.loads((workspace / "session-events.json").read_text())
+        self.assertEqual(saved_events[-1]["error_type"], "StreamEnded")
+
+    @patch("openai_managed.runner.time.sleep")
+    def test_delete_conflicts_are_retried_before_docker_stops(self, sleep):
+        progress_messages = []
+        runner, sessions, sandboxes = self._make_runner(
+            progress_messages,
+            delete_outcomes=[FakeConflictError("not settled"), FakeConflictError("not settled")],
+        )
+
+        result = runner.run(SashaTask("303839", "task-1", TASK_URL))
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [1, 2])
+        self.assertEqual(sessions.operations, ["delete", "delete", "delete", "stop"])
+        self.assertIn(
+            "[cleanup] Session deletion succeeded after 3 attempts", progress_messages
+        )
+        cleanup = json.loads(
+            (runner.last_run_directory / "workspace" / "cleanup.json").read_text()
+        )
+        self.assertEqual(cleanup["delete_attempts"], 3)
+        self.assertTrue(cleanup["session_deleted"])
+
+    @patch("openai_managed.runner.time.sleep")
+    def test_delete_conflict_retries_are_bounded_and_keep_primary_failure(self, sleep):
+        events = CONNECTED_ONLY + [{"type": "agent.session.turn.failed"}]
+        runner, sessions, sandboxes = self._make_runner(
+            [],
+            event_values=events,
+            delete_outcomes=[FakeConflictError("not settled")] * 5,
+        )
+
+        result = runner.run(SashaTask("303839", "task-1", TASK_URL))
+
+        self.assertEqual(result.failure_code, "turn_not_completed")
+        self.assertTrue(result.failure_message.startswith("agent.session.turn.failed; "))
+        self.assertIn("Cleanup errors: session deletion: not settled", result.failure_message)
+        self.assertEqual(sessions.delete_attempts, 5)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [1, 2, 4, 8])
+        self.assertTrue(sandboxes[0].stopped)
+        cleanup = json.loads(
+            (runner.last_run_directory / "workspace" / "cleanup.json").read_text()
+        )
+        self.assertFalse(cleanup["session_deleted"])
+
+    @patch("openai_managed.runner.time.sleep")
+    def test_non_conflict_delete_error_is_not_retried(self, sleep):
+        events = CONNECTED_ONLY + [{"type": "agent.session.turn.failed"}]
+        runner, sessions, _ = self._make_runner(
+            [],
+            event_values=events,
+            delete_outcomes=[RuntimeError("permission denied")],
+        )
+
+        result = runner.run(SashaTask("303839", "task-1", TASK_URL))
+
+        self.assertEqual(result.failure_code, "turn_not_completed")
+        self.assertIn("session deletion: permission denied", result.failure_message)
+        self.assertEqual(sessions.delete_attempts, 1)
+        sleep.assert_not_called()
+
+    def test_cancel_failure_still_deletes_session_and_stops_docker(self):
+        runner, sessions, sandboxes = self._make_runner(
+            [],
+            event_values=CONNECTED_ONLY,
+            turn_timeout=0.01,
+            stays_open=True,
+            cancel_error=RuntimeError("cancel rejected"),
+            delete_outcomes=[RuntimeError("delete rejected")],
+        )
+
+        result = runner.run(SashaTask("303839", "task-1", TASK_URL))
+
+        self.assertEqual(result.failure_code, "managed_runner_error")
+        self.assertIn("exceeded its time limit", result.failure_message)
+        self.assertIn("turn cancellation: cancel rejected", result.failure_message)
+        self.assertIn("session deletion: delete rejected", result.failure_message)
+        self.assertEqual(sessions.operations, ["cancel", "delete", "stop"])
+        self.assertTrue(sandboxes[0].stopped)
+
+    def test_failed_task_send_still_cancels_turn(self):
+        runner, sessions, _ = self._make_runner(
+            [],
+            event_values=CONNECTED_ONLY,
+            stays_open=True,
+            send_error=RuntimeError("response lost"),
+        )
+
+        result = runner.run(SashaTask("303839", "task-1", TASK_URL))
+
+        self.assertEqual(result.failure_code, "managed_runner_error")
+        self.assertIn("response lost", result.failure_message)
+        self.assertEqual(sessions.operations, ["cancel", "delete", "stop"])
+
+    def test_completed_turn_stays_completed_when_cleanup_fails(self):
+        progress_messages = []
+        runner, _, _ = self._make_runner(
+            progress_messages,
+            delete_outcomes=[RuntimeError("delete rejected")],
+        )
+
+        result = runner.run(
+            SashaTask("303839", "task-1", TASK_URL, "Show me green polos.")
+        )
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.message_html, MESSAGE)
+        saved = json.loads(runner.last_conversation_file.read_text())
+        self.assertEqual(len(saved["conversation_history"]), 2)
+        self.assertIn(
+            "[cleanup] WARNING: session deletion: delete rejected", progress_messages
+        )
+        workspace = runner.last_run_directory / "workspace"
+        cleanup = json.loads((workspace / "cleanup.json").read_text())
+        self.assertEqual(cleanup["errors"], ["session deletion: delete rejected"])
+        saved_result = json.loads((workspace / "result.json").read_text())
+        self.assertEqual(saved_result["status"], "completed")
+
     def _make_runner(
         self,
         progress_messages,
@@ -663,8 +927,19 @@ class ManagedRunnerTests(unittest.TestCase):
         authentication_error=None,
         connection_timeout=1,
         turn_timeout=1,
+        stays_open=False,
+        stream_error=None,
+        send_error=None,
+        cancel_error=None,
+        delete_outcomes=(),
     ):
-        sessions = FakeSessionsAPI("303839", event_values, retrieve_error)
+        operations = []
+        sessions = FakeSessionsAPI("303839", event_values, retrieve_error, operations)
+        sessions.events.stays_open = stays_open
+        sessions.events.stream_error = stream_error
+        sessions.events.send_error = send_error
+        sessions.events.cancel_error = cancel_error
+        sessions.delete_outcomes = list(delete_outcomes)
         client = SimpleNamespace(
             beta=SimpleNamespace(agents=SimpleNamespace(sessions=sessions))
         )
@@ -683,7 +958,9 @@ class ManagedRunnerTests(unittest.TestCase):
         sandboxes = []
 
         def create_sandbox(config, executor_api_key):
-            sandbox = FakeSandbox(config, executor_api_key, len(sandboxes) + 1)
+            sandbox = FakeSandbox(
+                config, executor_api_key, len(sandboxes) + 1, operations
+            )
             sandbox.authentication_error = authentication_error
             sandboxes.append(sandbox)
             return sandbox

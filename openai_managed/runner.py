@@ -7,7 +7,7 @@ import os
 import threading
 import time
 from datetime import datetime, timezone
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable
 
@@ -24,13 +24,29 @@ CONNECTED_EVENT = "agent.session.environment.connected"
 CONNECTION_FAILED_EVENTS = {
     "agent.session.environment.failed",
     "agent.session.failed",
-    "agent.session.error",
+    "error",
 }
 TURN_TERMINAL_EVENTS = {
     "agent.session.turn.completed",
     "agent.session.turn.failed",
     "agent.session.turn.cancelled",
 }
+STREAM_ERROR_EVENT = "managed_runner.event_stream_error"
+DELETE_RETRY_DELAYS_SECONDS = (1, 2, 4, 8)
+CONFLICT_STATUS_CODE = 409
+
+
+@dataclass
+class CleanupReport:
+    session_id: str = ""
+    executor_exit_code: int | None = None
+    cancel_sent: bool = False
+    delete_attempts: int = 0
+    session_deleted: bool = False
+    errors: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
 
 
 @dataclass(frozen=True)
@@ -86,8 +102,10 @@ class SessionEvents:
         self.values: list[dict[str, Any]] = []
         self.connected = threading.Event()
         self.connection_failed = threading.Event()
+        self.connection_settled = threading.Event()
         self.turn_finished = threading.Event()
         self.terminal_type = ""
+        self.failure_detail = ""
         self.error: Exception | None = None
         self.item_phases: dict[str, str] = {}
         self.command_numbers: dict[str, int] = {}
@@ -112,20 +130,42 @@ class SessionEvents:
                 event_type = str(_read_value(event, "type") or "")
                 if event_type == CONNECTED_EVENT:
                     self.connected.set()
+                    self.connection_settled.set()
                 self._report_event(plain_event, event_type)
                 if event_type in CONNECTION_FAILED_EVENTS:
                     self.connection_failed.set()
+                    self.connection_settled.set()
                     self.terminal_type = event_type
+                    self.failure_detail = _read_error_message(plain_event)
                     self.turn_finished.set()
                     return
                 if event_type in TURN_TERMINAL_EVENTS:
                     self.terminal_type = event_type
                     self.turn_finished.set()
                     return
+            self._record_stream_error(
+                RuntimeError("Event stream ended before the turn finished"),
+                "StreamEnded",
+            )
         except Exception as error:
-            self.error = error
-            self.connection_failed.set()
-            self.turn_finished.set()
+            self._record_stream_error(error, type(error).__name__)
+
+    def has_terminal_turn(self) -> bool:
+        return self.terminal_type in TURN_TERMINAL_EVENTS
+
+    def failure_description(self) -> str:
+        if self.failure_detail:
+            return f"{self.terminal_type}: {self.failure_detail}"
+        return self.terminal_type
+
+    def _record_stream_error(self, error: Exception, error_type: str) -> None:
+        self.values.append(
+            {"type": STREAM_ERROR_EVENT, "error_type": error_type, "message": str(error)}
+        )
+        self.error = error
+        self.connection_failed.set()
+        self.connection_settled.set()
+        self.turn_finished.set()
 
     def _report_event(self, event: Any, event_type: str) -> None:
         if not isinstance(event, dict):
@@ -209,6 +249,7 @@ class OpenAIManagedRunner:
         task = replace(task, conversation_history=tuple(history))
         session_id = ""
         events: SessionEvents | None = None
+        task_submitted = False
         sandbox = self._create_sandbox()
         self.progress.report("[1/7] Preparing disposable Sasha container")
         handle = sandbox.prepare(task)
@@ -268,8 +309,9 @@ class OpenAIManagedRunner:
             sandbox.connect_executor(environment_id, remote_url)
             self._wait_for_connection(events)
             self.progress.report("[5/7] Sasha is working on the task")
+            task_submitted = True
             self._send_task(session_id, task_message, task.task_id)
-            self._wait_for_turn(events, session_id)
+            self._wait_for_turn(events)
 
             self.progress.report("[6/7] Collecting Sasha's structured JSON output")
             items = self._list_items(session_id)
@@ -284,38 +326,15 @@ class OpenAIManagedRunner:
             )
         finally:
             self.progress.report("[7/7] Saving artifacts and cleaning up")
-            cleanup_errors: list[str] = []
-            if self.cost_reporter is not None:
-                self.last_cost_estimate = self._collect_cost_estimate(session_id)
-                _write_json(
-                    handle.workspace_directory / "pricing.json",
-                    self.last_cost_estimate.to_dict(),
-                )
-                self.cost_reporter.report(self.last_cost_estimate)
-            try:
-                sandbox.stop()
-            except Exception as error:
-                cleanup_errors.append(f"container stop: {error}")
-            try:
-                sandbox.remove_client_files()
-            except Exception as error:
-                cleanup_errors.append(f"client file removal: {error}")
-            if session_id:
-                try:
-                    self.client.beta.agents.sessions.delete(session_id)
-                except Exception as error:
-                    cleanup_errors.append(f"session deletion: {error}")
-            if events is not None:
-                events.join()
-                event_path = handle.workspace_directory / "session-events.json"
-                _write_json(event_path, events.values)
-            if cleanup_errors:
-                result = SashaResult(
-                    deal_id=task.deal_id,
-                    status="failed",
-                    failure_code="cleanup_error",
-                    failure_message="; ".join(cleanup_errors),
-                )
+            cleanup = self._clean_up(
+                sandbox,
+                handle.workspace_directory,
+                session_id,
+                events,
+                task_submitted,
+            )
+            result = _append_cleanup_errors(result, cleanup.errors)
+            _write_json(handle.workspace_directory / "cleanup.json", cleanup.to_dict())
             _write_json(handle.workspace_directory / "result.json", result.to_dict())
 
         if result.status == "completed":
@@ -338,6 +357,119 @@ class OpenAIManagedRunner:
                 )
 
         return result
+
+    def _clean_up(
+        self,
+        sandbox: DockerSandbox,
+        workspace_directory: Path,
+        session_id: str,
+        events: SessionEvents | None,
+        task_submitted: bool,
+    ) -> CleanupReport:
+        report = CleanupReport(session_id=session_id)
+        self._record_executor_exit_code(sandbox, report)
+        if _needs_cancellation(session_id, events, task_submitted):
+            self._cancel_unfinished_turn(session_id, report)
+        self._save_pricing(session_id, workspace_directory, report)
+        if session_id:
+            self._delete_session(session_id, report)
+        self._stop_sandbox(sandbox, report)
+        self._remove_client_files(sandbox, report)
+        self._save_events(events, workspace_directory)
+        for error in report.errors:
+            self.progress.report(f"[cleanup] WARNING: {error}")
+        return report
+
+    def _record_executor_exit_code(
+        self, sandbox: DockerSandbox, report: CleanupReport
+    ) -> None:
+        try:
+            report.executor_exit_code = sandbox.executor_exit_code()
+        except Exception as error:
+            report.errors.append(f"executor status: {error}")
+            return
+        if report.executor_exit_code is not None:
+            self.progress.report(
+                f"[cleanup] Executor had already exited with code {report.executor_exit_code}"
+            )
+
+    def _cancel_unfinished_turn(self, session_id: str, report: CleanupReport) -> None:
+        self.progress.report("[cleanup] Cancelling unfinished managed turn")
+        try:
+            self.client.beta.agents.sessions.events.create(
+                session_id, events=[{"type": "agent.session.input.cancel"}]
+            )
+        except Exception as error:
+            report.errors.append(f"turn cancellation: {error}")
+            return
+        report.cancel_sent = True
+
+    def _save_pricing(
+        self, session_id: str, workspace_directory: Path, report: CleanupReport
+    ) -> None:
+        if self.cost_reporter is None:
+            return
+        try:
+            self.last_cost_estimate = self._collect_cost_estimate(session_id)
+            _write_json(
+                workspace_directory / "pricing.json",
+                self.last_cost_estimate.to_dict(),
+            )
+            self.cost_reporter.report(self.last_cost_estimate)
+        except Exception as error:
+            report.errors.append(f"pricing: {error}")
+
+    def _delete_session(self, session_id: str, report: CleanupReport) -> None:
+        try:
+            self._delete_session_with_retry(session_id, report)
+        except Exception as error:
+            report.errors.append(f"session deletion: {error}")
+            self.progress.report(
+                f"[cleanup] Session {session_id} was not deleted; delete it manually"
+            )
+            return
+        report.session_deleted = True
+        if report.delete_attempts > 1:
+            self.progress.report(
+                f"[cleanup] Session deletion succeeded after {report.delete_attempts} attempts"
+            )
+
+    def _delete_session_with_retry(self, session_id: str, report: CleanupReport) -> None:
+        remaining_delays = list(DELETE_RETRY_DELAYS_SECONDS)
+        while True:
+            report.delete_attempts += 1
+            try:
+                self.client.beta.agents.sessions.delete(session_id)
+                return
+            except Exception as error:
+                if not _is_conflict(error) or not remaining_delays:
+                    raise
+            delay = remaining_delays.pop(0)
+            self.progress.report(
+                f"[cleanup] Session deletion returned 409; retrying in {delay} second(s)"
+            )
+            time.sleep(delay)
+
+    @staticmethod
+    def _stop_sandbox(sandbox: DockerSandbox, report: CleanupReport) -> None:
+        try:
+            sandbox.stop()
+        except Exception as error:
+            report.errors.append(f"container stop: {error}")
+
+    @staticmethod
+    def _remove_client_files(sandbox: DockerSandbox, report: CleanupReport) -> None:
+        try:
+            sandbox.remove_client_files()
+        except Exception as error:
+            report.errors.append(f"client file removal: {error}")
+
+    @staticmethod
+    def _save_events(events: SessionEvents | None, workspace_directory: Path) -> None:
+        if events is None:
+            return
+        events.join()
+        _write_json(workspace_directory / "session-events.json", events.values)
 
     def _collect_cost_estimate(self, session_id: str) -> CostEstimate:
         if not session_id:
@@ -451,13 +583,15 @@ class OpenAIManagedRunner:
         )
 
     def _wait_for_connection(self, events: SessionEvents) -> None:
-        events.connected.wait(self.settings.connection_timeout_seconds)
+        events.connection_settled.wait(self.settings.connection_timeout_seconds)
         if events.connected.is_set():
             return
         if events.error:
             raise RuntimeError(f"Session event stream failed: {events.error}")
         if events.connection_failed.is_set():
-            raise RuntimeError("Self-hosted executor failed to connect")
+            raise RuntimeError(
+                f"Self-hosted executor failed to connect ({events.failure_description()})"
+            )
         raise TimeoutError("Timed out waiting for the self-hosted executor")
 
     def _send_task(self, session_id: str, task_message: str, task_id: str) -> None:
@@ -477,15 +611,12 @@ class OpenAIManagedRunner:
             idempotency_key=task_id[:256],
         )
 
-    def _wait_for_turn(self, events: SessionEvents, session_id: str) -> None:
+    def _wait_for_turn(self, events: SessionEvents) -> None:
         events.turn_finished.wait(self.settings.turn_timeout_seconds)
         if events.error:
             raise RuntimeError(f"Session event stream failed: {events.error}")
         if events.turn_finished.is_set():
             return
-        self.client.beta.agents.sessions.events.create(
-            session_id, events=[{"type": "agent.session.input.cancel"}]
-        )
         raise TimeoutError("Managed Sasha turn exceeded its time limit")
 
     def _list_items(self, session_id: str) -> list[dict[str, Any]]:
@@ -504,7 +635,7 @@ class OpenAIManagedRunner:
                 task.deal_id,
                 "failed",
                 failure_code="turn_not_completed",
-                failure_message=events.terminal_type or "No terminal event received",
+                failure_message=events.failure_description() or "No terminal event received",
             )
 
         final_text = _extract_final_assistant_text(items)
@@ -539,6 +670,36 @@ def _positive_number(name: str, default: float) -> float:
     if value <= 0:
         raise ValueError(f"{name} must be greater than zero")
     return value
+
+
+def _needs_cancellation(
+    session_id: str, events: SessionEvents | None, task_submitted: bool
+) -> bool:
+    if not session_id or not task_submitted or events is None:
+        return False
+    return not events.has_terminal_turn()
+
+
+def _read_error_message(event: Any) -> str:
+    error = _read_value(event, "error") or _read_value(
+        _read_value(event, "environment"), "error"
+    )
+    return str(_read_value(error, "message") or "")
+
+
+def _is_conflict(error: Exception) -> bool:
+    return getattr(error, "status_code", None) == CONFLICT_STATUS_CODE
+
+
+def _append_cleanup_errors(
+    result: SashaResult, cleanup_errors: list[str]
+) -> SashaResult:
+    if not cleanup_errors or result.status == "completed":
+        return result
+    cleanup_message = "Cleanup errors: " + "; ".join(cleanup_errors)
+    return replace(
+        result, failure_message=f"{result.failure_message}; {cleanup_message}"
+    )
 
 
 def _read_value(value: Any, key: str) -> Any:
