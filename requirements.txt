@@ -1,2 +1,4 @@
 python-dotenv>=1.0
 openai>=3.16.2
+fastapi>=0.110
+uvicorn>=0.27

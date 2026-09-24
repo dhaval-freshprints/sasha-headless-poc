@@ -85,6 +85,32 @@ Add direct artwork URLs with repeatable `--file` arguments:
 The command writes Sasha's structured result JSON to stdout. Progress, timing,
 and optional pricing go to stderr.
 
+## Web app
+
+Start the web server with one worker:
+
+```bash
+.venv/bin/uvicorn webapp.app:app --host 0.0.0.0 --port 8100 --workers 1
+```
+
+Open `http://localhost:8100`. Team members on the same reachable network can use
+the host machine's address instead of `localhost`.
+
+The app intentionally has no authentication. Its home page lists every saved
+deal. Adding a deal creates an empty `/deals/<deal-id>` page where a user can
+start a run. Each deal page lists all of that deal's previous runs, and each run
+has a stable `/runs/<run-id>` URL.
+
+Runs are queued through one background worker so only one Sasha turn runs at a
+time. Refreshing or reopening a deal or run URL restores the same view without
+stopping an active run.
+
+Deal records and web job state are written under `runs/webapp/deals/` and
+`runs/webapp/jobs/`. Existing job records are automatically added to the deal
+list. If the web server restarts, completed jobs remain viewable. A job that was
+queued or running when the server stopped is marked failed because its original
+background worker no longer exists.
+
 ## Time limit
 
 Sasha may work for up to 20 minutes per managed turn. Change
@@ -120,4 +146,5 @@ The tests do not make live OpenAI calls or start a real browser:
 
 ```bash
 .venv/bin/python -m unittest discover -s tests -v
+.venv/bin/python -m unittest discover -s webapp/tests -t . -v
 ```
