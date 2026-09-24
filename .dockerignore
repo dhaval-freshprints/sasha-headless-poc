@@ -5,4 +5,5 @@
 __pycache__
 auth
 auth-openai-managed
+evals
 runs

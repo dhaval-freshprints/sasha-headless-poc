@@ -11,8 +11,7 @@ from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable
 
-from attachments import AttachmentSet, fetch_to_directory
-
+from .attachments import AttachmentSet, fetch_to_directory
 from .conversation import ConversationStore
 from .pricing import CostEstimate, CostReporter, estimate_cost
 from .progress import ProgressReporter
@@ -87,7 +86,7 @@ class ManagedRunnerSettings:
                 "OPENAI_MANAGED_CONNECT_TIMEOUT_SECONDS", 90
             ),
             turn_timeout_seconds=_positive_number(
-                "OPENAI_MANAGED_TURN_TIMEOUT_SECONDS", 600
+                "OPENAI_MANAGED_TURN_TIMEOUT_SECONDS", 1200
             ),
         )
 

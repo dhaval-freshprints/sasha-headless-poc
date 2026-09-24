@@ -7,7 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from attachments import Attachment, AttachmentSet
+from openai_managed.attachments import Attachment, AttachmentSet
 from openai_managed.conversation import ConversationStore
 from openai_managed.pricing import CostReporter
 from openai_managed.progress import ProgressReporter
@@ -227,6 +227,19 @@ class ManagedRunnerTests(unittest.TestCase):
 
     def tearDown(self):
         self.temporary_directory.cleanup()
+
+    def test_environment_defaults_to_twenty_minute_turn_limit(self):
+        environment = {
+            "OPENAI_EXECUTOR_API_KEY": "executor-key",
+            "FP_LOGIN_URL": "https://qa.example/login",
+            "FP_USER": "qa-user",
+            "FP_PASSWORD": "qa-password",
+        }
+
+        with patch.dict("os.environ", environment, clear=True):
+            settings = ManagedRunnerSettings.from_environment()
+
+        self.assertEqual(settings.turn_timeout_seconds, 1200)
 
     def test_runs_session_without_browser_checker_or_message_validation(self):
         progress_messages = []
@@ -462,8 +475,7 @@ class ManagedRunnerTests(unittest.TestCase):
             / "capabilities"
             / "sasha-sales"
             / "references"
-            / "playbook.md",
-            repository_root / "prompts" / "playbook.md",
+            / "playbook.md"
         ]
 
         for playbook_path in playbook_paths:
@@ -483,8 +495,7 @@ class ManagedRunnerTests(unittest.TestCase):
             / "capabilities"
             / "sasha-sales"
             / "references"
-            / "playbook.md",
-            repository_root / "prompts" / "playbook.md",
+            / "playbook.md"
         ]
 
         for playbook_path in playbook_paths:

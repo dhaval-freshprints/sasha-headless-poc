@@ -3,8 +3,7 @@
 auth
 auth/
 auth-openai-managed/
+evals/
 runs/
 __pycache__/
 .idea
-evals/*.log
-evals/run.pid

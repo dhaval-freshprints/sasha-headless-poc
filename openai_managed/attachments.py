@@ -1,8 +1,4 @@
-"""Fetch client artwork before a Sasha turn and assign local file handles.
-
-The Claude runner keeps files under its deal directory. The managed runner uses a
-temporary workspace directory. Neither runner needs to give the remote URL to Sasha.
-"""
+"""Fetch client artwork into an OpenAI-managed Sasha run workspace."""
 
 import mimetypes
 import re
@@ -11,10 +7,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
-MAX_BYTES = 20 * 1024 * 1024          # the wizard's stated limit for a reference image
+MAX_BYTES = 20 * 1024 * 1024
 FETCH_TIMEOUT = 30
 
-# What the Design Tool and the wizard accept. Anything else is refused before it reaches disk.
 ALLOWED_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".pdf", ".ai", ".eps"}
 
 SAFE_NAME = re.compile(r"[^A-Za-z0-9._-]")
@@ -22,18 +17,16 @@ SAFE_NAME = re.compile(r"[^A-Za-z0-9._-]")
 
 @dataclass
 class Attachment:
-    handle: str        # what Sasha calls it: file_1
-    path: Path         # where it actually is on disk
-    name: str          # the original file name, for the description she writes
-    size: int          # bytes
+    handle: str
+    path: Path
+    name: str
+    size: int
 
     def describe(self) -> str:
         return f"{self.handle} ({self.name}, {self.size // 1024} KB)"
 
 
 class AttachmentSet:
-    """The files for one turn. Empty unless the caller passed links."""
-
     def __init__(self, items: list[Attachment] | None = None):
         self.items = items or []
 
@@ -51,15 +44,7 @@ class AttachmentSet:
         return "\n".join(f"- {item.describe()}" for item in self.items)
 
 
-def fetch_all(deal_id: int, urls: list[str]) -> AttachmentSet:
-    """Download each link into the deal's folder. Raises if one cannot be used."""
-    import config
-
-    return fetch_to_directory(urls, config.RUNS_DIR / f"deal_{deal_id}" / "files")
-
-
 def fetch_to_directory(urls: list[str], target_dir: Path) -> AttachmentSet:
-    """Download this turn's files into a caller-selected directory."""
     if not urls:
         return AttachmentSet()
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -100,7 +85,6 @@ def _fetch_one(url: str, handle: str, target_dir: Path) -> Attachment:
 
 
 def _file_name(url: str) -> str:
-    """The file name from the URL path, ignoring any query string. Never used as a path itself."""
     raw = unquote(urlparse(url).path).rsplit("/", 1)[-1]
     cleaned = SAFE_NAME.sub("_", raw).strip("._") or "upload"
     guessed = mimetypes.guess_extension(mimetypes.guess_type(cleaned)[0] or "") or ""

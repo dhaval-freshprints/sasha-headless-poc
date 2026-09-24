@@ -5,7 +5,7 @@ from email.message import Message
 from pathlib import Path
 from unittest.mock import patch
 
-from attachments import fetch_to_directory
+from openai_managed.attachments import fetch_to_directory
 
 
 class FakeResponse(io.BytesIO):
@@ -23,7 +23,7 @@ class AttachmentDownloadTests(unittest.TestCase):
     def tearDown(self):
         self.temporary_directory.cleanup()
 
-    @patch("attachments.urllib.request.urlopen")
+    @patch("openai_managed.attachments.urllib.request.urlopen")
     def test_downloads_direct_artwork_with_signed_query(self, urlopen):
         urlopen.return_value = FakeResponse(b"<svg></svg>", "image/svg+xml")
 
@@ -35,7 +35,7 @@ class AttachmentDownloadTests(unittest.TestCase):
         self.assertEqual(files.items[0].path.name, "file_1.svg")
         self.assertEqual(files.items[0].path.read_bytes(), b"<svg></svg>")
 
-    @patch("attachments.urllib.request.urlopen")
+    @patch("openai_managed.attachments.urllib.request.urlopen")
     def test_downloads_multiple_files_with_separate_handles(self, urlopen):
         urlopen.side_effect = [
             FakeResponse(b"png", "image/png"),
@@ -49,21 +49,21 @@ class AttachmentDownloadTests(unittest.TestCase):
 
         self.assertEqual([item.path.name for item in files.items], ["file_1.png", "file_2.pdf"])
 
-    @patch("attachments.urllib.request.urlopen")
+    @patch("openai_managed.attachments.urllib.request.urlopen")
     def test_rejects_empty_file(self, urlopen):
         urlopen.return_value = FakeResponse(b"", "image/png")
 
         with self.assertRaisesRegex(ValueError, "returned nothing"):
             fetch_to_directory(["https://example.test/logo.png"], self.target)
 
-    @patch("attachments.urllib.request.urlopen")
+    @patch("openai_managed.attachments.urllib.request.urlopen")
     def test_rejects_file_over_20_mb(self, urlopen):
         urlopen.return_value = FakeResponse(b"x" * (20 * 1024 * 1024 + 1), "image/png")
 
         with self.assertRaisesRegex(ValueError, "larger than 20 MB"):
             fetch_to_directory(["https://example.test/logo.png"], self.target)
 
-    @patch("attachments.urllib.request.urlopen")
+    @patch("openai_managed.attachments.urllib.request.urlopen")
     def test_rejects_web_page_disguised_as_svg(self, urlopen):
         urlopen.return_value = FakeResponse(b"<!DOCTYPE html><html></html>", "text/html")
 
@@ -72,7 +72,7 @@ class AttachmentDownloadTests(unittest.TestCase):
 
         self.assertEqual(list(self.target.iterdir()), [])
 
-    @patch("attachments.urllib.request.urlopen")
+    @patch("openai_managed.attachments.urllib.request.urlopen")
     def test_download_error_does_not_repeat_signed_url(self, urlopen):
         url = "https://example.test/logo.png?signature=secret"
         urlopen.side_effect = OSError(url)
