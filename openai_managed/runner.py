@@ -31,8 +31,16 @@ TURN_TERMINAL_EVENTS = {
     "agent.session.turn.cancelled",
 }
 STREAM_ERROR_EVENT = "managed_runner.event_stream_error"
+START_BROWSER_COMMAND = "node /opt/sasha/start_browser.js"
+OWN_CHROME_LAUNCHES = ("launchPersistentContext(", "chromium.launch(")
+SCRIPT_SUFFIXES = {".js", ".cjs", ".mjs"}
+SKIPPED_WORKSPACE_FOLDERS = {"capabilities", "client-files"}
 DELETE_RETRY_DELAYS_SECONDS = (1, 2, 4, 8)
 CONFLICT_STATUS_CODE = 409
+
+
+class BrowserStartError(RuntimeError):
+    pass
 
 
 @dataclass
@@ -180,6 +188,8 @@ class SessionEvents:
                 self.progress.report(
                     f"      Sasha tool step {self.command_count} started"
                 )
+                if _launches_own_chrome(item.get("command")):
+                    self.progress.report("      WARNING: Sasha launched its own Chrome")
             return
         if event_type == "agent.session.turn.item.done" and isinstance(item, dict):
             if item.get("type") == "command_execution":
@@ -187,6 +197,9 @@ class SessionEvents:
                 number = self.command_numbers.get(item_id, self.command_count)
                 status = str(item.get("status") or "finished")
                 self.progress.report(f"      Sasha tool step {number}: {status}")
+                if START_BROWSER_COMMAND in str(item.get("command") or ""):
+                    browser_status = _read_browser_status(item.get("output"))
+                    self.progress.report(f"      Sasha restarted the browser: {browser_status}")
             return
         if event_type == "agent.session.turn.output_text.done":
             item_id = str(event.get("item_id") or "")
@@ -273,6 +286,8 @@ class OpenAIManagedRunner:
                 self.settings.login_password,
             )
             self.progress.report("      Fresh Prints QA authentication succeeded")
+            self._start_browser(sandbox)
+            self.progress.report("      Signed-in browser is open for the whole turn")
 
             self.progress.report("[3/7] Creating OpenAI managed agent session")
             session = self.client.beta.agents.sessions.create(
@@ -316,6 +331,13 @@ class OpenAIManagedRunner:
             items = self._list_items(session_id)
             _write_json(handle.workspace_directory / "session-items.json", items)
             result = self._make_result(task, events, items)
+        except BrowserStartError as error:
+            result = SashaResult(
+                deal_id=task.deal_id,
+                status="failed",
+                failure_code="browser_start_failed",
+                failure_message=str(error),
+            )
         except Exception as error:
             result = SashaResult(
                 deal_id=task.deal_id,
@@ -357,6 +379,13 @@ class OpenAIManagedRunner:
 
         return result
 
+    @staticmethod
+    def _start_browser(sandbox: DockerSandbox) -> None:
+        try:
+            sandbox.start_browser()
+        except Exception as error:
+            raise BrowserStartError(str(error)) from error
+
     def _clean_up(
         self,
         sandbox: DockerSandbox,
@@ -375,9 +404,20 @@ class OpenAIManagedRunner:
         self._stop_sandbox(sandbox, report)
         self._remove_client_files(sandbox, report)
         self._save_events(events, workspace_directory)
+        self._report_scripts_that_launch_chrome(workspace_directory)
         for error in report.errors:
             self.progress.report(f"[cleanup] WARNING: {error}")
         return report
+
+    # Sasha sometimes writes a script file with an editing tool and then runs
+    # `node file.js`, so the launch is not visible in any command text.
+    def _report_scripts_that_launch_chrome(self, workspace_directory: Path) -> None:
+        for script in _workspace_scripts(workspace_directory):
+            if _launches_own_chrome(script.read_text(encoding="utf-8", errors="ignore")):
+                name = script.relative_to(workspace_directory)
+                self.progress.report(
+                    f"[cleanup] WARNING: Sasha's script {name} launches its own Chrome"
+                )
 
     def _record_executor_exit_code(
         self, sandbox: DockerSandbox, report: CleanupReport
@@ -573,11 +613,18 @@ class OpenAIManagedRunner:
             "--- END PREVIOUS CONVERSATION JSON ---\n\n"
             f"{turn_data}\n\n"
             f"{file_data}"
-            "Use Node.js Playwright in headless mode with the authenticated profile at "
-            "/browser-profile. Start at the exact deal URL, inspect the current "
+            "A signed-in headless Chrome is already running for this turn. In every "
+            "Playwright script, attach to it with "
+            "chromium.connectOverCDP('http://127.0.0.1:9222') and use "
+            "browser.contexts()[0]. Do not launch Chrome yourself. The page keeps its "
+            "state between commands, so check page.url() before acting. At the end of "
+            "each script, call browser.close() on the connection; this only disconnects. "
+            "If attaching fails, run `node /opt/sasha/start_browser.js`, then attach "
+            "again. If it fails twice, return a failed result.\n\n"
+            "Start at the exact deal URL, inspect the current "
             "deal state, and determine the required work from the turn data and skill. "
             "Save screenshots under /workspace/artifacts and save the browser URLs visited "
-            "as /workspace/artifacts/visited_urls.json. Close the browser before returning. "
+            "as /workspace/artifacts/visited_urls.json. "
             "Return only the required Sasha result JSON object."
         )
 
@@ -677,6 +724,32 @@ def _needs_cancellation(
     if not session_id or not task_submitted or events is None:
         return False
     return not events.has_terminal_turn()
+
+
+def _launches_own_chrome(command: Any) -> bool:
+    text = str(command or "")
+    return any(launch in text for launch in OWN_CHROME_LAUNCHES)
+
+
+def _workspace_scripts(workspace_directory: Path) -> list[Path]:
+    scripts = []
+    for path in sorted(workspace_directory.rglob("*")):
+        relative_parts = path.relative_to(workspace_directory).parts
+        if relative_parts[0] in SKIPPED_WORKSPACE_FOLDERS:
+            continue
+        if path.is_file() and path.suffix in SCRIPT_SUFFIXES:
+            scripts.append(path)
+    return scripts
+
+
+def _read_browser_status(output: Any) -> str:
+    try:
+        result = json.loads(str(output or "").strip())
+    except json.JSONDecodeError:
+        return "no JSON output"
+    if not isinstance(result, dict):
+        return "no JSON output"
+    return str(result.get("status") or "unknown")
 
 
 def _read_error_message(event: Any) -> str:

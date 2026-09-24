@@ -19,6 +19,7 @@ OpenAIManagedRunner
               |
               +--> sign in to Fresh Prints QA
               +--> start a disposable Docker browser environment
+              +--> keep one signed-in browser open for the whole turn
               +--> connect the OpenAI managed agent session
               +--> collect structured result JSON and artifacts
 ```
@@ -26,6 +27,14 @@ OpenAIManagedRunner
 Every turn uses a new container and an empty browser profile. The runner signs
 in before the agent starts, passes credentials to the fixed login script over
 standard input, and removes the container when the turn ends.
+
+After sign-in, the runner starts one headless Chrome on the signed-in profile
+(`openai_managed/start_browser.js`) and keeps it running for the whole turn.
+Sasha's Playwright scripts attach to it with
+`chromium.connectOverCDP('http://127.0.0.1:9222')` instead of launching Chrome,
+so page state carries over between commands. The port exists only inside the
+disposable container. If attaching fails, Sasha runs the same start script to
+restart the browser.
 
 ## Requirements
 
@@ -147,4 +156,11 @@ The tests do not make live OpenAI calls or start a real browser:
 ```bash
 .venv/bin/python -m unittest discover -s tests -v
 .venv/bin/python -m unittest discover -s webapp/tests -t . -v
+```
+
+Live QA smoke tests for the kept-open browser sign in to Fresh Prints QA inside
+the managed Docker image. They are skipped unless `SASHA_LIVE_QA=1`:
+
+```bash
+SASHA_LIVE_QA=1 .venv/bin/python -m unittest tests.test_openai_managed_browser -v
 ```

@@ -134,6 +134,57 @@ class DockerSandboxTests(unittest.TestCase):
         self.assertIn("CODEX_API_KEY", executor_command)
         sandbox.stop()
 
+    @patch("openai_managed.sandbox.subprocess.run")
+    def test_container_mounts_browser_scripts_read_only(self, run):
+        run.return_value = CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+        sandbox = DockerSandbox(self.config, "executor-key")
+        sandbox.prepare(SashaTask("303839", "task-1", "https://qa.example/deal?id=303839"))
+
+        sandbox.start_container()
+
+        container_command = " ".join(run.call_args.args[0])
+        self.assertIn("dst=/opt/sasha/browser_keeper.js,readonly", container_command)
+        self.assertIn("dst=/opt/sasha/start_browser.js,readonly", container_command)
+
+    @patch("openai_managed.sandbox.subprocess.run")
+    def test_start_browser_runs_start_script_in_the_container(self, run):
+        for status in ("started", "running"):
+            with self.subTest(status=status):
+                run.return_value = CompletedProcess(
+                    args=[], returncode=0, stdout=json.dumps({"status": status}), stderr=""
+                )
+                sandbox = DockerSandbox(self.config, "executor-key")
+                handle = sandbox.prepare(
+                    SashaTask("303839", f"task-{status}", "https://qa.example/deal?id=303839")
+                )
+
+                sandbox.start_browser()
+
+                self.assertEqual(
+                    run.call_args.args[0],
+                    [
+                        "docker",
+                        "exec",
+                        handle.container_name,
+                        "node",
+                        "/opt/sasha/start_browser.js",
+                    ],
+                )
+
+    @patch("openai_managed.sandbox.subprocess.run")
+    def test_start_browser_raises_when_browser_does_not_start(self, run):
+        run.return_value = CompletedProcess(
+            args=[],
+            returncode=1,
+            stdout=json.dumps({"status": "failed", "reason": "browser keeper exited with code 1"}),
+            stderr="",
+        )
+        sandbox = DockerSandbox(self.config, "executor-key")
+        sandbox.prepare(SashaTask("303839", "task-1", "https://qa.example/deal?id=303839"))
+
+        with self.assertRaisesRegex(RuntimeError, "browser keeper exited with code 1"):
+            sandbox.start_browser()
+
 
 if __name__ == "__main__":
     unittest.main()

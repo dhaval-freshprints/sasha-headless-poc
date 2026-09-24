@@ -19,6 +19,9 @@ from .task import SashaTask
 SAFE_NAME = re.compile(r"[^a-zA-Z0-9_.-]+")
 SASHA_SKILL_DIRECTORY = Path(__file__).with_name("capabilities") / "sasha-sales"
 AUTHENTICATION_SCRIPT = Path(__file__).with_name("setup_auth.js")
+BROWSER_KEEPER_SCRIPT = Path(__file__).with_name("browser_keeper.js")
+START_BROWSER_SCRIPT = Path(__file__).with_name("start_browser.js")
+BROWSER_READY_STATUSES = {"started", "running"}
 
 
 @dataclass(frozen=True)
@@ -119,6 +122,10 @@ class DockerSandbox:
                 f"type=bind,src={handle.workspace_directory},dst=/workspace",
                 "--mount",
                 f"type=bind,src={AUTHENTICATION_SCRIPT},dst=/opt/sasha/setup_auth.js,readonly",
+                "--mount",
+                f"type=bind,src={BROWSER_KEEPER_SCRIPT},dst=/opt/sasha/browser_keeper.js,readonly",
+                "--mount",
+                f"type=bind,src={START_BROWSER_SCRIPT},dst=/opt/sasha/start_browser.js,readonly",
                 self.config.image,
                 "sleep",
                 "infinity",
@@ -167,6 +174,28 @@ class DockerSandbox:
             raise RuntimeError("QA authentication returned invalid output") from error
         if result.get("status") != "authenticated":
             raise RuntimeError("QA authentication did not confirm the deal page")
+
+    def start_browser(self) -> None:
+        handle = self._require_handle()
+        process = subprocess.run(
+            [
+                "docker",
+                "exec",
+                handle.container_name,
+                "node",
+                "/opt/sasha/start_browser.js",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        try:
+            result = json.loads(process.stdout)
+        except json.JSONDecodeError as error:
+            details = (process.stderr or process.stdout).strip()
+            raise RuntimeError(f"Browser start returned invalid output: {details}") from error
+        if result.get("status") not in BROWSER_READY_STATUSES:
+            raise RuntimeError(f"Browser did not start: {result.get('reason', '')}")
 
     def connect_executor(self, environment_id: str, remote_url: str) -> None:
         handle = self._require_handle()

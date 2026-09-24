@@ -61,6 +61,27 @@ CANCEL_EVENT = {"type": "agent.session.input.cancel"}
 TASK_URL = "https://qa.example/deal?id=303839"
 
 
+def _command_added(item_id, command):
+    return {
+        "type": "agent.session.turn.item.added",
+        "item": {"id": item_id, "type": "command_execution", "command": command},
+    }
+
+
+def _command_done(item_id, command, output, exit_code):
+    return {
+        "type": "agent.session.turn.item.done",
+        "item": {
+            "id": item_id,
+            "type": "command_execution",
+            "command": command,
+            "output": output,
+            "exit_code": exit_code,
+            "status": "completed",
+        },
+    }
+
+
 class FakeConflictError(Exception):
     status_code = 409
 
@@ -175,6 +196,8 @@ class FakeSandbox:
         self.task_message = ""
         self.authenticated = False
         self.authentication_error = None
+        self.browser_started = False
+        self.browser_error = None
 
     def prepare(self, task):
         run_directory = self.config.runs_directory / f"run-{self.number}"
@@ -206,6 +229,11 @@ class FakeSandbox:
         if self.authentication_error is not None:
             raise self.authentication_error
         self.authenticated = True
+
+    def start_browser(self):
+        if self.browser_error is not None:
+            raise self.browser_error
+        self.browser_started = True
 
     def connect_executor(self, environment_id, remote_url):
         self.executor_started = True
@@ -542,7 +570,7 @@ class ManagedRunnerTests(unittest.TestCase):
         self.assertIn("Use the `sasha-sales` skill.", message)
         self.assertIn("Start at the exact deal URL", message)
         self.assertIn("/workspace/artifacts/visited_urls.json", message)
-        self.assertIn("Close the browser before returning.", message)
+        self.assertIn("Do not launch Chrome yourself.", message)
 
     def test_builds_unrouted_client_response_task_message(self):
         client_message = "What's the price for 40?\nPlease figure it out."
@@ -609,6 +637,96 @@ class ManagedRunnerTests(unittest.TestCase):
         self.assertTrue(sandboxes[0].container_started)
         self.assertFalse(sandboxes[0].executor_started)
         self.assertTrue(sandboxes[0].stopped)
+
+    def test_browser_start_failure_stops_before_openai_session_creation(self):
+        runner, sessions, sandboxes = self._make_runner(
+            [], browser_error=RuntimeError("Browser did not start: keeper exited")
+        )
+
+        result = runner.run(SashaTask("303839", "task-1", TASK_URL))
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.failure_code, "browser_start_failed")
+        self.assertIn("keeper exited", result.failure_message)
+        self.assertIsNone(sessions.create_arguments)
+        self.assertFalse(sandboxes[0].executor_started)
+        self.assertTrue(sandboxes[0].stopped)
+
+    def test_browser_starts_after_login_and_task_tells_sasha_to_attach(self):
+        progress_messages = []
+        runner, _, sandboxes = self._make_runner(progress_messages)
+
+        runner.run(SashaTask("303839", "task-1", TASK_URL))
+
+        self.assertTrue(sandboxes[0].browser_started)
+        self.assertIn(
+            "      Signed-in browser is open for the whole turn", progress_messages
+        )
+        task_message = sandboxes[0].task_message
+        self.assertIn("chromium.connectOverCDP('http://127.0.0.1:9222')", task_message)
+        self.assertIn("Do not launch Chrome yourself", task_message)
+        self.assertIn("node /opt/sasha/start_browser.js", task_message)
+        self.assertNotIn("Close the browser", task_message)
+
+    def test_cleanup_reports_workspace_scripts_that_launch_chrome(self):
+        progress_messages = []
+        runner, _, _ = self._make_runner(progress_messages)
+        workspace = self.root / "workspace-with-scripts"
+        (workspace / "capabilities" / "sasha-sales").mkdir(parents=True)
+        (workspace / "inspect.js").write_text(
+            "const c = await chromium.launchPersistentContext('/browser-profile', {});"
+        )
+        (workspace / "attach.js").write_text(
+            "const b = await chromium.connectOverCDP('http://127.0.0.1:9222');"
+        )
+        (workspace / "capabilities" / "sasha-sales" / "tool.js").write_text(
+            "chromium.launch({})"
+        )
+
+        runner._report_scripts_that_launch_chrome(workspace)
+
+        self.assertEqual(
+            progress_messages,
+            ["[cleanup] WARNING: Sasha's script inspect.js launches its own Chrome"],
+        )
+
+    def test_progress_reports_browser_restarts_and_own_chrome_launches(self):
+        restart = "/bin/bash -lc 'node /opt/sasha/start_browser.js'"
+        attach = (
+            "/bin/bash -lc \"node -e \\\"const b=await chromium.connectOverCDP("
+            "'http://127.0.0.1:9222')\\\"\""
+        )
+        own_chrome = (
+            "/bin/bash -lc \"node -e \\\"chromium.launchPersistentContext("
+            "'/browser-profile')\\\"\""
+        )
+        events = [
+            {"type": "agent.session.environment.connected"},
+            _command_added("command-1", restart),
+            _command_done("command-1", restart, '{"status":"started"}', 0),
+            _command_added("command-2", attach),
+            _command_done("command-2", attach, "READY", 0),
+            _command_added("command-3", own_chrome),
+            _command_done("command-3", own_chrome, "", 0),
+            {"type": "agent.session.turn.completed"},
+        ]
+        progress_messages = []
+        runner, _, _ = self._make_runner(progress_messages, event_values=events)
+
+        runner.run(SashaTask("303839", "task-1", TASK_URL))
+
+        browser_lines = [
+            line.strip()
+            for line in progress_messages
+            if "restarted the browser" in line or "own Chrome" in line
+        ]
+        self.assertEqual(
+            browser_lines,
+            [
+                "Sasha restarted the browser: started",
+                "WARNING: Sasha launched its own Chrome",
+            ],
+        )
 
     def test_connection_timeout_returns_failure_and_cleans_up(self):
         runner, sessions, sandboxes = self._make_runner(
@@ -936,6 +1054,7 @@ class ManagedRunnerTests(unittest.TestCase):
         event_values=None,
         retrieve_error=None,
         authentication_error=None,
+        browser_error=None,
         connection_timeout=1,
         turn_timeout=1,
         stays_open=False,
@@ -973,6 +1092,7 @@ class ManagedRunnerTests(unittest.TestCase):
                 config, executor_api_key, len(sandboxes) + 1, operations
             )
             sandbox.authentication_error = authentication_error
+            sandbox.browser_error = browser_error
             sandboxes.append(sandbox)
             return sandbox
 
