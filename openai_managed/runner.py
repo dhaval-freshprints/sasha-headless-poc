@@ -669,8 +669,8 @@ class OpenAIManagedRunner:
         page = self.client.beta.agents.sessions.items.list(
             session_id, order="asc", limit=100
         )
-        values = _read_value(page, "data") or []
-        return [_to_plain_value(item) for item in values]
+        # Iterating the page fetches every later page too; page.data is only the first 100.
+        return [_to_plain_value(item) for item in page]
 
     @staticmethod
     def _make_result(

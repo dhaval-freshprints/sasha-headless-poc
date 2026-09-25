@@ -120,11 +120,36 @@ class FakeEventsAPI:
         self.released.set()
 
 
+class FakeCursorPage:
+    """Like the SDK page: data is the first page, iterating walks every page."""
+
+    def __init__(self, items, limit):
+        self.items = items
+        self.data = items[:limit]
+
+    def __iter__(self):
+        return iter(self.items)
+
+
 class FakeItemsAPI:
     def __init__(self, deal_id):
         self.deal_id = deal_id
+        self.commentary_count = 0
 
     def list(self, session_id, order, limit):
+        items = [self._commentary_item() for _ in range(self.commentary_count)]
+        items.append(self._final_item())
+        return FakeCursorPage(items, limit)
+
+    @staticmethod
+    def _commentary_item():
+        return {
+            "role": "assistant",
+            "phase": "commentary",
+            "content": [{"type": "output_text", "text": "Checking the catalog."}],
+        }
+
+    def _final_item(self):
         result = {
             "deal_id": self.deal_id,
             "status": "completed",
@@ -132,12 +157,11 @@ class FakeItemsAPI:
             "failure_code": "",
             "failure_message": "",
         }
-        item = {
+        return {
             "role": "assistant",
             "phase": "final_answer",
             "content": [{"type": "output_text", "text": json.dumps(result)}],
         }
-        return SimpleNamespace(data=[item])
 
 
 class FakeSessionsAPI:
@@ -474,6 +498,20 @@ class ManagedRunnerTests(unittest.TestCase):
         self.assertIn("[pricing] Estimated OpenAI cost: $0.01640000", pricing_messages)
         workspace = self.root / "runs" / "run-1" / "workspace"
         self.assertTrue((workspace / "pricing.json").is_file())
+
+    def test_reads_final_answer_after_first_hundred_items(self):
+        runner, sessions, _ = self._make_runner([])
+        sessions.items.commentary_count = 100
+
+        result = runner.run(
+            SashaTask("303839", "task-1", "https://qa.example/deal?id=303839")
+        )
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.message_html, MESSAGE)
+        workspace = self.root / "runs" / "run-1" / "workspace"
+        saved_items = json.loads((workspace / "session-items.json").read_text())
+        self.assertEqual(len(saved_items), 101)
 
     def test_extracts_final_answer_instead_of_earlier_text(self):
         items = [
