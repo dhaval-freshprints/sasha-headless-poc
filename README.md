@@ -158,6 +158,16 @@ The tests do not make live OpenAI calls or start a real browser:
 .venv/bin/python -m unittest discover -s webapp/tests -t . -v
 ```
 
+Sasha operates the Design Tool through general Playwright browser actions using
+written guidance in the sales skill. It observes the current page, edits the
+selected text, and verifies the saved proof.
+
+Each run saves `workspace/runtime.json` with its loaded runner version, model,
+and agent instructions, plus the actual `workspace/TASK.md`. Screenshots are in
+`workspace/artifacts`. Restart the webapp after Python changes; the documented
+server command does not enable automatic reload. The browser-only runtime is
+`DTEDIT02-browser-only`.
+
 Live QA smoke tests for the kept-open browser sign in to Fresh Prints QA inside
 the managed Docker image. They are skipped unless `SASHA_LIVE_QA=1`:
 

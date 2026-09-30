@@ -37,6 +37,7 @@ SCRIPT_SUFFIXES = {".js", ".cjs", ".mjs"}
 SKIPPED_WORKSPACE_FOLDERS = {"capabilities", "client-files"}
 DELETE_RETRY_DELAYS_SECONDS = (1, 2, 4, 8)
 CONFLICT_STATUS_CODE = 409
+RUNNER_VERSION = "DTEDIT02-browser-only"
 
 
 class BrowserStartError(RuntimeError):
@@ -277,6 +278,13 @@ class OpenAIManagedRunner:
                 )
             task_message = self._build_task_message(task, files)
             sandbox.save_task_message(task_message)
+            instructions = self._load_instructions()
+            _write_json(handle.workspace_directory / "runtime.json", {
+                "runner_version": RUNNER_VERSION,
+                "model": self.settings.model,
+                "reasoning_effort": self.settings.reasoning_effort,
+                "instructions": instructions,
+            })
             sandbox.start_container()
             self.progress.report("[2/7] Signing into Fresh Prints QA")
             sandbox.authenticate(
@@ -293,7 +301,7 @@ class OpenAIManagedRunner:
             session = self.client.beta.agents.sessions.create(
                 agent={
                     "model": self.settings.model,
-                    "instructions": self._load_instructions(),
+                    "instructions": instructions,
                     "reasoning": {"effort": self.settings.reasoning_effort},
                     "text": {
                         "verbosity": "low",
@@ -602,6 +610,7 @@ class OpenAIManagedRunner:
 
         return (
             "Handle one Fresh Prints QA sales turn.\n"
+            f"Runtime version: {RUNNER_VERSION}.\n"
             "Use the `sasha-sales` skill.\n\n"
             f"Deal ID: {task.deal_id}\n"
             f"Deal URL: {task.deal_url}\n\n"
@@ -623,7 +632,11 @@ class OpenAIManagedRunner:
             "again. If it fails twice, return a failed result.\n\n"
             "Start at the exact deal URL, inspect the current "
             "deal state, and determine the required work from the turn data and skill. "
-            "Save screenshots under /workspace/artifacts and save the browser URLs visited "
+            "Save screenshots under /workspace/artifacts, then open them with an available "
+            "image-viewing tool before making visual decisions. Saving a screenshot alone "
+            "does not display it. If image viewing is unavailable, report that limitation "
+            "rather than guessing canvas coordinates or claiming artwork is uneditable. "
+            "Save the browser URLs visited "
             "as /workspace/artifacts/visited_urls.json. "
             "Return only the required Sasha result JSON object."
         )

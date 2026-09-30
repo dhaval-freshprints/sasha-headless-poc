@@ -14,8 +14,9 @@ This file records where sales information appears and how the Fresh Prints QA in
 | Quoter | `/dashboard/quoter` | Price a product, print method, and quantity without changing a proof |
 | Stock checker | `/dashboard/stock-checker` | Live stock by style, color, and size |
 | Proofs list | `/dashboard/proofs` | All proofs, newest first; search accepts proof ID, proof name, or client name, not deal ID |
-| Product catalog | `https://www.freshprints.com/products` | Public product search by type, color, and brand |
-| Public help | `https://www.freshprints.com/help-center/` | Client-facing policies |
+| Product catalog | `https://freshprints-qa.internal-fp.com/products` | QA product search by type, color, and brand |
+| Designs gallery | `https://freshprints-qa.internal-fp.com/designs` | QA design inspiration by search, organization, event, style, and print type |
+| Help center | `https://freshprints-qa.internal-fp.com/help-center/` | QA client-facing policies |
 
 ## Deal page
 
@@ -48,18 +49,26 @@ The three steps are Proof Details, Product Info, and Print Info & Price Estimate
 
 The Design Tool uses the CRM login on a different QA host. A proof's Design Tool link opens a new browser page. Existing proofs show their proof item and revision in the editor.
 
+For a design chosen from the QA gallery, open its detail page and follow `Customize This`. The observed link includes `designId` and opens `dt-qa.internal-fp.com` with that design already on the garment. The generic footer Design Tool link points to the production editor, so use the design's QA `Customize This` link. Inspect the loaded canvas and its objects before editing.
+
+If the deal already has a proof, use that proof's editor to save to the same proof. Its Designs panel can load gallery artwork. Compare the imported artwork's size and placement with the gallery reference before saving; importing does not guarantee the same position. The wearer's left chest is on the viewer's right in the front view.
+
 ### Interface and selection
 
 - The left rail contains Add Text, Upload, Designs, Clipart & logos, and Greek. The right panel contains product, color, print type, and method.
 - Many controls are tiles. Locate them through their rendered role, name, text, or stable test ID. Canvas artwork is visual content and must be inspected with a screenshot.
-- A single canvas click selects an object. Double-clicking text enters editing. Clicking empty canvas exits editing and can deselect the object.
+- A single canvas click selects an object. Opening the selection panel can move the artwork. After selecting, opening a panel, scrolling, or changing the viewport, capture and view a fresh screenshot before choosing another canvas coordinate.
+- Double-click the visible letters to enter text editing. The design's center or bounding box can contain empty space. Clicking empty canvas exits editing and can deselect the object.
+- `Select part of your design to make edits in this panel` means no part is selected. It does not prove that the artwork is an image or that text cannot be edited. Capture and view the current canvas, select the target again, then double-click the letters at their current position.
 - Disabled Size & Placement fields can retain a prior object's values and do not prove that object is selected.
 - `Change Product` opens the product picker. Its product search placeholder is `Try "T-Shirt"`; `Try "Alpha"` searches designs. Choose the matching product, then `Switch to This`.
 
 ### Text and images
 
 - `Add Text` creates `TEXT`. For a wording revision, edit the existing text object instead of adding another.
-- While editing text, select the text content and type the exact replacement. Exit editing, reselect it, and verify the rendered wording and style.
+- Before replacing wording, confirm that `Text Tool` is open and an editable text field contains the intended original wording. A generic Size & Placement panel is not confirmation of text editing. Read the field value rather than relying only on page body text.
+- Replace the content of the confirmed text field with the exact requested wording. Exit editing and view a fresh screenshot to verify the rendered wording, style, and unrelated artwork. Reselect the text and read its value again before saving. Repeat for each text object covered by the request; do not leave other requested wording unchanged.
+- If selection still fails after a correction using a fresh screenshot, stop and report that text selection could not be confirmed. Do not call the artwork flattened, rasterized, or uneditable without evidence from the selected object's controls or an explicit application message.
 - Complete content, font, and color before size and placement because those changes can alter the bounding box.
 - Use Playwright's file-input support only for an approved local artwork file supplied to the task. Target the artwork input identified by `upload-file-input`, not the font input.
 - Upload completion is intermediate. Inspect rejection state or the Edit Image dialog, then inspect the placed canvas artwork.
@@ -98,7 +107,19 @@ The Design Tool uses the CRM login on a different QA host. A proof's Design Tool
 - A color ending in `mto` is made to order.
 - Product URLs contain brand and style code. For example, a path containing `nike-nkdc1963` identifies style `NKDC1963`.
 - The catalog has no client prices. Carry the chosen style code and color to the quoter.
-- Confirm an exact public product match by observing its matching card and link after the completed search.
+- Confirm an exact QA product match by observing its matching card and link after the completed search.
+
+## Designs gallery
+
+- The QA gallery is a source of design inspiration. Its cards are designs shown on garments, not confirmed blank product catalog items or priced proofs.
+- The search field updates the URL with `search=<word>`. For example, a search for birthday opened `/designs?search=birthday`. Wait for the results to update before reading names and links.
+- The gallery groups filters under Orgs, Events, Styles, and Print Types. The navigation menu and expanded gallery views show more choices than the first visible row. Read the current choices instead of relying on a fixed list.
+- Observed Orgs: Sorority, Club, Fraternity, Sports. Observed Events: Rush & Bid, PR & General, Game Day, Parent's Weekend, Philanthropy, Big Little Reveal.
+- The expanded Styles view showed Classic, Minimalist, Y2K, Varsity, Typography, 80s & 90s, Cartoons, Handdrawn, Grunge, and 60s & 70s. The Print Types menu showed Embroidery, Screen Print, Patches, Digital, Applique, and Transfers. These are starting terms; confirm current filters and results on the page.
+- Filter links use URL parameters such as `filter[orgs]`, `filter[events]`, `filter[styles]`, and `filter[printTypes]`. Use links observed on the current page; do not construct a filter URL from memory.
+- Each result card has a design name and detail link. Open a matching card to confirm its title and details before recommending it. Copy the actual card or detail URL and the current gallery search or filter URL when offering more options.
+- A design detail page may show organization, event, and style tags plus `Customize This`. On the QA gallery, the selected strawberry cake design's link opened the QA Design Tool with that design loaded. The page says the organization and garment can be changed. Do not treat the pictured garment as a confirmed catalog product or infer a client price from the design page.
+- If the search has no relevant results, try one useful broader term or filter, inspect the result, and say so if nothing suitable appears.
 
 ## Quoter
 
