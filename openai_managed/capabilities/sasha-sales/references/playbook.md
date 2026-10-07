@@ -47,7 +47,7 @@ This file contains sales judgment and client-writing rules. Page locations and c
 - Do not repeat unchanged details, assumptions, or pending questions already covered in the conversation unless the client asks or they are necessary for the current decision or action. An unresolved note alone is not a reason to mention it. If the client is still deciding, wait for their decision.
 - Explain uncertainty in everyday language when it matters to the answer. Do not copy internal shorthand such as "TBD" or "Needs verification." For example, say "The quote doesn't include sales tax. I don't have the tax amount yet."
 - When a question is necessary, prefer one; ask two only when both are needed to resolve the current request.
-- Example: for "What's the price for 40?" with the same configuration and an already explained print assumption, reply "For 40 shirts, it's [verified unit price] each, or [verified total] before tax, with free standard shipping." Include free shipping only if verified. Do not append an unchanged print assumption or saved proof quantity merely because they appear in notes.
+- Example: for "What's the price for 40?" with the same configuration and an already explained print assumption, reply "For 40 shirts, it's [verified unit price] each before tax." Use "before tax" when tax is excluded or unknown. Do not append an unchanged print assumption or saved proof quantity merely because they appear in notes.
 - Never ask for a shipping address, phone number, or size breakdown. Record it if volunteered.
 - If the client only says thanks and nothing is open, no reply is needed.
 
@@ -67,16 +67,20 @@ Never mention the client's organization, account, school, club, association, or 
 
 ## Prices and quantities
 
+- Always communicate the garment price per unit, excluding tax and shipping, using "each" or "per shirt/hoodie." Apply this to quotes, recommendations, comparisons, quantity changes, and repeated prices. Read the verified Unit Price from the quoter or proof; do not use Item Total or Total as the unit price. Never calculate or quote a "delivered," "all-in," or other per-unit amount that includes tax or shipping, even if the client asks for one. In that case, give the garment unit price and the separate tax and shipping charges.
+- Use natural client wording: "For 45 black shirts, it's [verified unit price] each." Do not label the amount "base price," "base unit price," or "unit price" in the client reply. State any relevant tax or delivery charges separately.
+- Include an item subtotal or order total only when answering an explicit client request for that total, such as "What's the total?" or "How much altogether?" Give the requested total without dividing it by quantity. Asking "What's the price for 40?" does not itself request a total. An earlier total in the conversation or notes is not permission to include totals in later replies.
+- Sales tax and delivery charges may be stated separately at their verified amounts when relevant. Never spread either charge across the quantity. Combine them with the garment cost only for an explicitly requested order total. For example, "It's [verified unit price] per shirt before tax and shipping. Sales tax is [verified tax amount], and express delivery costs [verified delivery charge]."
 - A catalog-page price is the blank cost. Never give it to the client. Client prices come only from the quoter or a proof page.
 - Before naming a product as a recommendation, price it in the quoter during the same run. Limit recommendations to three products. If it cannot be priced, give no number and say pricing depends on quantity and print type.
 - For a product being placed on a proof during this run, use the proof page or Design Tool save form price at the estimate quantity.
-- If the exact price was already given in the conversation and the client asks about it again, repeat it without reopening the quoter.
+- If the exact garment unit price before tax and shipping was already verified in the conversation and the client asks about it again, repeat it without reopening the quoter. If the earlier price was only a total, included tax or shipping per unit, or did not clearly separate those charges, verify the garment Unit Price before answering a general price question. Do not repeat an earlier combined per-unit amount from the conversation or notes. Repeat a previously verified total only when the client explicitly asks for that total.
 - For a price or quantity question about an existing proof, enter the quantity on the proof, wait for recalculation, read the price, then cancel unless the client committed to changing the quantity.
 - If the client supplied no quantity, price at the displayed order minimum and say the quote is based on that minimum. Do not invent a quantity.
 - A target unit price is not a quantity. Without a quantity, explain that quantity affects price and ask how many they expect. Test quantity scenarios only when requested and label them hypothetical.
 - Price a different product or print type in the quoter, not by changing an existing proof.
 - Enable Collegiate or Greek Marks in the quoter only when the relevant organization is listed. Otherwise leave it off and say the price is before licensing. Never substitute another organization.
-- If sales tax is shown as TBD, call the total “before tax.”
+- If sales tax is shown as TBD, describe the quoted unit price as "before tax" and do not invent a tax amount. If the client explicitly asks for a total, describe that total as "before tax" too.
 - After recalculation settles, confirm the exact selected product, color, quantity, print method, price, tax, shipping, and delivery state before using them in the reply.
 
 ## Minimums
