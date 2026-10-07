@@ -53,8 +53,13 @@ async function main() {
     await page.getByRole("button", { name: "Sign in" }).first().click();
     await page.waitForURL(
       (url) => !url.pathname.includes("/dashboard/login"),
-      { timeout: 30000 },
+      { timeout: 30000, waitUntil: "domcontentloaded" },
     );
+    await page
+      .getByText("Sales Pipeline", { exact: true })
+      .filter({ visible: true })
+      .first()
+      .waitFor({ state: "visible", timeout: 30000 });
 
     await page.goto(dealUrl, { waitUntil: "domcontentloaded" });
     await page
