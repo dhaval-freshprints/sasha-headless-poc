@@ -17,7 +17,7 @@ from .task import SashaTask
 
 
 SAFE_NAME = re.compile(r"[^a-zA-Z0-9_.-]+")
-SASHA_SKILL_DIRECTORY = Path(__file__).with_name("capabilities") / "sasha-sales"
+CAPABILITIES_DIRECTORY = Path(__file__).with_name("capabilities")
 AUTHENTICATION_SCRIPT = Path(__file__).with_name("setup_auth.js")
 BROWSER_KEEPER_SCRIPT = Path(__file__).with_name("browser_keeper.js")
 START_BROWSER_SCRIPT = Path(__file__).with_name("start_browser.js")
@@ -58,11 +58,7 @@ class DockerSandbox:
         workspace_directory.mkdir(parents=True, exist_ok=False)
         try:
             (workspace_directory / "artifacts").mkdir()
-            capabilities_directory.mkdir()
-            shutil.copytree(
-                SASHA_SKILL_DIRECTORY,
-                capabilities_directory / "sasha-sales",
-            )
+            shutil.copytree(CAPABILITIES_DIRECTORY, capabilities_directory)
             (workspace_directory / "task.json").write_text(
                 json.dumps(
                     {
@@ -71,6 +67,10 @@ class DockerSandbox:
                         "deal_url": task.deal_url,
                         "client_message": task.client_message,
                         "conversation_history": list(task.conversation_history),
+                        "turn_type": task.resolved_turn_type(),
+                        "follow_up_stage": task.follow_up_stage,
+                        "as_of_date": task.as_of_date,
+                        "days_since_client_reply": task.days_since_client_reply,
                     },
                     indent=2,
                 ),

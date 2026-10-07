@@ -13,6 +13,7 @@ class FakeRunner:
         self.last_cost_estimate = None
 
     def run(self, task):
+        self.last_task = task
         self.write("Fake Sasha inspected the deal.")
         if self.release is not None:
             self.release.wait(2)

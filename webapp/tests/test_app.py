@@ -6,6 +6,8 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
+from openai_managed.notes import NotesStore
+
 from webapp.app import create_app
 from webapp.deals import DealStore
 from webapp.jobs import JobManager
@@ -18,7 +20,10 @@ class WebAppTests(unittest.TestCase):
         self.root = Path(self.temporary_directory.name)
         self.environment = patch.dict(
             os.environ,
-            {"FP_BASE_URL": "https://qa.example"},
+            {
+                "FP_BASE_URL": "https://qa.example",
+                "OPENAI_MANAGED_RUNS_DIRECTORY": str(self.root / "openai-managed"),
+            },
         )
         self.environment.start()
         self.manager = JobManager(
@@ -111,6 +116,52 @@ class WebAppTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 422)
 
+    def test_creates_follow_up_run_with_mocked_stage_and_date(self):
+        response = self.client.post(
+            "/api/runs",
+            json={
+                "deal_id": "303839",
+                "turn_type": "follow_up",
+                "follow_up_stage": 3,
+                "as_of_date": "2026-10-07",
+                "days_since_client_reply": 9,
+            },
+        )
+
+        self.assertEqual(response.status_code, 202)
+        payload = response.json()
+        self.assertEqual(payload["turn_type"], "follow_up")
+        self.assertEqual(payload["follow_up_stage"], 3)
+        self.assertEqual(payload["as_of_date"], "2026-10-07")
+        self.assertEqual(payload["days_since_client_reply"], 9)
+        self.assertIsNone(payload["client_message"])
+
+        completed = wait_for_finish(self.manager, payload["run_id"])
+        self.assertEqual(completed.status, "completed")
+
+    def test_rejects_follow_up_without_stage_or_with_client_message(self):
+        missing_stage = self.client.post(
+            "/api/runs",
+            json={
+                "deal_id": "303839",
+                "turn_type": "follow_up",
+                "as_of_date": "2026-10-07",
+            },
+        )
+        with_message = self.client.post(
+            "/api/runs",
+            json={
+                "deal_id": "303839",
+                "turn_type": "follow_up",
+                "follow_up_stage": 1,
+                "as_of_date": "2026-10-07",
+                "client_message": "hi",
+            },
+        )
+
+        self.assertEqual(missing_stage.status_code, 422)
+        self.assertEqual(with_message.status_code, 422)
+
     def test_unknown_run_returns_not_found(self):
         response = self.client.get("/api/runs/missing")
 
@@ -120,6 +171,35 @@ class WebAppTests(unittest.TestCase):
         response = self.client.get("/api/deals/999999")
 
         self.assertEqual(response.status_code, 404)
+
+    def test_deal_notes_endpoint_returns_empty_when_nothing_saved(self):
+        response = self.client.get("/api/deals/303950/notes")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"deal_id": "303950", "notes": ""})
+
+    def test_deal_notes_endpoint_returns_saved_notebook_content(self):
+        store = NotesStore(self.root / "openai-managed", "303951")
+        store.path.parent.mkdir(parents=True, exist_ok=True)
+        store.path.write_text(
+            "## Client preferences\n- None recorded.\n", encoding="utf-8"
+        )
+
+        response = self.client.get("/api/deals/303951/notes")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {
+                "deal_id": "303951",
+                "notes": "## Client preferences\n- None recorded.\n",
+            },
+        )
+
+    def test_deal_notes_endpoint_rejects_invalid_deal_id(self):
+        response = self.client.get("/api/deals/not-a-deal/notes")
+
+        self.assertEqual(response.status_code, 422)
 
 
 if __name__ == "__main__":

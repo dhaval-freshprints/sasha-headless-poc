@@ -47,82 +47,137 @@
       </section>
 
       <section id="deal-view" class="view hidden">
-        <a class="back-link" href="/" data-app-link>← All deals</a>
-        <div class="page-heading">
-          <div>
-            <p class="eyebrow">Deal workspace</p>
-            <h1>Deal <span id="detail-deal-id"></span></h1>
-            <p id="deal-run-summary" class="subtitle"></p>
+        <div class="view-layout">
+          <div class="view-main">
+            <a class="back-link" href="/" data-app-link>← All deals</a>
+            <div class="page-heading">
+              <div>
+                <p class="eyebrow">Deal workspace</p>
+                <h1>Deal <span id="detail-deal-id"></span></h1>
+                <p id="deal-run-summary" class="subtitle"></p>
+              </div>
+              <div class="heading-actions">
+                <button id="start-run-button" type="button">Start new run</button>
+                <button id="start-followup-button" class="secondary" type="button">Follow-up run</button>
+              </div>
+            </div>
+
+            <section id="run-form-card" class="card hidden">
+              <div class="section-heading form-title">
+                <h2>New Sasha run</h2>
+                <button id="cancel-run-button" class="text-button" type="button">Cancel</button>
+              </div>
+              <form id="run-form">
+                <label for="client-message">Client message <span>Optional—leave empty for initial outreach</span></label>
+                <textarea id="client-message" name="client_message" rows="6" placeholder="What's the price for 40?"></textarea>
+
+                <label for="file-urls">Artwork URLs <span>Optional—one direct URL per line</span></label>
+                <textarea id="file-urls" name="file_urls" rows="4" placeholder="https://example.com/logo.png"></textarea>
+
+                <div id="form-error" class="error hidden" role="alert"></div>
+                <button id="submit-button" type="submit">Run Sasha</button>
+              </form>
+            </section>
+
+            <section id="followup-form-card" class="card hidden">
+              <div class="section-heading form-title">
+                <h2>Follow-up run (POC)</h2>
+                <button id="cancel-followup-button" class="text-button" type="button">Cancel</button>
+              </div>
+              <form id="followup-form">
+                <label for="followup-stage">Stage</label>
+                <select id="followup-stage" name="follow_up_stage" required>
+                  <option value="1">1 — Reignite interest (days 1–3)</option>
+                  <option value="2">2 — Relevance &amp; gentle pressure (days 4–7)</option>
+                  <option value="3">3 — Invite honesty (days 8–12)</option>
+                  <option value="4">4 — Final answer (days 13–18)</option>
+                  <option value="5">5 — Re-engage (weeks 3+)</option>
+                </select>
+
+                <label for="as-of-date">As-of date <span>Mocked business date for this run</span></label>
+                <input id="as-of-date" name="as_of_date" type="date" required>
+
+                <label for="days-since-reply">Days since client reply <span>Optional override</span></label>
+                <input id="days-since-reply" name="days_since_client_reply" type="number" min="0" step="1" placeholder="Leave empty if unknown">
+
+                <div id="followup-form-error" class="error hidden" role="alert"></div>
+                <button id="followup-submit-button" type="submit">Run follow-up</button>
+              </form>
+            </section>
+
+            <div class="section-heading history-heading">
+              <h2>Previous runs</h2>
+            </div>
+            <div id="deal-runs-list" class="run-list"></div>
+            <section id="no-runs" class="card empty-state hidden">
+              <h2>No runs yet</h2>
+              <p>Start the first Sasha interaction for this deal.</p>
+            </section>
           </div>
-          <button id="start-run-button" type="button">Start new run</button>
+
+          <aside class="card notes-panel">
+            <div class="section-heading form-title">
+              <h2>Deal notes</h2>
+            </div>
+            <p class="subtitle">Sasha's persisted notebook—updated after every completed run.</p>
+            <pre id="deal-notes-content">Loading…</pre>
+          </aside>
         </div>
-
-        <section id="run-form-card" class="card hidden">
-          <div class="section-heading form-title">
-            <h2>New Sasha run</h2>
-            <button id="cancel-run-button" class="text-button" type="button">Cancel</button>
-          </div>
-          <form id="run-form">
-            <label for="client-message">Client message <span>Optional—leave empty for initial outreach</span></label>
-            <textarea id="client-message" name="client_message" rows="6" placeholder="What's the price for 40?"></textarea>
-
-            <label for="file-urls">Artwork URLs <span>Optional—one direct URL per line</span></label>
-            <textarea id="file-urls" name="file_urls" rows="4" placeholder="https://example.com/logo.png"></textarea>
-
-            <div id="form-error" class="error hidden" role="alert"></div>
-            <button id="submit-button" type="submit">Run Sasha</button>
-          </form>
-        </section>
-
-        <div class="section-heading history-heading">
-          <h2>Previous runs</h2>
-        </div>
-        <div id="deal-runs-list" class="run-list"></div>
-        <section id="no-runs" class="card empty-state hidden">
-          <h2>No runs yet</h2>
-          <p>Start the first Sasha interaction for this deal.</p>
-        </section>
       </section>
 
       <section id="run-view" class="view hidden">
-        <a id="back-to-deal" class="back-link" href="#" data-app-link>← Back to deal</a>
-        <section id="run-card" class="card" aria-live="polite">
-          <div class="run-heading">
-            <div>
-              <p class="eyebrow">Run <span id="run-id"></span></p>
-              <h1>Deal <span id="run-deal-id"></span></h1>
+        <div class="view-layout">
+          <div class="view-main">
+            <a id="back-to-deal" class="back-link" href="#" data-app-link>← Back to deal</a>
+            <section id="run-card" class="card" aria-live="polite">
+              <div class="run-heading">
+                <div>
+                  <p class="eyebrow">Run <span id="run-id"></span></p>
+                  <h1>Deal <span id="run-deal-id"></span></h1>
+                </div>
+                <span id="status-badge" class="status">Queued</span>
+              </div>
+
+              <dl class="metrics">
+                <div><dt>Turn</dt><dd id="turn-type">—</dd></div>
+                <div><dt>Elapsed</dt><dd id="elapsed">—</dd></div>
+                <div><dt>Started</dt><dd id="started-at">—</dd></div>
+                <div><dt>Finished</dt><dd id="finished-at">—</dd></div>
+              </dl>
+              <p id="followup-meta" class="subtitle hidden"></p>
+
+              <div id="run-error" class="error hidden" role="alert"></div>
+
+              <div class="section-heading">
+                <h2>Progress</h2>
+                <span id="refresh-note">Updates every 2 seconds</span>
+              </div>
+              <ol id="progress-list" class="progress-list"></ol>
+
+              <section id="result-section" class="result hidden">
+                <h2>Sasha’s answer</h2>
+                <iframe id="message-preview" sandbox="" title="Sasha response preview"></iframe>
+                <details>
+                  <summary>Structured result</summary>
+                  <pre id="result-json"></pre>
+                </details>
+              </section>
+
+              <section id="artifacts-section" class="hidden">
+                <h2>Artifacts</h2>
+                <ul id="artifact-list" class="artifact-list"></ul>
+              </section>
+            </section>
+          </div>
+
+          <aside class="card notes-panel">
+            <div class="section-heading form-title">
+              <h2>Deal notes</h2>
             </div>
-            <span id="status-badge" class="status">Queued</span>
-          </div>
-
-          <dl class="metrics">
-            <div><dt>Elapsed</dt><dd id="elapsed">—</dd></div>
-            <div><dt>Started</dt><dd id="started-at">—</dd></div>
-            <div><dt>Finished</dt><dd id="finished-at">—</dd></div>
-          </dl>
-
-          <div id="run-error" class="error hidden" role="alert"></div>
-
-          <div class="section-heading">
-            <h2>Progress</h2>
-            <span id="refresh-note">Updates every 2 seconds</span>
-          </div>
-          <ol id="progress-list" class="progress-list"></ol>
-
-          <section id="result-section" class="result hidden">
-            <h2>Sasha’s answer</h2>
-            <iframe id="message-preview" sandbox="" title="Sasha response preview"></iframe>
-            <details>
-              <summary>Structured result</summary>
-              <pre id="result-json"></pre>
-            </details>
-          </section>
-
-          <section id="artifacts-section" class="hidden">
-            <h2>Artifacts</h2>
-            <ul id="artifact-list" class="artifact-list"></ul>
-          </section>
-        </section>
+            <p class="subtitle">Sasha's persisted notebook for this deal, refreshed as the run updates.</p>
+            <pre id="run-notes-content">Loading…</pre>
+          </aside>
+        </div>
       </section>
     </main>
 
