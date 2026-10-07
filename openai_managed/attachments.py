@@ -21,6 +21,7 @@ class Attachment:
     path: Path
     name: str
     size: int
+    from_previous_turn: bool = False
 
     def describe(self) -> str:
         return f"{self.handle} ({self.name}, {self.size // 1024} KB)"
@@ -29,6 +30,7 @@ class Attachment:
 class AttachmentSet:
     def __init__(self, items: list[Attachment] | None = None):
         self.items = items or []
+        self.unavailable_names: list[str] = []
 
     def __bool__(self) -> bool:
         return bool(self.items)
@@ -54,11 +56,26 @@ def fetch_to_directory(urls: list[str], target_dir: Path) -> AttachmentSet:
     return AttachmentSet(items)
 
 
+def restore_saved_attachments(
+    urls: list[str], target_dir: Path, files: AttachmentSet
+) -> None:
+    for url in urls:
+        handle = f"file_{len(files.items) + 1}"
+        try:
+            target_dir.mkdir(parents=True, exist_ok=True)
+            attachment = _fetch_one(url, handle, target_dir)
+        except (OSError, ValueError):
+            files.unavailable_names.append(file_name(url))
+            continue
+        attachment.from_previous_turn = True
+        files.items.append(attachment)
+
+
 def _fetch_one(url: str, handle: str, target_dir: Path) -> Attachment:
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise ValueError(f"{handle}: use an HTTP or HTTPS artwork URL.")
-    name = _file_name(url)
+    name = file_name(url)
     suffix = Path(name).suffix.lower()
     if suffix not in ALLOWED_SUFFIXES:
         raise ValueError(f"{handle}: {suffix or 'no extension'} is not a file type we accept.")
@@ -84,7 +101,7 @@ def _fetch_one(url: str, handle: str, target_dir: Path) -> Attachment:
     return Attachment(handle=handle, path=path, name=name, size=len(payload))
 
 
-def _file_name(url: str) -> str:
+def file_name(url: str) -> str:
     raw = unquote(urlparse(url).path).rsplit("/", 1)[-1]
     cleaned = SAFE_NAME.sub("_", raw).strip("._") or "upload"
     guessed = mimetypes.guess_extension(mimetypes.guess_type(cleaned)[0] or "") or ""

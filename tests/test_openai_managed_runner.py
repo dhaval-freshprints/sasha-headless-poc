@@ -9,6 +9,10 @@ from unittest.mock import patch
 
 from openai_managed.attachments import Attachment, AttachmentSet
 from openai_managed.conversation import ConversationStore
+from openai_managed.notes import (
+    NOTES_OUTPUT_NAME, NotesStore, saved_attachment_urls, with_attachment_links,
+)
+from tests.test_attachments import FakeResponse
 from openai_managed.pricing import CostReporter
 from openai_managed.progress import ProgressReporter
 from openai_managed.runner import (
@@ -1083,6 +1087,199 @@ class ManagedRunnerTests(unittest.TestCase):
         self.assertEqual(cleanup["errors"], ["session deletion: delete rejected"])
         saved_result = json.loads((workspace / "result.json").read_text())
         self.assertEqual(saved_result["status"], "completed")
+
+    @patch("openai_managed.attachments.urllib.request.urlopen")
+    def test_attachment_links_are_saved_and_reused_without_resubmission(self, urlopen):
+        url = "https://example.test/logo.svg?signature=abc%2Fdef"
+        urlopen.side_effect = [
+            FakeResponse(b"<svg>first</svg>", "image/svg+xml"),
+            FakeResponse(b"<svg>second</svg>", "image/svg+xml"),
+        ]
+        runner, _, sandboxes = self._make_runner([])
+        notes = NotesStore(self.root / "runs", "303839")
+        with self._notes_output(runner, "## Current decisions\n- White shirt."):
+            first = runner.run(SashaTask("303839", "task-1", TASK_URL, file_urls=(url, url)))
+        self.assertEqual(first.status, "completed")
+        self.assertEqual(saved_attachment_urls(notes.load()), [url])
+        with self._notes_output(runner, "## Current decisions\n- Black shirt."):
+            second = runner.run(SashaTask("303839", "task-2", TASK_URL, "Reuse the logo."))
+        self.assertEqual(second.status, "completed")
+        self.assertEqual(urlopen.call_count, 2)
+        self.assertEqual(urlopen.call_args.args[0].full_url, url)
+        self.assertIn("/workspace/client-files/file_1.svg (saved attachment)", sandboxes[1].task_message)
+        self.assertEqual(saved_attachment_urls(notes.load()), [url])
+        for sandbox in sandboxes:
+            self.assertFalse((sandbox.handle.workspace_directory / "client-files").exists())
+        self.assertEqual(list((self.root / "runs").rglob("SASHANOTES01*.md")), [notes.path])
+        self.assertFalse((self.root / "runs" / "locks").exists())
+        self.assertEqual(list((self.root / "runs").rglob("*.lock")), [])
+
+    @patch("openai_managed.attachments.urllib.request.urlopen")
+    def test_new_upload_is_not_downloaded_again_as_saved_attachment(self, urlopen):
+        url = "https://example.test/logo.svg"
+        notes = NotesStore(self.root / "runs", "303839")
+        notes.path.parent.mkdir(parents=True)
+        notes.path.write_text(with_attachment_links("Prior notes", [url]), encoding="utf-8")
+        urlopen.return_value = FakeResponse(b"svg", "image/svg+xml")
+        runner, _, sandboxes = self._make_runner([])
+        with self._notes_output(runner, "Updated notes"):
+            result = runner.run(SashaTask("303839", "task-1", TASK_URL, file_urls=(url,)))
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(urlopen.call_count, 1)
+        self.assertIn("(new attachment)", sandboxes[0].task_message)
+
+    @patch("openai_managed.attachments.urllib.request.urlopen")
+    def test_expired_saved_link_warns_and_does_not_block_the_run(self, urlopen):
+        url = "https://example.test/logo.svg?signature=private"
+        notes = NotesStore(self.root / "runs", "303839")
+        notes.path.parent.mkdir(parents=True)
+        notes.path.write_text(with_attachment_links("Prior notes", [url]), encoding="utf-8")
+        urlopen.side_effect = OSError(url)
+        progress = []
+        runner, _, sandboxes = self._make_runner(progress)
+        with self._notes_output(runner, "Updated notes"):
+            result = runner.run(SashaTask("303839", "task-1", TASK_URL))
+        self.assertEqual(result.status, "completed")
+        self.assertIn("could not be downloaded this turn: logo.svg", sandboxes[0].task_message)
+        self.assertTrue(any("Saved attachment unavailable: logo.svg" in message for message in progress))
+        self.assertNotIn("signature=private", "\n".join(progress))
+        self.assertEqual(saved_attachment_urls(notes.load()), [url])
+
+    @patch("openai_managed.attachments.urllib.request.urlopen")
+    def test_other_deal_attachments_are_not_restored(self, urlopen):
+        notes = NotesStore(self.root / "runs", "999999")
+        notes.path.parent.mkdir(parents=True)
+        notes.path.write_text(
+            with_attachment_links("Other deal", ["https://example.test/other.svg"]),
+            encoding="utf-8",
+        )
+        runner, _, sandboxes = self._make_runner([])
+        with self._notes_output(runner, "Current deal"):
+            result = runner.run(SashaTask("303839", "task-1", TASK_URL))
+        self.assertEqual(result.status, "completed")
+        urlopen.assert_not_called()
+        self.assertNotIn("other.svg", sandboxes[0].task_message)
+
+    def test_notes_are_reused_updated_and_only_one_notebook_remains(self):
+        runner, _, sandboxes = self._make_runner([])
+        notes = NotesStore(self.root / "runs", "303839")
+        first = "## Current decisions\n- Navy, quantity unconfirmed. Source: task-1."
+        second = "## Current decisions\n- Black, 75 confirmed. Source: task-2."
+        with self._notes_output(runner, first):
+            result = runner.run(SashaTask("303839", "task-1", TASK_URL, "Navy, about 60."))
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(notes.load(), first)
+        with self._notes_output(runner, second):
+            result = runner.run(SashaTask("303839", "task-2", TASK_URL, "Black, exactly 75."))
+        self.assertEqual(result.status, "completed")
+        self.assertIn(first, sandboxes[1].task_message)
+        self.assertIn("Navy, about 60.", sandboxes[1].task_message)
+        self.assertIn("Originating task ID: task-2", sandboxes[1].task_message)
+        self.assertEqual(notes.load(), second)
+        self.assertEqual(list((self.root / "runs").rglob("SASHANOTES01*.md")), [notes.path])
+        self.assertFalse((self.root / "runs" / "locks").exists())
+        self.assertEqual(list((self.root / "runs").rglob("*.lock")), [])
+        saved = json.loads(runner.last_conversation_file.read_text())
+        self.assertEqual(saved["conversation_history"][1]["delivery_status"], "generated")
+
+    def test_notes_failure_preserves_successful_draft_and_previous_notes(self):
+        progress = []
+        runner, _, _ = self._make_runner(progress)
+        notes = NotesStore(self.root / "runs", "303839")
+        notes.path.parent.mkdir(parents=True)
+        notes.path.write_text("Original", encoding="utf-8")
+        for candidate in (None, b"", b"\xff", b"x" * 16385):
+            with self.subTest(candidate=candidate and candidate[:10]):
+                with self._notes_output(runner, candidate):
+                    result = runner.run(SashaTask("303839", "task-1", TASK_URL))
+                self.assertEqual(result.status, "completed")
+                self.assertEqual(result.message_html, MESSAGE)
+                self.assertEqual(notes.load(), "Original")
+                self.assertFalse((runner.last_run_directory / "workspace" / NOTES_OUTPUT_NAME).exists())
+        self.assertTrue(any("Could not update deal notes" in message for message in progress))
+
+    def test_notes_save_failure_warns_without_failing_the_sales_result(self):
+        progress = []
+        runner, _, _ = self._make_runner(progress)
+        with self._notes_output(runner, "New notes"):
+            with patch.object(NotesStore, "publish", side_effect=OSError("disk full")):
+                result = runner.run(SashaTask("303839", "task-1", TASK_URL))
+        self.assertEqual(result.status, "completed")
+        self.assertTrue(any("disk full" in message for message in progress))
+        self.assertFalse((runner.last_run_directory / "workspace" / NOTES_OUTPUT_NAME).exists())
+
+    def test_unreadable_notes_are_preserved_and_history_is_still_loaded(self):
+        progress = []
+        runner, _, sandboxes = self._make_runner(progress)
+        notes = NotesStore(self.root / "runs", "303839")
+        notes.path.parent.mkdir(parents=True)
+        notes.path.write_bytes(b"\xff")
+        conversation = ConversationStore(self.root / "runs", "303839")
+        conversation.append_completed_turn([], "Earlier client message", MESSAGE)
+        with self._notes_output(runner, "New notes"):
+            result = runner.run(SashaTask("303839", "task-1", TASK_URL))
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(notes.path.read_bytes(), b"\xff")
+        self.assertIn("Earlier client message", sandboxes[0].task_message)
+        self.assertTrue(any("updates disabled" in message for message in progress))
+        self.assertFalse((runner.last_run_directory / "workspace" / NOTES_OUTPUT_NAME).exists())
+
+    def test_failed_and_cancelled_turns_discard_notes(self):
+        notes = NotesStore(self.root / "runs", "303839")
+        notes.path.parent.mkdir(parents=True)
+        notes.path.write_text("Original", encoding="utf-8")
+        runner, sessions, _ = self._make_runner([])
+        for terminal in ("failed", "cancelled"):
+            sessions.events.values = [
+                {"type": "agent.session.environment.connected"},
+                {"type": f"agent.session.turn.{terminal}"},
+            ]
+            with self._notes_output(runner, "Unfinished notes"):
+                result = runner.run(SashaTask("303839", "task-1", TASK_URL))
+            self.assertEqual(result.status, "failed")
+            self.assertEqual(notes.load(), "Original")
+            self.assertFalse((runner.last_run_directory / "workspace" / NOTES_OUTPUT_NAME).exists())
+
+    def test_conversation_save_failure_does_not_publish_notes(self):
+        runner, _, _ = self._make_runner([])
+        notes = NotesStore(self.root / "runs", "303839")
+        notes.path.parent.mkdir(parents=True)
+        notes.path.write_text("Original", encoding="utf-8")
+        with self._notes_output(runner, "New notes"):
+            with patch.object(ConversationStore, "append_completed_turn", side_effect=OSError("disk full")):
+                result = runner.run(SashaTask("303839", "task-1", TASK_URL))
+        self.assertEqual(result.failure_code, "conversation_error")
+        self.assertEqual(notes.load(), "Original")
+        self.assertFalse((runner.last_run_directory / "workspace" / NOTES_OUTPUT_NAME).exists())
+
+    def test_invalid_result_discards_temporary_notes(self):
+        runner, sessions, _ = self._make_runner([])
+        with self._notes_output(runner, "New notes"):
+            with patch.object(sessions.items, "list", return_value=[]):
+                result = runner.run(SashaTask("303839", "task-1", TASK_URL))
+        self.assertEqual(result.status, "failed")
+        self.assertFalse(NotesStore(self.root / "runs", "303839").path.exists())
+        self.assertFalse((runner.last_run_directory / "workspace" / NOTES_OUTPUT_NAME).exists())
+
+    def test_unexpected_error_removes_temporary_notes(self):
+        runner, _, _ = self._make_runner([])
+        with self._notes_output(runner, "Unfinished notes"):
+            with patch.object(runner, "_clean_up", side_effect=RuntimeError("unexpected error")):
+                with self.assertRaisesRegex(RuntimeError, "unexpected error"):
+                    runner.run(SashaTask("303839", "task-1", TASK_URL))
+        self.assertFalse((runner.last_run_directory / "workspace" / NOTES_OUTPUT_NAME).exists())
+        self.assertFalse(NotesStore(self.root / "runs", "303839").path.exists())
+
+    def _notes_output(self, runner, content):
+        original_wait = runner._wait_for_turn
+
+        def finish_turn(events):
+            if content is not None:
+                candidate = runner.last_run_directory / "workspace" / NOTES_OUTPUT_NAME
+                candidate.write_bytes(content.encode("utf-8") if isinstance(content, str) else content)
+            original_wait(events)
+
+        return patch.object(runner, "_wait_for_turn", side_effect=finish_turn)
 
     def _make_runner(
         self,

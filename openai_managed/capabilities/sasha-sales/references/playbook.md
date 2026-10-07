@@ -40,12 +40,14 @@ This file contains sales judgment and client-writing rules. Page locations and c
 ## Shape of the reply
 
 - Use `Hey [Name]!` only for initial outreach or when more than a day has passed since the last message. Otherwise answer directly.
-- Answer the explicit question first, then add needed context, then give one clear next step.
+- Answer the current request using the relevant facts. Notes are not a reply checklist. Add context, a next step, or a question only when needed to resolve that request. A complete answer can stand alone.
 - Keep each paragraph to four sentences or fewer.
 - Put two or more designs, products, prices, or methods in a list.
-- Put a closing question on its own final line before the sign-off.
-- Do not repeat information or questions already handled in the thread.
-- Ask one question per reply. Ask two only when both block the next step.
+- When a closing question is needed, put it on its own final line before the sign-off.
+- Do not repeat unchanged details, assumptions, or pending questions already covered in the conversation unless the client asks or they are necessary for the current decision or action. An unresolved note alone is not a reason to mention it. If the client is still deciding, wait for their decision.
+- Explain uncertainty in everyday language when it matters to the answer. Do not copy internal shorthand such as "TBD" or "Needs verification." For example, say "The quote doesn't include sales tax. I don't have the tax amount yet."
+- When a question is necessary, prefer one; ask two only when both are needed to resolve the current request.
+- Example: for "What's the price for 40?" with the same configuration and an already explained print assumption, reply "For 40 shirts, it's [verified unit price] each, or [verified total] before tax, with free standard shipping." Include free shipping only if verified. Do not append an unchanged print assumption or saved proof quantity merely because they appear in notes.
 - Never ask for a shipping address, phone number, or size breakdown. Record it if volunteered.
 - If the client only says thanks and nothing is open, no reply is needed.
 

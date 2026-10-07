@@ -5,7 +5,7 @@ from email.message import Message
 from pathlib import Path
 from unittest.mock import patch
 
-from openai_managed.attachments import fetch_to_directory
+from openai_managed.attachments import fetch_to_directory, restore_saved_attachments
 
 
 class FakeResponse(io.BytesIO):
@@ -89,6 +89,24 @@ class AttachmentDownloadTests(unittest.TestCase):
     def test_rejects_unsupported_extension(self):
         with self.assertRaisesRegex(ValueError, "not a file type we accept"):
             fetch_to_directory(["https://example.test/page.txt"], self.target)
+
+    @patch("openai_managed.attachments.urllib.request.urlopen")
+    def test_restores_saved_files_without_overwriting_new_uploads(self, urlopen):
+        urlopen.side_effect = [
+            FakeResponse(b"new", "image/svg+xml"),
+            OSError("expired"),
+            FakeResponse(b"old", "image/svg+xml"),
+        ]
+        files = fetch_to_directory(["https://example.test/new.svg"], self.target)
+        restore_saved_attachments(
+            ["https://example.test/expired.svg", "https://example.test/old.svg"],
+            self.target, files,
+        )
+        self.assertEqual(files.unavailable_names, ["expired.svg"])
+        self.assertEqual([item.handle for item in files.items], ["file_1", "file_2"])
+        self.assertEqual([item.path.read_bytes() for item in files.items], [b"new", b"old"])
+        self.assertFalse(files.items[0].from_previous_turn)
+        self.assertTrue(files.items[1].from_previous_turn)
 
 
 if __name__ == "__main__":

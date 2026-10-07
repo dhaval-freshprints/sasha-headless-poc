@@ -138,12 +138,78 @@ runs/openai-managed/conversations/DEAL<deal_id>_conversation.json
 
 Downloaded client artwork is removed after the turn.
 
+## Deal notes
+
+Each deal has one shared plain-English Markdown notebook:
+
+```text
+runs/openai-managed/notes/SASHANOTES01_deal_<deal_id>_notes.md
+```
+
+The location follows `OPENAI_MANAGED_RUNS_DIRECTORY` when configured. Each run
+receives the current notebook alongside the full conversation history. Sasha
+updates explicitly stated client preferences, current choices and saved state,
+actual client requests that remain incomplete, and uncertainties relevant to the
+current request. Each bullet is one short factual statement, normally up to 20
+words. Notes describe the deal; behavioral instructions, generic checks, and reply
+wording belong in the playbook. Unknowns do not automatically become tasks, and a
+client considering options does not create a follow-up obligation.
+Notes omit source appendices, quotations, task IDs, activity history, and resolved
+technical details; conversation and run logs retain the evidence. A short proof
+ID can identify the relevant record. Existing verbose notes are shortened during
+their next successful update. Keep a fact only when forgetting it could cause a
+misunderstanding or an incorrect action, including facts needed for active
+comparisons. Notes are not a reply checklist: Sasha answers the current request,
+keeps irrelevant unresolved details internal, and explains relevant uncertainty
+in everyday language rather than copying shorthand such as "TBD."
+Corrections replace old decisions, completed work leaves the pending list, and
+changes to an order require dependent quotes to be checked again. Existing
+playbook rules still determine when to check live prices, stock, dates, and links.
+Drafted messages remain drafts; notes do not send messages or schedule follow-ups.
+
+An `Attachments` section keeps the original client-provided URLs as one-line
+filename/link entries. The runner preserves these references when it updates the
+notebook, even if Sasha leaves them out of its revision. It ignores attachment
+URLs invented in the revision. Later turns download saved attachments again and
+provide fresh local upload paths, so clients do not need to resend working links.
+Newly supplied files and restored files are labeled separately. Exact duplicate
+URLs are downloaded once per turn. Downloads are still removed after each turn.
+If a saved link expires or cannot be downloaded, the run continues with a warning;
+Sasha asks for a fresh link only when that artwork is needed. Original URLs,
+including signed query strings, remain intact in the local notebook.
+
+The runner validates Sasha's temporary revision and replaces the notebook only
+after a successful turn and conversation save. It removes the temporary output
+afterward. There are no dedicated notes snapshots or archived notebook versions.
+Existing task and session logs still record the inputs and tool activity as usual.
+
+Missing notes start empty. Unreadable existing notes are preserved and disable
+notes updates for that run. Missing, empty, invalid UTF-8, non-regular, or larger
+than 16 KiB revisions produce a progress warning and leave previous notes intact;
+they do not discard an otherwise successful sales draft. This checks file
+integrity, not whether every note is factually correct.
+
+The POC expects runs for the same deal to be sequential. It creates no lock files
+and does not reject overlapping runs. Notes and conversation files are still
+replaced atomically, but overlapping runs can overwrite each other's updates.
+
+To check model behavior manually on a QA deal, run a conversation that introduces
+a navy preference and an estimated quantity, then changes the preference to black
+and confirms the quantity. Inspect the single notebook after each run: resolved
+questions should disappear, previous quotes should not be reused for a changed
+configuration, current stock should still require verification, and generated
+replies should never be recorded as delivered. Use an isolated runs directory for
+test conversations and explicitly request no saved QA changes when only testing
+notes. Automated tests use simulated agent output and do not prove these semantic
+behaviors.
+
 ## OpenAI-managed source
 
 - `openai_managed/runner.py`: session lifecycle and result collection
 - `openai_managed/sandbox.py`: disposable Docker environment
 - `openai_managed/setup_auth.js`: QA authentication inside the container
 - `openai_managed/conversation.py`: per-deal conversation history
+- `openai_managed/notes.py`: shared Markdown notebooks
 - `openai_managed/attachments.py`: temporary client artwork downloads
 - `openai_managed/SASHA01_agent_instructions.md`: stable agent boundaries
 - `openai_managed/capabilities/sasha-sales/`: Sasha skill and references
@@ -165,8 +231,8 @@ selected text, and verifies the saved proof.
 Each run saves `workspace/runtime.json` with its loaded runner version, model,
 and agent instructions, plus the actual `workspace/TASK.md`. Screenshots are in
 `workspace/artifacts`. Restart the webapp after Python changes; the documented
-server command does not enable automatic reload. The browser-only runtime is
-`DTEDIT02-browser-only`.
+server command does not enable automatic reload. The current runner version is
+`SASHANOTES01-deal-notes`.
 
 Live QA smoke tests for the kept-open browser sign in to Fresh Prints QA inside
 the managed Docker image. They are skipped unless `SASHA_LIVE_QA=1`:
