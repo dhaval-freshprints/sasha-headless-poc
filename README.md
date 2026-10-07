@@ -203,6 +203,20 @@ test conversations and explicitly request no saved QA changes when only testing
 notes. Automated tests use simulated agent output and do not prove these semantic
 behaviors.
 
+## Follow-up POC
+
+The web console can start a **scheduled follow-up** on a deal page. You choose:
+
+- stage `1`–`5` (maps to skill `followup-stage-N`)
+- mocked as-of date
+- optional days since the client last replied
+
+The same OpenAI managed runner and Docker browser path run. TASK names the
+follow-up skill instead of `sasha-sales`. Output is still one `message_html`
+draft. Stage guidance was distilled from Fresh Prints V3 follow-up prompts into
+lean Codex skills under `openai_managed/capabilities/followup-stage-*/`; it is
+not a LangGraph or LangSmith Hub port.
+
 ## OpenAI-managed source
 
 - `openai_managed/runner.py`: session lifecycle and result collection
@@ -212,7 +226,8 @@ behaviors.
 - `openai_managed/notes.py`: shared Markdown notebooks
 - `openai_managed/attachments.py`: temporary client artwork downloads
 - `openai_managed/SASHA01_agent_instructions.md`: stable agent boundaries
-- `openai_managed/capabilities/sasha-sales/`: Sasha skill and references
+- `openai_managed/capabilities/sasha-sales/`: Sasha sales skill and references
+- `openai_managed/capabilities/followup-stage-*/`: scheduled follow-up skills
 - `scripts/run_openai_managed_sasha.py`: CLI entry point
 
 ## Tests

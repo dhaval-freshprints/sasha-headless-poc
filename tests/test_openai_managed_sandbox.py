@@ -59,7 +59,7 @@ class DockerSandboxTests(unittest.TestCase):
         )
         self.assertEqual(task_data["client_message"], "What's the price for 40?")
 
-    def test_copies_sasha_skill_into_run_workspace(self):
+    def test_copies_all_capabilities_into_run_workspace(self):
         sandbox = DockerSandbox(self.config, "executor-key")
         task = SashaTask(
             "303839",
@@ -76,6 +76,14 @@ class DockerSandboxTests(unittest.TestCase):
         self.assertTrue((skill_directory / "SKILL.md").is_file())
         self.assertTrue((skill_directory / "references" / "playbook.md").is_file())
         self.assertTrue((skill_directory / "references" / "workplace.md").is_file())
+        for stage in range(1, 6):
+            followup = (
+                handle.workspace_directory
+                / "capabilities"
+                / f"followup-stage-{stage}"
+                / "SKILL.md"
+            )
+            self.assertTrue(followup.is_file(), followup)
 
     @patch("openai_managed.sandbox.subprocess.Popen")
     @patch("openai_managed.sandbox.subprocess.run")

@@ -51,6 +51,10 @@ This file contains sales judgment and client-writing rules. Page locations and c
 - Never ask for a shipping address, phone number, or size breakdown. Record it if volunteered.
 - If the client only says thanks and nothing is open, no reply is needed.
 
+## Scheduled follow-ups
+
+Scheduled follow-ups use skill `followup-stage-N` and the timing mocks supplied in TASK. Voice, HTML format, evidence, and CRM safety still come from this playbook.
+
 ## Initial outreach
 
 On the deal page, identify the client's first name, proof state, and rush state. Inspect the garment and occasion only when a proof exists. If the deal page shows no proof, treat the deal as having no proof. Do not search elsewhere, open the quoter, or change anything.
@@ -144,3 +148,4 @@ Never mention the client's organization, account, school, club, association, or 
 ## Samples
 
 - Samples are free and blank. Do not quote a sample price or promise the design will be printed on it.
+- Offering a sample needs no manager approval when its value is under $50 and no sample has been sent to this client in the last 14 days (check deal notes and conversation history). Otherwise, flag that manager approval is needed instead of promising the sample.

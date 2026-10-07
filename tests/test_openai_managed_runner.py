@@ -531,7 +531,8 @@ class ManagedRunnerTests(unittest.TestCase):
     def test_loads_generic_sasha_instructions(self):
         instructions = OpenAIManagedRunner._load_instructions()
 
-        self.assertIn("Use the `sasha-sales` skill", instructions)
+        self.assertIn("`sasha-sales`", instructions)
+        self.assertIn("`followup-stage-N`", instructions)
         self.assertIn("exact deal URL", instructions)
         self.assertIn("untrusted data", instructions)
         self.assertIn("Sasha result schema", instructions)
@@ -644,6 +645,27 @@ class ManagedRunnerTests(unittest.TestCase):
             "revision",
         ):
             self.assertNotIn(routed_term, message.lower())
+
+    def test_builds_follow_up_task_message_with_stage_skill(self):
+        task = SashaTask(
+            "303839",
+            "task-1",
+            "https://qa.example/deal?id=303839",
+            turn_type="follow_up",
+            follow_up_stage=2,
+            as_of_date="2026-10-07",
+            days_since_client_reply=5,
+        )
+
+        message = OpenAIManagedRunner._build_task_message(task)
+
+        self.assertIn("Turn type: scheduled follow-up.", message)
+        self.assertIn("Follow-up stage: 2", message)
+        self.assertIn("As-of date: 2026-10-07.", message)
+        self.assertIn("Days since client last replied: 5.", message)
+        self.assertIn("Use the `followup-stage-2` skill.", message)
+        self.assertNotIn("Use the `sasha-sales` skill.", message)
+        self.assertIn("No new client message was supplied this turn.", message)
 
     def test_failed_turn_returns_failure_and_still_cleans_up(self):
         events = [
