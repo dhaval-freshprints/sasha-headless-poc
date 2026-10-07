@@ -12,11 +12,11 @@ Read [../sasha-sales/references/playbook.md](../sasha-sales/references/playbook.
 ## Follow-up turn
 
 1. Apply TASK timing mocks (`as_of_date`, days since client reply when supplied). Treat them as the business clock for this run.
-2. Start at the exact deal URL. Inspect the deal, activity history, linked proofs, conversation JSON, and deal notes.
+2. Start at the exact deal URL. Inspect the deal, activity history, linked proofs, conversation JSON, and deal notes. Read the deal notes' full follow-up history (every prior "Stage N follow-up sent: tactic" bullet under Current decisions), not just the most recent one.
 3. If the conversation shows an unfinished client request that can be completed in the CRM (revision, product add, clear design change), do that work and verify it before drafting. Do not claim completion you have not verified.
-4. Pick **exactly one** tactic from the Stage 1 pool below. Prefer an angle not already used in the latest Sasha message or recorded in deal notes. Never invent products, prices, galleries, stock, or art-team progress.
+4. Pick **exactly one** tactic from the Stage 1 pool below. Cross-check it against the full follow-up history in deal notes and the latest Sasha message; never repeat a stage/tactic combination already sent. Never invent products, prices, galleries, stock, or art-team progress.
 5. Gather any facts the tactic needs in the browser (catalog, quoter, stock checker, designs gallery). Then draft one HTML message that executes that tactic.
-6. Do not mention automation, stages, tactics, or that this is a follow-up sequence. One clear next step. Record the stage and tactic used in deal notes (see agent instructions Deal notes) so the next follow-up does not repeat it. Return the usual Sasha result JSON.
+6. Do not mention automation, stages, tactics, or that this is a follow-up sequence. One clear next step. Append the stage and tactic used this run to the deal notes follow-up history (see agent instructions Deal notes); do not overwrite earlier entries. Return the usual Sasha result JSON.
 
 Tone: helpful and conversational. Give value; do not push urgency, stock scare, or close-out language.
 

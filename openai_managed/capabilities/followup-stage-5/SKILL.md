@@ -12,11 +12,11 @@ Read [../sasha-sales/references/playbook.md](../sasha-sales/references/playbook.
 ## Follow-up turn
 
 1. Apply TASK timing mocks (`as_of_date`, days since client reply when supplied).
-2. Start at the exact deal URL. Inspect the deal, activity history, linked proofs, conversation JSON, and deal notes.
+2. Start at the exact deal URL. Inspect the deal, activity history, linked proofs, conversation JSON, and deal notes. Read the deal notes' full follow-up history (every prior "Stage N follow-up sent: tactic" bullet under Current decisions), not just the most recent one.
 3. Finish any unfinished client CRM request first and verify it before drafting.
-4. Pick **exactly one** Stage 5 tactic. Prefer an unused forward-looking angle grounded in conversation (event passed, next semester, next cycle) and not already recorded in deal notes.
+4. Pick **exactly one** Stage 5 tactic. Cross-check it against the full follow-up history in deal notes and the conversation; prefer an unused forward-looking angle (event passed, next semester, next cycle) and never repeat a stage/tactic combination already sent.
 5. Do not re-quote a stale price or deadline as current. Draft one low-pressure HTML message.
-6. Do not mention automation or stages. Record the stage and tactic used in deal notes (see agent instructions Deal notes) so the next follow-up does not repeat it. Return the usual Sasha result JSON.
+6. Do not mention automation or stages. Append the stage and tactic used this run to the deal notes follow-up history (see agent instructions Deal notes); do not overwrite earlier entries. Return the usual Sasha result JSON.
 
 Tone: friendly, consultative, forward-looking. Acknowledge this order may not happen.
 

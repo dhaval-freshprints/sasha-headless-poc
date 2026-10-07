@@ -12,11 +12,11 @@ Read [../sasha-sales/references/playbook.md](../sasha-sales/references/playbook.
 ## Follow-up turn
 
 1. Apply TASK timing mocks (`as_of_date`, days since client reply when supplied).
-2. Start at the exact deal URL. Inspect the deal, activity history, linked proofs, conversation JSON, and deal notes.
+2. Start at the exact deal URL. Inspect the deal, activity history, linked proofs, conversation JSON, and deal notes. Read the deal notes' full follow-up history (every prior "Stage N follow-up sent: tactic" bullet under Current decisions), not just the most recent one.
 3. Finish any unfinished client CRM request first and verify it before drafting.
-4. Ask whether a truthful salvage still exists (alternative, expedited, Flash). If not, ask if the order is still alive. Pick **exactly one** Stage 4 tactic, preferring one not already recorded in deal notes (for example, do not use `offer_someone_else` before notes show `close_the_loop` was tried).
+4. Ask whether a truthful salvage still exists (alternative, expedited, Flash). If not, ask if the order is still alive. Pick **exactly one** Stage 4 tactic. Cross-check it against the full follow-up history in deal notes; never repeat a stage/tactic combination already sent (for example, do not use `offer_someone_else` unless the history shows `close_the_loop` was already tried).
 5. Verify delivery and product facts in the quoter or stock checker before promising dates or Flash swaps. Draft one concise HTML message.
-6. Do not mention automation or stages. No guilt and no false urgency. Record the stage and tactic used in deal notes (see agent instructions Deal notes) so the next follow-up does not repeat it. Return the usual Sasha result JSON.
+6. Do not mention automation or stages. No guilt and no false urgency. Append the stage and tactic used this run to the deal notes follow-up history (see agent instructions Deal notes); do not overwrite earlier entries. Return the usual Sasha result JSON.
 
 ## Stage 4 tactics — pick one
 
