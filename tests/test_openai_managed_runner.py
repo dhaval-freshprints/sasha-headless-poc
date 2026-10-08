@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 from openai_managed.attachments import Attachment, AttachmentSet
 from openai_managed.conversation import ConversationStore
+from tests.test_openai_managed_environment import APPLICATION_VALUES, application_environment
 from openai_managed.notes import (
     NOTES_OUTPUT_NAME, NotesStore, saved_attachment_urls, with_attachment_links,
 )
@@ -286,6 +287,7 @@ class ManagedRunnerTests(unittest.TestCase):
 
     def test_environment_defaults_to_twenty_minute_turn_limit(self):
         environment = {
+            **APPLICATION_VALUES,
             "OPENAI_EXECUTOR_API_KEY": "executor-key",
             "FP_LOGIN_URL": "https://qa.example/login",
             "FP_USER": "qa-user",
@@ -302,7 +304,7 @@ class ManagedRunnerTests(unittest.TestCase):
         runner, sessions, sandboxes = self._make_runner(progress_messages)
 
         result = runner.run(
-            SashaTask("303839", "task-1", "https://qa.example/deal?id=303839")
+            SashaTask("303839", "task-1", "https://qa.example/deal?id=303839", workflow="outreach")
         )
 
         self.assertEqual(result.status, "completed")
@@ -317,6 +319,9 @@ class ManagedRunnerTests(unittest.TestCase):
         self.assertTrue((workspace / "session-items.json").is_file())
         self.assertTrue((workspace / "executor.log").is_file())
         self.assertTrue((workspace / "result.json").is_file())
+        runtime = json.loads((workspace / "runtime.json").read_text())
+        self.assertEqual(runtime["application"], application_environment().to_dict())
+        self.assertNotIn("qa-password", json.dumps(runtime))
         self.assertNotIn(CANCEL_EVENT, sessions.events.sent)
         self.assertEqual(sessions.operations, ["delete", "stop"])
         cleanup = json.loads((workspace / "cleanup.json").read_text())
@@ -325,6 +330,16 @@ class ManagedRunnerTests(unittest.TestCase):
         self.assertTrue(cleanup["session_deleted"])
         self.assertFalse(cleanup["cancel_sent"])
         self.assertEqual(cleanup["errors"], [])
+
+    def test_wrong_environment_is_rejected_before_loading_context_or_starting_browser(self):
+        runner, sessions, sandboxes = self._make_runner([])
+        result = runner.run(SashaTask(
+            "303839", "task-1", "https://another.example/deal?id=303839", workflow="outreach",
+        ))
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.failure_code, "environment_error")
+        self.assertEqual(sandboxes, [])
+        self.assertIsNone(runner.last_conversation_file)
 
     @patch("openai_managed.runner.fetch_to_directory")
     def test_supplied_artwork_is_staged_for_astra_then_removed(self, fetch):
@@ -346,6 +361,7 @@ class ManagedRunnerTests(unittest.TestCase):
                 "https://qa.example/deal?id=303839",
                 "Put my logo on the back.",
                 file_urls=(remote_url,),
+                workflow="client-response-orchestrator",
             )
         )
 
@@ -371,6 +387,7 @@ class ManagedRunnerTests(unittest.TestCase):
                 "https://qa.example/deal?id=303839",
                 "Put my logo on the back.",
                 file_urls=(remote_url,),
+                workflow="client-response-orchestrator",
             )
         )
 
@@ -386,13 +403,13 @@ class ManagedRunnerTests(unittest.TestCase):
         runner, _, _ = self._make_runner(progress_messages)
 
         runner.run(
-            SashaTask("303839", "task-1", "https://qa.example/deal?id=303839")
+            SashaTask("303839", "task-1", "https://qa.example/deal?id=303839", workflow="outreach")
         )
 
         output = "\n".join(progress_messages)
         self.assertIn("[1/7] Preparing disposable Sasha container", output)
-        self.assertIn("[2/7] Signing into Fresh Prints QA", output)
-        self.assertIn("Fresh Prints QA authentication succeeded", output)
+        self.assertIn("[2/7] Signing into Fresh Prints (qa)", output)
+        self.assertIn("Fresh Prints authentication succeeded", output)
         self.assertIn("[5/7] Sasha is working on the task", output)
         self.assertIn("Sasha: I am inspecting the deal and its proof.", output)
         self.assertIn("Sasha tool step 1 started", output)
@@ -409,6 +426,7 @@ class ManagedRunnerTests(unittest.TestCase):
                 "task-1",
                 "https://qa.example/deal?id=303839",
                 "Show me green polos.",
+                workflow="client-response-orchestrator",
             )
         )
         second_result = runner.run(
@@ -417,6 +435,7 @@ class ManagedRunnerTests(unittest.TestCase):
                 "task-2",
                 "https://qa.example/deal?id=303839",
                 "I want the second one.",
+                workflow="client-response-orchestrator",
             )
         )
 
@@ -465,6 +484,7 @@ class ManagedRunnerTests(unittest.TestCase):
                 "task-2",
                 "https://qa.example/deal?id=303839",
                 "New question",
+                workflow="client-response-orchestrator",
             )
         )
 
@@ -478,7 +498,7 @@ class ManagedRunnerTests(unittest.TestCase):
         runner, _, sandboxes = self._make_runner([])
 
         result = runner.run(
-            SashaTask("303839", "task-1", "https://qa.example/deal?id=303839")
+            SashaTask("303839", "task-1", "https://qa.example/deal?id=303839", workflow="outreach")
         )
 
         self.assertEqual(result.status, "failed")
@@ -494,7 +514,7 @@ class ManagedRunnerTests(unittest.TestCase):
         )
 
         runner.run(
-            SashaTask("303839", "task-1", "https://qa.example/deal?id=303839")
+            SashaTask("303839", "task-1", "https://qa.example/deal?id=303839", workflow="outreach")
         )
 
         self.assertEqual(runner.last_cost_estimate.status, "estimated")
@@ -508,7 +528,7 @@ class ManagedRunnerTests(unittest.TestCase):
         sessions.items.commentary_count = 100
 
         result = runner.run(
-            SashaTask("303839", "task-1", "https://qa.example/deal?id=303839")
+            SashaTask("303839", "task-1", "https://qa.example/deal?id=303839", workflow="outreach")
         )
 
         self.assertEqual(result.status, "completed")
@@ -560,9 +580,9 @@ class ManagedRunnerTests(unittest.TestCase):
             repository_root
             / "openai_managed"
             / "capabilities"
-            / "sasha-sales"
+            / "client-response-orchestrator"
             / "references"
-            / "playbook.md"
+            / "client_response_crafting.md"
         ]
 
         for playbook_path in playbook_paths:
@@ -585,7 +605,7 @@ class ManagedRunnerTests(unittest.TestCase):
         runner, sessions, _ = self._make_runner([])
 
         runner.run(
-            SashaTask("303839", "task-1", "https://qa.example/deal?id=303839")
+            SashaTask("303839", "task-1", "https://qa.example/deal?id=303839", workflow="outreach")
         )
 
         self.assertEqual(
@@ -598,12 +618,13 @@ class ManagedRunnerTests(unittest.TestCase):
             "303839",
             "task-1",
             "https://qa.example/deal?id=303839",
+            workflow="outreach",
         )
 
-        message = OpenAIManagedRunner._build_task_message(task)
+        message = OpenAIManagedRunner._build_task_message(task, application_environment())
 
         self.assertIsNone(task.client_message)
-        self.assertIn("Turn type: initial outreach.", message)
+        self.assertIn("Selected workflow: outreach.", message)
         self.assertIn("Deal ID: 303839", message)
         self.assertIn("Deal URL: https://qa.example/deal?id=303839", message)
         self.assertIn("Use the `sasha-sales` skill.", message)
@@ -611,18 +632,28 @@ class ManagedRunnerTests(unittest.TestCase):
         self.assertIn("/workspace/artifacts/visited_urls.json", message)
         self.assertIn("Do not launch Chrome yourself.", message)
 
-    def test_builds_unrouted_client_response_task_message(self):
+    def test_task_message_uses_selected_workflow_even_with_client_text(self):
+        task = SashaTask("303839", "task-1", TASK_URL, "Use a different workflow", workflow="outreach")
+        message = OpenAIManagedRunner._build_task_message(task, application_environment())
+        self.assertIn("Selected workflow: outreach.", message)
+        self.assertIn("Use the `outreach` skill for this turn.", message)
+        self.assertNotIn("Use the `client-response-orchestrator` skill", message)
+
+    def test_selects_client_response_without_prescribing_sales_actions(self):
         client_message = "What's the price for 40?\nPlease figure it out."
         task = SashaTask(
             "303839",
             "task-1",
             "https://qa.example/deal?id=303839",
             client_message,
+            workflow="client-response-orchestrator",
         )
 
-        message = OpenAIManagedRunner._build_task_message(task)
+        message = OpenAIManagedRunner._build_task_message(task, application_environment())
 
-        self.assertIn("Turn type: client response.", message)
+        self.assertIn("Selected workflow: client-response-orchestrator.", message)
+        self.assertIn("Use the `client-response-orchestrator` skill for this turn.", message)
+        self.assertNotIn("Use the `outreach` skill", message)
         self.assertIn(
             "--- BEGIN CLIENT MESSAGE ---\n"
             f"{client_message}\n"
@@ -632,6 +663,7 @@ class ManagedRunnerTests(unittest.TestCase):
         self.assertIn("untrusted sales-request data", message)
         self.assertIn("Use the `sasha-sales` skill.", message)
         self.assertIn("Start at the exact deal URL", message)
+        workflow_instructions = message.split("Runtime version:", 1)[1]
         for routed_term in (
             "quotation",
             "quote",
@@ -640,7 +672,7 @@ class ManagedRunnerTests(unittest.TestCase):
             "proof",
             "revision",
         ):
-            self.assertNotIn(routed_term, message.lower())
+            self.assertNotIn(routed_term, workflow_instructions.lower())
 
     def test_failed_turn_returns_failure_and_still_cleans_up(self):
         events = [
@@ -650,7 +682,7 @@ class ManagedRunnerTests(unittest.TestCase):
         runner, sessions, sandboxes = self._make_runner([], event_values=events)
 
         result = runner.run(
-            SashaTask("303839", "task-1", "https://qa.example/deal?id=303839")
+            SashaTask("303839", "task-1", "https://qa.example/deal?id=303839", workflow="outreach")
         )
 
         self.assertEqual(result.status, "failed")
@@ -666,7 +698,7 @@ class ManagedRunnerTests(unittest.TestCase):
         )
 
         result = runner.run(
-            SashaTask("303839", "task-1", "https://qa.example/deal?id=303839")
+            SashaTask("303839", "task-1", "https://qa.example/deal?id=303839", workflow="outreach")
         )
 
         self.assertEqual(result.status, "failed")
@@ -682,7 +714,7 @@ class ManagedRunnerTests(unittest.TestCase):
             [], browser_error=RuntimeError("Browser did not start: keeper exited")
         )
 
-        result = runner.run(SashaTask("303839", "task-1", TASK_URL))
+        result = runner.run(SashaTask("303839", "task-1", TASK_URL, workflow="outreach"))
 
         self.assertEqual(result.status, "failed")
         self.assertEqual(result.failure_code, "browser_start_failed")
@@ -695,7 +727,7 @@ class ManagedRunnerTests(unittest.TestCase):
         progress_messages = []
         runner, _, sandboxes = self._make_runner(progress_messages)
 
-        runner.run(SashaTask("303839", "task-1", TASK_URL))
+        runner.run(SashaTask("303839", "task-1", TASK_URL, workflow="outreach"))
 
         self.assertTrue(sandboxes[0].browser_started)
         self.assertIn(
@@ -752,7 +784,7 @@ class ManagedRunnerTests(unittest.TestCase):
         progress_messages = []
         runner, _, _ = self._make_runner(progress_messages, event_values=events)
 
-        runner.run(SashaTask("303839", "task-1", TASK_URL))
+        runner.run(SashaTask("303839", "task-1", TASK_URL, workflow="outreach"))
 
         browser_lines = [
             line.strip()
@@ -776,7 +808,7 @@ class ManagedRunnerTests(unittest.TestCase):
         )
 
         result = runner.run(
-            SashaTask("303839", "task-1", "https://qa.example/deal?id=303839")
+            SashaTask("303839", "task-1", "https://qa.example/deal?id=303839", workflow="outreach")
         )
 
         self.assertEqual(result.status, "failed")
@@ -795,7 +827,7 @@ class ManagedRunnerTests(unittest.TestCase):
         )
 
         result = runner.run(
-            SashaTask("303839", "task-1", "https://qa.example/deal?id=303839")
+            SashaTask("303839", "task-1", "https://qa.example/deal?id=303839", workflow="outreach")
         )
 
         self.assertEqual(result.status, "failed")
@@ -808,7 +840,7 @@ class ManagedRunnerTests(unittest.TestCase):
         runner, sessions, _ = self._make_runner(None)
 
         result = runner.run(
-            SashaTask("303839", "task-1", "https://qa.example/deal?id=303839")
+            SashaTask("303839", "task-1", "https://qa.example/deal?id=303839", workflow="outreach")
         )
 
         self.assertEqual(result.status, "completed")
@@ -827,7 +859,7 @@ class ManagedRunnerTests(unittest.TestCase):
         )
 
         result = runner.run(
-            SashaTask("303839", "task-1", "https://qa.example/deal?id=303839")
+            SashaTask("303839", "task-1", "https://qa.example/deal?id=303839", workflow="outreach")
         )
 
         self.assertEqual(result.status, "completed")
@@ -845,7 +877,7 @@ class ManagedRunnerTests(unittest.TestCase):
         with patch.object(sessions, "retrieve", side_effect=[
             SimpleNamespace(usage=None), SimpleNamespace(usage=None), available,
         ]) as retrieve:
-            result = runner.run(SashaTask("303839", "task-1", "https://qa.example/deal?id=303839"))
+            result = runner.run(SashaTask("303839", "task-1", "https://qa.example/deal?id=303839", workflow="outreach"))
 
         self.assertEqual(result.status, "completed")
         self.assertEqual(retrieve.call_count, 3)
@@ -867,7 +899,7 @@ class ManagedRunnerTests(unittest.TestCase):
             self.assertEqual(sessions.deleted, "")
             return SimpleNamespace(usage=None)
         with patch.object(sessions, "retrieve", side_effect=missing_usage) as retrieve:
-            result = runner.run(SashaTask("303839", "task-1", "https://qa.example/deal?id=303839"))
+            result = runner.run(SashaTask("303839", "task-1", "https://qa.example/deal?id=303839", workflow="outreach"))
 
         self.assertEqual(result.status, "completed")
         self.assertEqual(retrieve.call_count, 5)
@@ -885,7 +917,7 @@ class ManagedRunnerTests(unittest.TestCase):
             stream_error=ConnectionError("stream dropped"),
         )
 
-        result = runner.run(SashaTask("303839", "task-1", TASK_URL))
+        result = runner.run(SashaTask("303839", "task-1", TASK_URL, workflow="outreach"))
 
         self.assertEqual(result.status, "failed")
         self.assertEqual(result.failure_code, "managed_runner_error")
@@ -917,7 +949,7 @@ class ManagedRunnerTests(unittest.TestCase):
         )
 
         started = time.monotonic()
-        result = runner.run(SashaTask("303839", "task-1", TASK_URL))
+        result = runner.run(SashaTask("303839", "task-1", TASK_URL, workflow="outreach"))
 
         self.assertLess(time.monotonic() - started, 5)
         self.assertEqual(result.failure_code, "turn_not_completed")
@@ -940,7 +972,7 @@ class ManagedRunnerTests(unittest.TestCase):
         )
 
         started = time.monotonic()
-        result = runner.run(SashaTask("303839", "task-1", TASK_URL))
+        result = runner.run(SashaTask("303839", "task-1", TASK_URL, workflow="outreach"))
 
         self.assertLess(time.monotonic() - started, 5)
         self.assertEqual(result.failure_code, "managed_runner_error")
@@ -958,7 +990,7 @@ class ManagedRunnerTests(unittest.TestCase):
         )
 
         started = time.monotonic()
-        result = runner.run(SashaTask("303839", "task-1", TASK_URL))
+        result = runner.run(SashaTask("303839", "task-1", TASK_URL, workflow="outreach"))
 
         self.assertLess(time.monotonic() - started, 5)
         self.assertEqual(result.failure_code, "managed_runner_error")
@@ -976,7 +1008,7 @@ class ManagedRunnerTests(unittest.TestCase):
             delete_outcomes=[FakeConflictError("not settled"), FakeConflictError("not settled")],
         )
 
-        result = runner.run(SashaTask("303839", "task-1", TASK_URL))
+        result = runner.run(SashaTask("303839", "task-1", TASK_URL, workflow="outreach"))
 
         self.assertEqual(result.status, "completed")
         self.assertEqual([call.args[0] for call in sleep.call_args_list], [1, 2])
@@ -999,7 +1031,7 @@ class ManagedRunnerTests(unittest.TestCase):
             delete_outcomes=[FakeConflictError("not settled")] * 5,
         )
 
-        result = runner.run(SashaTask("303839", "task-1", TASK_URL))
+        result = runner.run(SashaTask("303839", "task-1", TASK_URL, workflow="outreach"))
 
         self.assertEqual(result.failure_code, "turn_not_completed")
         self.assertTrue(result.failure_message.startswith("agent.session.turn.failed; "))
@@ -1021,7 +1053,7 @@ class ManagedRunnerTests(unittest.TestCase):
             delete_outcomes=[RuntimeError("permission denied")],
         )
 
-        result = runner.run(SashaTask("303839", "task-1", TASK_URL))
+        result = runner.run(SashaTask("303839", "task-1", TASK_URL, workflow="outreach"))
 
         self.assertEqual(result.failure_code, "turn_not_completed")
         self.assertIn("session deletion: permission denied", result.failure_message)
@@ -1038,7 +1070,7 @@ class ManagedRunnerTests(unittest.TestCase):
             delete_outcomes=[RuntimeError("delete rejected")],
         )
 
-        result = runner.run(SashaTask("303839", "task-1", TASK_URL))
+        result = runner.run(SashaTask("303839", "task-1", TASK_URL, workflow="outreach"))
 
         self.assertEqual(result.failure_code, "managed_runner_error")
         self.assertIn("exceeded its time limit", result.failure_message)
@@ -1055,7 +1087,7 @@ class ManagedRunnerTests(unittest.TestCase):
             send_error=RuntimeError("response lost"),
         )
 
-        result = runner.run(SashaTask("303839", "task-1", TASK_URL))
+        result = runner.run(SashaTask("303839", "task-1", TASK_URL, workflow="outreach"))
 
         self.assertEqual(result.failure_code, "managed_runner_error")
         self.assertIn("response lost", result.failure_message)
@@ -1069,7 +1101,7 @@ class ManagedRunnerTests(unittest.TestCase):
         )
 
         result = runner.run(
-            SashaTask("303839", "task-1", TASK_URL, "Show me green polos.")
+            SashaTask("303839", "task-1", TASK_URL, "Show me green polos.", workflow="client-response-orchestrator")
         )
 
         self.assertEqual(result.status, "completed")
@@ -1095,11 +1127,11 @@ class ManagedRunnerTests(unittest.TestCase):
         runner, _, sandboxes = self._make_runner([])
         notes = NotesStore(self.root / "runs", "303839")
         with self._notes_output(runner, "## Current decisions\n- White shirt."):
-            first = runner.run(SashaTask("303839", "task-1", TASK_URL, file_urls=(url, url)))
+            first = runner.run(SashaTask("303839", "task-1", TASK_URL, file_urls=(url, url), workflow="outreach"))
         self.assertEqual(first.status, "completed")
         self.assertEqual(saved_attachment_urls(notes.load()), [url])
         with self._notes_output(runner, "## Current decisions\n- Black shirt."):
-            second = runner.run(SashaTask("303839", "task-2", TASK_URL, "Reuse the logo."))
+            second = runner.run(SashaTask("303839", "task-2", TASK_URL, "Reuse the logo.", workflow="client-response-orchestrator"))
         self.assertEqual(second.status, "completed")
         self.assertEqual(urlopen.call_count, 2)
         self.assertEqual(urlopen.call_args.args[0].full_url, url)
@@ -1107,7 +1139,7 @@ class ManagedRunnerTests(unittest.TestCase):
         self.assertEqual(saved_attachment_urls(notes.load()), [url])
         for sandbox in sandboxes:
             self.assertFalse((sandbox.handle.workspace_directory / "client-files").exists())
-        self.assertEqual(list((self.root / "runs").rglob("SASHANOTES01*.md")), [notes.path])
+        self.assertEqual(list((self.root / "runs").rglob("deal_*_notes.md")), [notes.path])
         self.assertFalse((self.root / "runs" / "locks").exists())
         self.assertEqual(list((self.root / "runs").rglob("*.lock")), [])
 
@@ -1120,7 +1152,7 @@ class ManagedRunnerTests(unittest.TestCase):
         urlopen.return_value = FakeResponse(b"svg", "image/svg+xml")
         runner, _, sandboxes = self._make_runner([])
         with self._notes_output(runner, "Updated notes"):
-            result = runner.run(SashaTask("303839", "task-1", TASK_URL, file_urls=(url,)))
+            result = runner.run(SashaTask("303839", "task-1", TASK_URL, file_urls=(url,), workflow="outreach"))
         self.assertEqual(result.status, "completed")
         self.assertEqual(urlopen.call_count, 1)
         self.assertIn("(new attachment)", sandboxes[0].task_message)
@@ -1135,7 +1167,7 @@ class ManagedRunnerTests(unittest.TestCase):
         progress = []
         runner, _, sandboxes = self._make_runner(progress)
         with self._notes_output(runner, "Updated notes"):
-            result = runner.run(SashaTask("303839", "task-1", TASK_URL))
+            result = runner.run(SashaTask("303839", "task-1", TASK_URL, workflow="outreach"))
         self.assertEqual(result.status, "completed")
         self.assertIn("could not be downloaded this turn: logo.svg", sandboxes[0].task_message)
         self.assertTrue(any("Saved attachment unavailable: logo.svg" in message for message in progress))
@@ -1152,7 +1184,7 @@ class ManagedRunnerTests(unittest.TestCase):
         )
         runner, _, sandboxes = self._make_runner([])
         with self._notes_output(runner, "Current deal"):
-            result = runner.run(SashaTask("303839", "task-1", TASK_URL))
+            result = runner.run(SashaTask("303839", "task-1", TASK_URL, workflow="outreach"))
         self.assertEqual(result.status, "completed")
         urlopen.assert_not_called()
         self.assertNotIn("other.svg", sandboxes[0].task_message)
@@ -1163,17 +1195,17 @@ class ManagedRunnerTests(unittest.TestCase):
         first = "## Current decisions\n- Navy, quantity unconfirmed. Source: task-1."
         second = "## Current decisions\n- Black, 75 confirmed. Source: task-2."
         with self._notes_output(runner, first):
-            result = runner.run(SashaTask("303839", "task-1", TASK_URL, "Navy, about 60."))
+            result = runner.run(SashaTask("303839", "task-1", TASK_URL, "Navy, about 60.", workflow="client-response-orchestrator"))
         self.assertEqual(result.status, "completed")
         self.assertEqual(notes.load(), first)
         with self._notes_output(runner, second):
-            result = runner.run(SashaTask("303839", "task-2", TASK_URL, "Black, exactly 75."))
+            result = runner.run(SashaTask("303839", "task-2", TASK_URL, "Black, exactly 75.", workflow="client-response-orchestrator"))
         self.assertEqual(result.status, "completed")
         self.assertIn(first, sandboxes[1].task_message)
         self.assertIn("Navy, about 60.", sandboxes[1].task_message)
         self.assertIn("Originating task ID: task-2", sandboxes[1].task_message)
         self.assertEqual(notes.load(), second)
-        self.assertEqual(list((self.root / "runs").rglob("SASHANOTES01*.md")), [notes.path])
+        self.assertEqual(list((self.root / "runs").rglob("deal_*_notes.md")), [notes.path])
         self.assertFalse((self.root / "runs" / "locks").exists())
         self.assertEqual(list((self.root / "runs").rglob("*.lock")), [])
         saved = json.loads(runner.last_conversation_file.read_text())
@@ -1188,7 +1220,7 @@ class ManagedRunnerTests(unittest.TestCase):
         for candidate in (None, b"", b"\xff", b"x" * 16385):
             with self.subTest(candidate=candidate and candidate[:10]):
                 with self._notes_output(runner, candidate):
-                    result = runner.run(SashaTask("303839", "task-1", TASK_URL))
+                    result = runner.run(SashaTask("303839", "task-1", TASK_URL, workflow="outreach"))
                 self.assertEqual(result.status, "completed")
                 self.assertEqual(result.message_html, MESSAGE)
                 self.assertEqual(notes.load(), "Original")
@@ -1200,7 +1232,7 @@ class ManagedRunnerTests(unittest.TestCase):
         runner, _, _ = self._make_runner(progress)
         with self._notes_output(runner, "New notes"):
             with patch.object(NotesStore, "publish", side_effect=OSError("disk full")):
-                result = runner.run(SashaTask("303839", "task-1", TASK_URL))
+                result = runner.run(SashaTask("303839", "task-1", TASK_URL, workflow="outreach"))
         self.assertEqual(result.status, "completed")
         self.assertTrue(any("disk full" in message for message in progress))
         self.assertFalse((runner.last_run_directory / "workspace" / NOTES_OUTPUT_NAME).exists())
@@ -1214,7 +1246,7 @@ class ManagedRunnerTests(unittest.TestCase):
         conversation = ConversationStore(self.root / "runs", "303839")
         conversation.append_completed_turn([], "Earlier client message", MESSAGE)
         with self._notes_output(runner, "New notes"):
-            result = runner.run(SashaTask("303839", "task-1", TASK_URL))
+            result = runner.run(SashaTask("303839", "task-1", TASK_URL, workflow="outreach"))
         self.assertEqual(result.status, "completed")
         self.assertEqual(notes.path.read_bytes(), b"\xff")
         self.assertIn("Earlier client message", sandboxes[0].task_message)
@@ -1232,7 +1264,7 @@ class ManagedRunnerTests(unittest.TestCase):
                 {"type": f"agent.session.turn.{terminal}"},
             ]
             with self._notes_output(runner, "Unfinished notes"):
-                result = runner.run(SashaTask("303839", "task-1", TASK_URL))
+                result = runner.run(SashaTask("303839", "task-1", TASK_URL, workflow="outreach"))
             self.assertEqual(result.status, "failed")
             self.assertEqual(notes.load(), "Original")
             self.assertFalse((runner.last_run_directory / "workspace" / NOTES_OUTPUT_NAME).exists())
@@ -1244,7 +1276,7 @@ class ManagedRunnerTests(unittest.TestCase):
         notes.path.write_text("Original", encoding="utf-8")
         with self._notes_output(runner, "New notes"):
             with patch.object(ConversationStore, "append_completed_turn", side_effect=OSError("disk full")):
-                result = runner.run(SashaTask("303839", "task-1", TASK_URL))
+                result = runner.run(SashaTask("303839", "task-1", TASK_URL, workflow="outreach"))
         self.assertEqual(result.failure_code, "conversation_error")
         self.assertEqual(notes.load(), "Original")
         self.assertFalse((runner.last_run_directory / "workspace" / NOTES_OUTPUT_NAME).exists())
@@ -1253,7 +1285,7 @@ class ManagedRunnerTests(unittest.TestCase):
         runner, sessions, _ = self._make_runner([])
         with self._notes_output(runner, "New notes"):
             with patch.object(sessions.items, "list", return_value=[]):
-                result = runner.run(SashaTask("303839", "task-1", TASK_URL))
+                result = runner.run(SashaTask("303839", "task-1", TASK_URL, workflow="outreach"))
         self.assertEqual(result.status, "failed")
         self.assertFalse(NotesStore(self.root / "runs", "303839").path.exists())
         self.assertFalse((runner.last_run_directory / "workspace" / NOTES_OUTPUT_NAME).exists())
@@ -1263,7 +1295,7 @@ class ManagedRunnerTests(unittest.TestCase):
         with self._notes_output(runner, "Unfinished notes"):
             with patch.object(runner, "_clean_up", side_effect=RuntimeError("unexpected error")):
                 with self.assertRaisesRegex(RuntimeError, "unexpected error"):
-                    runner.run(SashaTask("303839", "task-1", TASK_URL))
+                    runner.run(SashaTask("303839", "task-1", TASK_URL, workflow="outreach"))
         self.assertFalse((runner.last_run_directory / "workspace" / NOTES_OUTPUT_NAME).exists())
         self.assertFalse(NotesStore(self.root / "runs", "303839").path.exists())
 
@@ -1309,7 +1341,7 @@ class ManagedRunnerTests(unittest.TestCase):
             model="gpt-6-astra",
             reasoning_effort="medium",
             executor_api_key="executor-key",
-            login_url="https://qa.example/login",
+            application=application_environment(),
             login_user="qa-user",
             login_password="qa-password",
             sandbox_image="test-image",

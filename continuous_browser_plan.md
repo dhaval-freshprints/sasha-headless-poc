@@ -1,4 +1,4 @@
-# BROWSER01 — One signed-in browser for the whole Sasha turn
+# One signed-in browser for the whole Sasha turn
 
 ## Status (2026-09-25)
 

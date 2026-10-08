@@ -27,6 +27,7 @@ class DockerSandboxTests(unittest.TestCase):
             "303839",
             "outreach-303839",
             "https://qa.example/deal?id=303839",
+            workflow="outreach",
         )
 
         handle = sandbox.prepare(task)
@@ -50,6 +51,7 @@ class DockerSandboxTests(unittest.TestCase):
             "response-303839",
             "https://qa.example/deal?id=303839",
             "What's the price for 40?",
+            workflow="client-response-orchestrator",
         )
 
         handle = sandbox.prepare(task)
@@ -59,27 +61,41 @@ class DockerSandboxTests(unittest.TestCase):
         )
         self.assertEqual(task_data["client_message"], "What's the price for 40?")
 
-    def test_copies_sales_and_outreach_skills_into_each_run_workspace(self):
+    def test_copies_only_shared_and_selected_workflow_skills(self):
         source_directory = (
             Path(__file__).resolve().parents[1] / "openai_managed" / "capabilities"
         )
-        skill_files = (
-            "sasha-sales/SKILL.md",
-            "sasha-sales/references/playbook.md",
-            "sasha-sales/references/workplace.md",
-            "outreach/SKILL.md",
-        )
-        for client_message in (None, "What's the price for 40?"):
-            with self.subTest(client_message=client_message):
+        for workflow in ("outreach", "client-response-orchestrator"):
+            with self.subTest(workflow=workflow):
+                skill_files = (
+                    "sasha-sales/SKILL.md",
+                    "sasha-sales/references/workplace.md",
+                    "sasha-sales/references/shared_crafting.md",
+                    f"{workflow}/SKILL.md",
+                    (
+                        "outreach/references/outreach_crafting.md"
+                        if workflow == "outreach"
+                        else "client-response-orchestrator/references/client_response_crafting.md"
+                    ),
+                )
                 sandbox = DockerSandbox(self.config, "executor-key")
                 task = SashaTask(
                     "303839",
                     "task-303839",
                     "https://qa.example/deal?id=303839",
-                    client_message,
+                    "What's the price for 40?",
+                    workflow=workflow,
                 )
 
                 handle = sandbox.prepare(task)
+                self.assertEqual(
+                    {path.name for path in (handle.workspace_directory / "capabilities").iterdir()},
+                    {"sasha-sales", workflow},
+                )
+                self.assertEqual(
+                    json.loads((handle.workspace_directory / "task.json").read_text())["workflow"],
+                    workflow,
+                )
 
                 for relative_path in skill_files:
                     copied_file = (
@@ -92,11 +108,14 @@ class DockerSandboxTests(unittest.TestCase):
 
     def test_outreach_edits_apply_to_new_runs_without_changing_prepared_runs(self):
         source_directory = self.root / "capabilities"
+        shared_directory = source_directory / "sasha-sales"
+        shared_directory.mkdir(parents=True)
+        (shared_directory / "SKILL.md").write_text("Shared browser rules.")
         outreach_directory = source_directory / "outreach"
         outreach_directory.mkdir(parents=True)
         source_file = outreach_directory / "SKILL.md"
         source_file.write_text("Ask about quantity.")
-        task = SashaTask("303839", "outreach-303839", "https://qa.example/deal?id=303839")
+        task = SashaTask("303839", "outreach-303839", "https://qa.example/deal?id=303839", workflow="outreach")
 
         with patch("openai_managed.sandbox.CAPABILITIES_DIRECTORY", source_directory):
             first_run = DockerSandbox(self.config, "executor-key").prepare(task)
@@ -140,6 +159,7 @@ class DockerSandboxTests(unittest.TestCase):
             "response-303839",
             "https://qa.example/deal?id=303839",
             "Show me orange polos.",
+            workflow="client-response-orchestrator",
         )
         sandbox.prepare(task)
 
@@ -174,7 +194,7 @@ class DockerSandboxTests(unittest.TestCase):
     def test_container_mounts_browser_scripts_read_only(self, run):
         run.return_value = CompletedProcess(args=[], returncode=0, stdout="", stderr="")
         sandbox = DockerSandbox(self.config, "executor-key")
-        sandbox.prepare(SashaTask("303839", "task-1", "https://qa.example/deal?id=303839"))
+        sandbox.prepare(SashaTask("303839", "task-1", "https://qa.example/deal?id=303839", workflow="outreach"))
 
         sandbox.start_container()
 
@@ -191,7 +211,7 @@ class DockerSandboxTests(unittest.TestCase):
                 )
                 sandbox = DockerSandbox(self.config, "executor-key")
                 handle = sandbox.prepare(
-                    SashaTask("303839", f"task-{status}", "https://qa.example/deal?id=303839")
+                    SashaTask("303839", f"task-{status}", "https://qa.example/deal?id=303839", workflow="outreach")
                 )
 
                 sandbox.start_browser()
@@ -216,7 +236,7 @@ class DockerSandboxTests(unittest.TestCase):
             stderr="",
         )
         sandbox = DockerSandbox(self.config, "executor-key")
-        sandbox.prepare(SashaTask("303839", "task-1", "https://qa.example/deal?id=303839"))
+        sandbox.prepare(SashaTask("303839", "task-1", "https://qa.example/deal?id=303839", workflow="outreach"))
 
         with self.assertRaisesRegex(RuntimeError, "browser keeper exited with code 1"):
             sandbox.start_browser()

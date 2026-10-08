@@ -12,7 +12,7 @@ from .attachments import file_name
 
 
 MAX_NOTES_BYTES = 16 * 1024
-NOTES_OUTPUT_NAME = "SASHANOTES01_notes_update.md"
+NOTES_OUTPUT_NAME = "notes_update.md"
 ATTACHMENTS_HEADING = "## Attachments"
 ATTACHMENT_LINE = re.compile(r"^- [A-Za-z0-9._-]+: <(https?://\S+)>$")
 
@@ -20,13 +20,16 @@ ATTACHMENT_LINE = re.compile(r"^- [A-Za-z0-9._-]+: <(https?://\S+)>$")
 class NotesStore:
     def __init__(self, runs_directory: Path, deal_id: str) -> None:
         _validate_deal_id(deal_id)
-        self.path = runs_directory / "notes" / f"SASHANOTES01_deal_{deal_id}_notes.md"
+        self.path = runs_directory / "notes" / f"deal_{deal_id}_notes.md"
+        self.legacy_path = self.path.with_name(f"SASHANOTES01_deal_{deal_id}_notes.md")
 
     def load(self) -> str:
-        try:
-            return read_notes(self.path)
-        except FileNotFoundError:
-            return ""
+        for path in (self.path, self.legacy_path):
+            try:
+                return read_notes(path)
+            except FileNotFoundError:
+                continue
+        return ""
 
     def publish(self, workspace: Path, attachment_urls: list[str] | None = None) -> None:
         notes = read_notes(workspace / NOTES_OUTPUT_NAME)

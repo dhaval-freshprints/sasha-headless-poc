@@ -30,6 +30,25 @@ class NotesStoreTests(unittest.TestCase):
         self.assertEqual(self.store.load(), "")
         self.assertFalse(self.store.path.exists())
 
+    def test_legacy_notes_remain_readable_and_updates_use_the_clean_filename(self):
+        legacy = self.root / "notes" / "SASHANOTES01_deal_123_notes.md"
+        legacy.parent.mkdir()
+        legacy.write_text("Original preferences")
+        self.assertEqual(self.store.load(), "Original preferences")
+        self.candidate.write_text("Updated preferences")
+        self.store.publish(self.workspace)
+        self.assertEqual(self.store.path.name, "deal_123_notes.md")
+        self.assertEqual(self.store.load(), "Updated preferences")
+        self.assertEqual(legacy.read_text(), "Original preferences")
+
+    def test_invalid_current_notes_do_not_fall_back_to_stale_legacy_notes(self):
+        self.store.path.parent.mkdir()
+        self.store.path.write_bytes(b"\xff")
+        legacy = self.root / "notes" / "SASHANOTES01_deal_123_notes.md"
+        legacy.write_text("Stale preferences")
+        with self.assertRaises(ValueError):
+            self.store.load()
+
     def test_updates_one_file_and_keeps_deals_separate(self):
         other = NotesStore(self.root, "456")
         self.candidate.write_text("Navy", encoding="utf-8")

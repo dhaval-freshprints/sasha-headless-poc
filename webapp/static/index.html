@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Sasha QA Test App</title>
+    <title>Sasha Sales</title>
     <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
     <link rel="stylesheet" href="/static/styles.css">
   </head>
@@ -13,7 +13,7 @@
         <a class="brand" href="/" data-app-link>
           <span class="brand-mark">S</span>
           <span>
-            <span class="eyebrow">Fresh Prints QA</span>
+            <span class="eyebrow">Fresh Prints</span>
             <strong>Sasha Test Console</strong>
           </span>
         </a>
@@ -63,7 +63,14 @@
             <button id="cancel-run-button" class="text-button" type="button">Cancel</button>
           </div>
           <form id="run-form">
-            <label for="client-message">Client message <span>Optional—leave empty for initial outreach</span></label>
+            <label for="workflow">Run type</label>
+            <select id="workflow" name="workflow" required>
+              <option value="" disabled selected>Choose a run type</option>
+              <option value="outreach">Initial outreach</option>
+              <option value="client-response-orchestrator">Client response</option>
+            </select>
+
+            <label for="client-message">Client message <span>Required for client response</span></label>
             <textarea id="client-message" name="client_message" rows="6" placeholder="What's the price for 40?"></textarea>
 
             <label for="file-urls">Artwork URLs <span>Optional—one direct URL per line</span></label>

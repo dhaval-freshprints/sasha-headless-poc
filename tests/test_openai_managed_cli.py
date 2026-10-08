@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import unittest
+from tests.test_openai_managed_environment import APPLICATION_VALUES
 from unittest.mock import patch
 
 from openai_managed.task import SashaResult
@@ -12,8 +13,21 @@ from scripts import run_openai_managed_sasha as cli
 
 
 class ManagedSashaCliTests(unittest.TestCase):
+    def test_requires_explicit_workflow_and_client_response_message(self):
+        invalid_arguments = [
+            ["303839"],
+            ["303839", "--message", "Hello"],
+            ["303839", "--workflow", "unknown"],
+            ["303839", "--workflow", "client-response-orchestrator"],
+            ["303839", "--workflow", "client-response-orchestrator", "--message", "  "],
+        ]
+        for arguments in invalid_arguments:
+            with self.subTest(arguments=arguments), redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as raised:
+                cli.parse_arguments(arguments)
+            self.assertEqual(raised.exception.code, 2)
+
     def test_outreach_arguments_leave_client_message_empty(self):
-        arguments = cli.parse_arguments(["303839", "--verbose"])
+        arguments = cli.parse_arguments(["303839", "--workflow", "outreach", "--verbose"])
 
         self.assertEqual(arguments.deal_id, "303839")
         self.assertIsNone(arguments.message)
@@ -25,7 +39,7 @@ class ManagedSashaCliTests(unittest.TestCase):
         client_message = "What's the price for 40?"
 
         arguments = cli.parse_arguments(
-            ["303839", "--message", client_message, "--pricing"]
+            ["303839", "--workflow", "client-response-orchestrator", "--message", client_message, "--pricing"]
         )
 
         self.assertEqual(arguments.deal_id, "303839")
@@ -36,7 +50,7 @@ class ManagedSashaCliTests(unittest.TestCase):
 
     def test_accepts_multiple_artwork_urls(self):
         arguments = cli.parse_arguments(
-            ["303839", "--file", "https://example.test/one.png", "-f", "https://example.test/two.svg"]
+            ["303839", "--workflow", "outreach", "--file", "https://example.test/one.png", "-f", "https://example.test/two.svg"]
         )
         self.assertEqual(
             arguments.file,
@@ -49,6 +63,7 @@ class ManagedSashaCliTests(unittest.TestCase):
         arguments = argparse.Namespace(
             deal_id="303839",
             message=client_message,
+            workflow="client-response-orchestrator",
             verbose=True,
             pricing=True,
             file=["https://example.test/logo.png"],
@@ -59,7 +74,7 @@ class ManagedSashaCliTests(unittest.TestCase):
         with (
             patch.object(cli, "parse_arguments", return_value=arguments),
             patch.object(cli, "load_dotenv"),
-            patch.dict(os.environ, {"FP_BASE_URL": "https://qa.example"}),
+            patch.dict(os.environ, APPLICATION_VALUES),
             patch.object(
                 cli.OpenAIManagedRunner,
                 "from_environment",
@@ -74,6 +89,7 @@ class ManagedSashaCliTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(json.loads(stdout.getvalue())["status"], "completed")
         self.assertEqual(fake_runner.task.client_message, client_message)
+        self.assertEqual(fake_runner.task.workflow, "client-response-orchestrator")
         self.assertEqual(fake_runner.task.file_urls, ("https://example.test/logo.png",))
         self.assertIn("Sasha is working", stderr.getvalue())
         self.assertIn("[pricing] test estimate", stderr.getvalue())
@@ -85,6 +101,7 @@ class ManagedSashaCliTests(unittest.TestCase):
         arguments = argparse.Namespace(
             deal_id="303839",
             message=None,
+            workflow="outreach",
             verbose=False,
             pricing=False,
             file=[],
@@ -95,7 +112,7 @@ class ManagedSashaCliTests(unittest.TestCase):
         with (
             patch.object(cli, "parse_arguments", return_value=arguments),
             patch.object(cli, "load_dotenv"),
-            patch.dict(os.environ, {"FP_BASE_URL": "https://qa.example"}),
+            patch.dict(os.environ, APPLICATION_VALUES),
             patch.object(
                 cli.OpenAIManagedRunner,
                 "from_environment",

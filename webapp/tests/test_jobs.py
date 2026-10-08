@@ -4,6 +4,7 @@ import tempfile
 import threading
 import time
 import unittest
+from tests.test_openai_managed_environment import APPLICATION_VALUES
 from pathlib import Path
 from unittest.mock import patch
 
@@ -17,7 +18,7 @@ class JobManagerTests(unittest.TestCase):
         self.root = Path(self.temporary_directory.name)
         self.environment = patch.dict(
             os.environ,
-            {"FP_BASE_URL": "https://qa.example"},
+            APPLICATION_VALUES,
         )
         self.environment.start()
 
@@ -27,7 +28,7 @@ class JobManagerTests(unittest.TestCase):
 
     def test_completed_run_is_persisted_and_survives_a_new_manager(self):
         manager = self._manager()
-        run = manager.submit("303839", "Price 40 shirts", [])
+        run = manager.submit("303839", "Price 40 shirts", [], workflow="client-response-orchestrator")
         completed = wait_for_finish(manager, run.run_id)
 
         self.assertEqual(completed.status, "completed")
@@ -40,7 +41,25 @@ class JobManagerTests(unittest.TestCase):
         saved = reloaded.get(run.run_id)
         self.assertEqual(saved.status, "completed")
         self.assertEqual(saved.result, completed.result)
+        self.assertEqual(saved.workflow, "client-response-orchestrator")
+        self.assertEqual(reloaded._make_task(saved).workflow, "client-response-orchestrator")
         reloaded.shutdown()
+
+    def test_legacy_completed_run_remains_readable_without_guessing_workflow(self):
+        jobs_directory = self.root / "jobs"
+        jobs_directory.mkdir()
+        legacy = WebRun(run_id="b" * 32, deal_id="303839", client_message=None, file_urls=[], status="completed").to_dict()
+        legacy.pop("workflow")
+        (jobs_directory / f"{legacy['run_id']}.json").write_text(json.dumps(legacy))
+        manager = self._manager()
+        try:
+            saved = manager.get(legacy["run_id"])
+            self.assertEqual(saved.status, "completed")
+            self.assertIsNone(saved.workflow)
+            with self.assertRaisesRegex(ValueError, "workflow must be selected"):
+                manager._make_task(saved)
+        finally:
+            manager.shutdown()
 
     def test_reading_a_running_job_does_not_interrupt_it(self):
         release = threading.Event()
@@ -48,7 +67,7 @@ class JobManagerTests(unittest.TestCase):
             self.root / "jobs",
             lambda write: FakeRunner(write, self.root, release),
         )
-        run = manager.submit("303839", None, [])
+        run = manager.submit("303839", None, [], workflow="outreach")
         self._wait_for_status(manager, run.run_id, "running")
 
         first_refresh = manager.get(run.run_id)
@@ -84,7 +103,7 @@ class JobManagerTests(unittest.TestCase):
 
     def test_artifacts_cannot_escape_the_artifact_directory(self):
         manager = self._manager()
-        run = manager.submit("303839", None, [])
+        run = manager.submit("303839", None, [], workflow="outreach")
         wait_for_finish(manager, run.run_id)
 
         self.assertEqual(manager.artifact_path(run.run_id, "proof.txt").read_text(), "proof")

@@ -1,24 +1,53 @@
 import os
 import tempfile
 import unittest
+from tests.test_openai_managed_environment import APPLICATION_VALUES
 from pathlib import Path
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-from webapp.app import create_app
+from webapp.app import create_app, _jobs_directory, _deals_directory
 from webapp.deals import DealStore
 from webapp.jobs import JobManager
 from webapp.tests.helpers import FakeRunner, wait_for_finish
 
 
 class WebAppTests(unittest.TestCase):
+    def test_web_storage_is_separate_for_each_environment(self):
+        for environment in ["qa", "production"]:
+            with patch.dict(os.environ, {
+                **APPLICATION_VALUES,
+                "FP_ENVIRONMENT": environment,
+                "SASHA_WEB_JOBS_DIRECTORY": str(self.root / "jobs"),
+                "SASHA_WEB_DEALS_DIRECTORY": str(self.root / "deals"),
+            }):
+                self.assertEqual(_jobs_directory(), self.root / "jobs" / environment)
+                self.assertEqual(_deals_directory(), self.root / "deals" / environment)
+
+    def test_rejects_missing_or_invalid_workflow_before_creating_jobs(self):
+        for selection in ({}, {"workflow": "unknown"}, {"workflow": "client-response-orchestrator", "client_message": "  "}):
+            with self.subTest(selection=selection):
+                response = self.client.post("/api/runs", json={"deal_id": "303839", **selection})
+                self.assertEqual(response.status_code, 422)
+        self.assertEqual(self.manager.list_all(), [])
+        self.assertEqual(self.deals.list_all(), [])
+
+    def test_explicit_outreach_is_preserved_when_message_is_supplied(self):
+        response = self.client.post("/api/runs", json={
+            "deal_id": "303839", "workflow": "outreach", "client_message": "Context",
+        })
+        self.assertEqual(response.status_code, 202)
+        run = wait_for_finish(self.manager, response.json()["run_id"])
+        self.assertEqual(run.workflow, "outreach")
+        self.assertEqual(self.manager._make_task(run).workflow, "outreach")
+
     def setUp(self):
         self.temporary_directory = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary_directory.name)
         self.environment = patch.dict(
             os.environ,
-            {"FP_BASE_URL": "https://qa.example"},
+            APPLICATION_VALUES,
         )
         self.environment.start()
         self.manager = JobManager(
@@ -40,6 +69,7 @@ class WebAppTests(unittest.TestCase):
             json={
                 "deal_id": "303839",
                 "client_message": "Price 40 shirts",
+                "workflow": "client-response-orchestrator",
                 "file_urls": [],
             },
         )
@@ -78,13 +108,14 @@ class WebAppTests(unittest.TestCase):
         self.client.post("/api/deals", json={"deal_id": "303901"})
         first = self.client.post(
             "/api/runs",
-            json={"deal_id": "303901", "client_message": None, "file_urls": []},
+            json={"deal_id": "303901", "client_message": None, "file_urls": [], "workflow": "outreach"},
         ).json()
         second = self.client.post(
             "/api/runs",
             json={
                 "deal_id": "303901",
                 "client_message": "Show another option",
+                "workflow": "client-response-orchestrator",
                 "file_urls": [],
             },
         ).json()
@@ -105,6 +136,7 @@ class WebAppTests(unittest.TestCase):
             json={
                 "deal_id": "deal-303839",
                 "client_message": "",
+                "workflow": "outreach",
                 "file_urls": ["file:///tmp/logo.png"],
             },
         )

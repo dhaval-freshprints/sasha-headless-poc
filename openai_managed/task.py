@@ -1,8 +1,21 @@
 """Input and output values for one managed Sasha turn."""
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 import json
 from typing import Any, Literal
+
+
+Workflow = Literal["outreach", "client-response-orchestrator"]
+WORKFLOWS = ("outreach", "client-response-orchestrator")
+
+
+def validate_workflow(workflow: str, client_message: str | None) -> None:
+    if workflow not in WORKFLOWS:
+        raise ValueError("workflow must be outreach or client-response-orchestrator")
+    if workflow == "client-response-orchestrator" and not (
+        client_message and client_message.strip()
+    ):
+        raise ValueError("client-response-orchestrator requires a client message")
 
 
 SASHA_RESULT_JSON_SCHEMA = {
@@ -30,10 +43,14 @@ class SashaTask:
     deal_id: str
     task_id: str
     deal_url: str
+    workflow: Workflow = field(kw_only=True)
     client_message: str | None = None
     conversation_history: tuple[dict[str, Any], ...] = ()
     file_urls: tuple[str, ...] = ()
     deal_notes: str = ""
+
+    def __post_init__(self) -> None:
+        validate_workflow(self.workflow, self.client_message)
 
 
 @dataclass(frozen=True)

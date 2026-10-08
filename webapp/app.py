@@ -11,7 +11,10 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+from openai_managed.environment import ApplicationEnvironment
+from openai_managed.task import Workflow, validate_workflow
 
 from .deals import Deal, DealStore
 from .jobs import JobManager, WebRun
@@ -24,8 +27,14 @@ STATIC_DIRECTORY = WEB_DIRECTORY / "static"
 
 class RunRequest(BaseModel):
     deal_id: str = Field(pattern=r"^[0-9]+$", min_length=1, max_length=20)
+    workflow: Workflow
     client_message: str | None = Field(default=None, max_length=20_000)
     file_urls: list[str] = Field(default_factory=list, max_length=10)
+
+    @model_validator(mode="after")
+    def check_workflow(self) -> "RunRequest":
+        validate_workflow(self.workflow, self.client_message)
+        return self
 
     @field_validator("client_message")
     @classmethod
@@ -67,7 +76,7 @@ def create_app(
         yield
         manager.shutdown()
 
-    app = FastAPI(title="Sasha QA Test App", lifespan=lifespan)
+    app = FastAPI(title="Sasha Sales", lifespan=lifespan)
     app.state.job_manager = manager
     app.state.deal_store = deals
     app.mount("/static", StaticFiles(directory=STATIC_DIRECTORY), name="static")
@@ -111,6 +120,7 @@ def create_app(
             request.deal_id,
             request.client_message,
             request.file_urls,
+            workflow=request.workflow,
         )
         return run.to_dict()
 
@@ -133,17 +143,19 @@ def create_app(
 
 
 def _jobs_directory() -> Path:
+    environment = ApplicationEnvironment.from_environment().name
     configured = os.environ.get("SASHA_WEB_JOBS_DIRECTORY", "").strip()
     if configured:
-        return Path(configured).expanduser()
-    return ROOT / "runs" / "webapp" / "jobs"
+        return Path(configured).expanduser() / environment
+    return ROOT / "runs" / "webapp" / "jobs" / environment
 
 
 def _deals_directory() -> Path:
+    environment = ApplicationEnvironment.from_environment().name
     configured = os.environ.get("SASHA_WEB_DEALS_DIRECTORY", "").strip()
     if configured:
-        return Path(configured).expanduser()
-    return ROOT / "runs" / "webapp" / "deals"
+        return Path(configured).expanduser() / environment
+    return ROOT / "runs" / "webapp" / "deals" / environment
 
 
 def _backfill_deals(deals: DealStore, runs: list[WebRun]) -> None:

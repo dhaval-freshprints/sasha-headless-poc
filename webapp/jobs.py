@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import threading
 import time
 import uuid
@@ -16,7 +15,8 @@ from typing import Any, Callable
 from openai_managed.pricing import CostReporter
 from openai_managed.progress import ProgressReporter
 from openai_managed.runner import OpenAIManagedRunner
-from openai_managed.task import SashaResult, SashaTask
+from openai_managed.environment import ApplicationEnvironment
+from openai_managed.task import SashaResult, SashaTask, Workflow, validate_workflow
 
 
 FINAL_STATUSES = {"completed", "failed"}
@@ -32,6 +32,7 @@ class WebRun:
     deal_id: str
     client_message: str | None
     file_urls: list[str]
+    workflow: Workflow | None = None
     status: str = "queued"
     created_at: str = field(default_factory=utc_now)
     started_at: str = ""
@@ -74,15 +75,19 @@ class JobManager:
         deal_id: str,
         client_message: str | None,
         file_urls: list[str],
+        *,
+        workflow: Workflow,
     ) -> WebRun:
         if not deal_id.isdigit():
             raise ValueError("deal_id must contain only digits")
+        validate_workflow(workflow, client_message)
 
         run = WebRun(
             run_id=uuid.uuid4().hex,
             deal_id=deal_id,
             client_message=client_message,
             file_urls=list(file_urls),
+            workflow=workflow,
         )
         with self.lock:
             self.jobs[run.run_id] = run
@@ -133,14 +138,15 @@ class JobManager:
             self._fail(run_id, str(error), started)
 
     def _make_task(self, run: WebRun) -> SashaTask:
-        base_url = os.environ.get("FP_BASE_URL", "").rstrip("/")
-        if not base_url:
-            raise ValueError("FP_BASE_URL must be set")
+        if run.workflow is None:
+            raise ValueError("A workflow must be selected to start a run")
+        application = ApplicationEnvironment.from_environment()
         return SashaTask(
             deal_id=run.deal_id,
             task_id=f"web-{run.deal_id}-{run.run_id[:12]}",
-            deal_url=f"{base_url}/dashboard/sales-pipeline/deal?id={run.deal_id}",
+            deal_url=application.deal_url(run.deal_id),
             client_message=run.client_message,
+            workflow=run.workflow,
             file_urls=tuple(run.file_urls),
         )
 

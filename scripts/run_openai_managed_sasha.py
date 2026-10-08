@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Run one Fresh Prints QA sales turn through OpenAI-managed Sasha."""
+"""Run one Fresh Prints sales turn through OpenAI-managed Sasha."""
 
 import argparse
 import json
-import os
 import sys
 import time
 import uuid
@@ -18,17 +17,19 @@ sys.path.insert(0, str(ROOT))
 from openai_managed.pricing import CostReporter
 from openai_managed.progress import ProgressReporter
 from openai_managed.runner import OpenAIManagedRunner
-from openai_managed.task import SashaTask
+from openai_managed.environment import ApplicationEnvironment
+from openai_managed.task import WORKFLOWS, SashaTask, validate_workflow
 
 
 def parse_arguments(arguments: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run one Fresh Prints QA sales turn through OpenAI-managed Sasha."
+        description="Run one Fresh Prints sales turn through OpenAI-managed Sasha."
     )
-    parser.add_argument("deal_id", help="Fresh Prints QA deal ID")
+    parser.add_argument("deal_id", help="Fresh Prints deal ID")
+    parser.add_argument("--workflow", required=True, choices=WORKFLOWS)
     parser.add_argument(
         "--message",
-        help="Inbound client message; omit it to generate initial outreach",
+        help="Inbound client message; required for client-response-orchestrator",
     )
     parser.add_argument(
         "-f",
@@ -48,24 +49,26 @@ def parse_arguments(arguments: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Print estimated OpenAI token pricing for the complete run",
     )
-    return parser.parse_args(arguments)
+    parsed = parser.parse_args(arguments)
+    try:
+        validate_workflow(parsed.workflow, parsed.message)
+    except ValueError as error:
+        parser.error(str(error))
+    return parsed
 
 
 def main() -> int:
     load_dotenv(ROOT / ".env")
     arguments = parse_arguments()
 
-    base_url = os.environ.get("FP_BASE_URL", "").rstrip("/")
-    if not base_url:
-        raise ValueError("FP_BASE_URL must be set")
+    application = ApplicationEnvironment.from_environment()
 
     task = SashaTask(
         deal_id=arguments.deal_id,
         task_id=f"sasha-{arguments.deal_id}-{uuid.uuid4().hex[:8]}",
-        deal_url=(
-            f"{base_url}/dashboard/sales-pipeline/deal?id={arguments.deal_id}"
-        ),
+        deal_url=application.deal_url(arguments.deal_id),
         client_message=arguments.message,
+        workflow=arguments.workflow,
         file_urls=tuple(arguments.file),
     )
     progress = ProgressReporter(

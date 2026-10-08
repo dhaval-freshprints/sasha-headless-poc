@@ -58,10 +58,11 @@ class DockerSandbox:
         workspace_directory.mkdir(parents=True, exist_ok=False)
         try:
             (workspace_directory / "artifacts").mkdir()
-            shutil.copytree(
-                CAPABILITIES_DIRECTORY,
-                capabilities_directory,
-            )
+            for skill_name in ("sasha-sales", task.workflow):
+                shutil.copytree(
+                    CAPABILITIES_DIRECTORY / skill_name,
+                    capabilities_directory / skill_name,
+                )
             (workspace_directory / "task.json").write_text(
                 json.dumps(
                     {
@@ -69,6 +70,7 @@ class DockerSandbox:
                         "task_id": task.task_id,
                         "deal_url": task.deal_url,
                         "client_message": task.client_message,
+                        "workflow": task.workflow,
                         "conversation_history": list(task.conversation_history),
                     },
                     indent=2,
@@ -166,13 +168,13 @@ class DockerSandbox:
         )
         if process.returncode != 0:
             details = (process.stderr or process.stdout).strip()
-            raise RuntimeError(f"QA authentication failed: {details}")
+            raise RuntimeError(f"Fresh Prints authentication failed: {details}")
         try:
             result = json.loads(process.stdout)
         except json.JSONDecodeError as error:
-            raise RuntimeError("QA authentication returned invalid output") from error
+            raise RuntimeError("Fresh Prints authentication returned invalid output") from error
         if result.get("status") != "authenticated":
-            raise RuntimeError("QA authentication did not confirm the deal page")
+            raise RuntimeError("Fresh Prints authentication did not confirm the deal page")
 
     def start_browser(self) -> None:
         handle = self._require_handle()

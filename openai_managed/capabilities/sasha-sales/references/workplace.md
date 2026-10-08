@@ -1,8 +1,10 @@
-# Fresh Prints QA Workplace
+# Fresh Prints Workplace
 
-This file records where sales information appears and how the Fresh Prints QA interfaces behave. Client-response decisions belong in `playbook.md`; initial outreach decisions belong in the `outreach` skill.
+This file records where sales information appears and how the Fresh Prints interfaces behave. Sales decisions belong in the caller-selected workflow skill.
 
 ## Pages
+
+Use the application destinations supplied in the task. CRM paths below are relative to the supplied CRM base URL. Specific record links must come from the current deal and observed page state; do not invent IDs or hosts.
 
 | Page | URL | Purpose |
 |---|---|---|
@@ -10,13 +12,13 @@ This file records where sales information appears and how the Fresh Prints QA in
 | Proof | `/dashboard/proof/<proof_id>` | Product, price at a quantity, delivery estimate, print details, and revisions |
 | Proof revision | `/dashboard/proof/<proof_id>?proofItemId=<item>&proofRevisionId=<revision>` | One version of a proof item |
 | Create proof | `/dashboard/proof/new` | Request a new mockup from the art team |
-| Design Tool | `https://dt-qa.internal-fp.com/` | Build a mockup and save a finished proof or revision |
+| Design Tool | Supplied Design Tool URL | Build a mockup and save a finished proof or revision |
 | Quoter | `/dashboard/quoter` | Price a product, print method, and quantity without changing a proof |
 | Stock checker | `/dashboard/stock-checker` | Live stock by style, color, and size |
 | Proofs list | `/dashboard/proofs` | All proofs, newest first; search accepts proof ID, proof name, or client name, not deal ID |
-| Product catalog | `https://freshprints-qa.internal-fp.com/products` | QA product search by type, color, and brand |
-| Designs gallery | `https://freshprints-qa.internal-fp.com/designs` | QA design inspiration by search, organization, event, style, and print type |
-| Help center | `https://freshprints-qa.internal-fp.com/help-center/` | QA client-facing policies |
+| Product catalog | Supplied Product catalog URL | product search by type, color, and brand |
+| Designs gallery | Supplied Designs gallery URL | design inspiration by search, organization, event, style, and print type |
+| Help center | Supplied Help center URL | client-facing policies |
 
 ## Deal page
 
@@ -47,9 +49,9 @@ The three steps are Proof Details, Product Info, and Print Info & Price Estimate
 
 ## Design Tool
 
-The Design Tool uses the CRM login on a different QA host. A proof's Design Tool link opens a new browser page. Existing proofs show their proof item and revision in the editor.
+A proof's Design Tool link opens a new browser page. Existing proofs show their proof item and revision in the editor.
 
-For a design chosen from the QA gallery, open its detail page and follow `Customize This`. The observed link includes `designId` and opens `dt-qa.internal-fp.com` with that design already on the garment. The generic footer Design Tool link points to the production editor, so use the design's QA `Customize This` link. Inspect the loaded canvas and its objects before editing.
+For a design chosen from the gallery, open its detail page and inspect `Customize This`. Follow it only when its origin matches the supplied Design Tool URL. Verify that the selected design loaded, then inspect the canvas and its objects before editing. Do not assume a generic footer link uses the configured environment.
 
 If the deal already has a proof, use that proof's editor to save to the same proof. Its Designs panel can load gallery artwork. Compare the imported artwork's size and placement with the gallery reference before saving; importing does not guarantee the same position. The wearer's left chest is on the viewer's right in the front view.
 
@@ -107,18 +109,18 @@ If the deal already has a proof, use that proof's editor to save to the same pro
 - A color ending in `mto` is made to order.
 - Product URLs contain brand and style code. For example, a path containing `nike-nkdc1963` identifies style `NKDC1963`.
 - The catalog has no client prices. Carry the chosen style code and color to the quoter.
-- Confirm an exact QA product match by observing its matching card and link after the completed search.
+- Confirm an exact product match by observing its matching card and link after the completed search.
 
 ## Designs gallery
 
-- The QA gallery is a source of design inspiration. Its cards are designs shown on garments, not confirmed blank product catalog items or priced proofs.
+- The gallery is a source of design inspiration. Its cards are designs shown on garments, not confirmed blank product catalog items or priced proofs.
 - The search field updates the URL with `search=<word>`. For example, a search for birthday opened `/designs?search=birthday`. Wait for the results to update before reading names and links.
 - The gallery groups filters under Orgs, Events, Styles, and Print Types. The navigation menu and expanded gallery views show more choices than the first visible row. Read the current choices instead of relying on a fixed list.
 - Observed Orgs: Sorority, Club, Fraternity, Sports. Observed Events: Rush & Bid, PR & General, Game Day, Parent's Weekend, Philanthropy, Big Little Reveal.
 - The expanded Styles view showed Classic, Minimalist, Y2K, Varsity, Typography, 80s & 90s, Cartoons, Handdrawn, Grunge, and 60s & 70s. The Print Types menu showed Embroidery, Screen Print, Patches, Digital, Applique, and Transfers. These are starting terms; confirm current filters and results on the page.
 - Filter links use URL parameters such as `filter[orgs]`, `filter[events]`, `filter[styles]`, and `filter[printTypes]`. Use links observed on the current page; do not construct a filter URL from memory.
 - Each result card has a design name and detail link. Open a matching card to confirm its title and details before recommending it. Copy the actual card or detail URL and the current gallery search or filter URL when offering more options.
-- A design detail page may show organization, event, and style tags plus `Customize This`. On the QA gallery, the selected strawberry cake design's link opened the QA Design Tool with that design loaded. The page says the organization and garment can be changed. Do not treat the pictured garment as a confirmed catalog product or infer a client price from the design page.
+- A design detail page may show organization, event, and style tags plus `Customize This`. Inspect the selected design's customization link and loaded editor to verify what can be changed. Do not treat the pictured garment as a confirmed catalog product or infer a client price from the design page.
 - If the search has no relevant results, try one useful broader term or filter, inspect the result, and say so if nothing suitable appears.
 
 ## Quoter

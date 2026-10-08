@@ -8,6 +8,7 @@ const addDealForm = document.querySelector("#add-deal-form");
 const addDealButton = document.querySelector("#add-deal-button");
 const addDealError = document.querySelector("#add-deal-error");
 const runForm = document.querySelector("#run-form");
+const workflowSelect = document.querySelector("#workflow");
 const runFormCard = document.querySelector("#run-form-card");
 const submitButton = document.querySelector("#submit-button");
 const formError = document.querySelector("#form-error");
@@ -18,6 +19,7 @@ let pollTimer = null;
 
 addDealForm.addEventListener("submit", addDeal);
 runForm.addEventListener("submit", startRun);
+workflowSelect.addEventListener("change", updateMessageRequirement);
 document.querySelector("#start-run-button").addEventListener("click", showRunForm);
 document.querySelector("#cancel-run-button").addEventListener("click", hideRunForm);
 document.addEventListener("click", handleAppLink);
@@ -67,6 +69,7 @@ async function startRun(event) {
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({
         deal_id: currentDealId,
+        workflow: workflowSelect.value,
         client_message: message,
         file_urls: fileUrls,
       }),
@@ -101,7 +104,7 @@ function loadPageFromUrl() {
 
 async function loadDashboard() {
   showView("dashboard");
-  document.title = "Deals · Sasha QA";
+  document.title = "Deals · Sasha";
   hideError(addDealError);
 
   try {
@@ -118,7 +121,7 @@ async function loadDeal(dealId) {
   hideRunForm();
   hideError(formError);
   setText("#detail-deal-id", dealId);
-  document.title = `Deal ${dealId} · Sasha QA`;
+  document.title = `Deal ${dealId} · Sasha`;
 
   try {
     const response = await fetch(`/api/deals/${encodeURIComponent(dealId)}`);
@@ -217,7 +220,7 @@ function renderDealHistory(deal) {
 
     const main = document.createElement("div");
     const title = document.createElement("strong");
-    title.textContent = run.client_message ? truncate(run.client_message, 72) : "Initial outreach";
+    title.textContent = runTitle(run);
     const time = document.createElement("span");
     time.textContent = formatDate(run.created_at);
     main.append(title, time);
@@ -232,7 +235,7 @@ function renderDealHistory(deal) {
 
 function renderRun(run) {
   currentDealId = run.deal_id;
-  document.title = `Run ${shortId(run.run_id)} · Sasha QA`;
+  document.title = `Run ${shortId(run.run_id)} · Sasha`;
   document.querySelector("#back-to-deal").href = `/deals/${run.deal_id}`;
   setText("#run-id", shortId(run.run_id));
   setText("#run-deal-id", run.deal_id);
@@ -305,7 +308,23 @@ function renderArtifacts(run) {
 
 function showRunForm() {
   runFormCard.classList.remove("hidden");
-  document.querySelector("#client-message").focus();
+  workflowSelect.focus();
+}
+
+function updateMessageRequirement() {
+  document.querySelector("#client-message").required =
+    workflowSelect.value === "client-response-orchestrator";
+}
+
+function runTitle(run) {
+  switch (run.workflow) {
+    case "outreach":
+      return "Initial outreach";
+    case "client-response-orchestrator":
+      return truncate(run.client_message || "Client response", 72);
+    default:
+      return truncate(run.client_message || "Previous run", 72);
+  }
 }
 
 function hideRunForm() {
@@ -315,6 +334,7 @@ function hideRunForm() {
 
 function clearRunForm() {
   runForm.reset();
+  updateMessageRequirement();
   hideRunForm();
 }
 

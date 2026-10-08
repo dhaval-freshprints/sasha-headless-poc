@@ -84,7 +84,7 @@ class KeptOpenBrowserLiveTests(unittest.TestCase):
         cls.deal_url = f"{base_url}/dashboard/sales-pipeline/deal?id={DEAL_ID}"
         cls.quoter_url = f"{base_url}/dashboard/quoter"
         cls.handle = cls.sandbox.prepare(
-            SashaTask(DEAL_ID, f"browser-smoke-{uuid.uuid4().hex[:8]}", cls.deal_url)
+            SashaTask(DEAL_ID, f"browser-smoke-{uuid.uuid4().hex[:8]}", cls.deal_url, workflow="outreach")
         )
         (cls.handle.workspace_directory / "attach.js").write_text(
             ATTACH_SCRIPT, encoding="utf-8"
