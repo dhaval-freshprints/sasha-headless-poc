@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import os
 from contextlib import asynccontextmanager
+from datetime import date
 from pathlib import Path
+from typing import Literal
 from urllib.parse import urlparse
 
 from dotenv import load_dotenv
@@ -14,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from openai_managed.environment import ApplicationEnvironment
+from openai_managed.notes import NotesStore
 from openai_managed.task import Workflow, validate_workflow
 
 from .deals import Deal, DealStore
@@ -24,12 +27,27 @@ ROOT = Path(__file__).resolve().parent.parent
 WEB_DIRECTORY = Path(__file__).resolve().parent
 STATIC_DIRECTORY = WEB_DIRECTORY / "static"
 
+TurnType = Literal["outreach", "response", "follow_up"]
+
+
+class NoCacheStaticFiles(StaticFiles):
+    """Serve static assets without browser caching so edits show up on reload."""
+
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
 
 class RunRequest(BaseModel):
     deal_id: str = Field(pattern=r"^[0-9]+$", min_length=1, max_length=20)
     workflow: Workflow
     client_message: str | None = Field(default=None, max_length=20_000)
     file_urls: list[str] = Field(default_factory=list, max_length=10)
+    turn_type: TurnType | None = None
+    follow_up_stage: int | None = Field(default=None, ge=1, le=5)
+    as_of_date: str | None = Field(default=None, max_length=32)
+    days_since_client_reply: int | None = Field(default=None, ge=0)
 
     @model_validator(mode="after")
     def check_workflow(self) -> "RunRequest":
@@ -57,6 +75,43 @@ class RunRequest(BaseModel):
             cleaned.append(url)
         return cleaned
 
+    @field_validator("as_of_date")
+    @classmethod
+    def validate_as_of_date(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        try:
+            return date.fromisoformat(value.strip()).isoformat()
+        except ValueError as error:
+            raise ValueError("as_of_date must be an ISO date (YYYY-MM-DD)") from error
+
+    @model_validator(mode="after")
+    def validate_turn(self) -> "RunRequest":
+        turn_type = self.turn_type
+        if turn_type is None:
+            turn_type = "outreach" if self.client_message is None else "response"
+            self.turn_type = turn_type
+
+        if turn_type == "follow_up":
+            if self.follow_up_stage is None:
+                raise ValueError("follow_up_stage is required for follow-up runs")
+            if self.as_of_date is None:
+                raise ValueError("as_of_date is required for follow-up runs")
+            if self.client_message is not None:
+                raise ValueError("follow-up runs must not include a client_message")
+            if self.file_urls:
+                raise ValueError("follow-up runs must not include artwork URLs")
+        else:
+            if self.follow_up_stage is not None or self.as_of_date is not None:
+                raise ValueError(
+                    "follow_up_stage and as_of_date are only valid for follow-up runs"
+                )
+            if self.days_since_client_reply is not None:
+                raise ValueError(
+                    "days_since_client_reply is only valid for follow-up runs"
+                )
+        return self
+
 
 class DealRequest(BaseModel):
     deal_id: str = Field(pattern=r"^[0-9]+$", min_length=1, max_length=20)
@@ -79,19 +134,21 @@ def create_app(
     app = FastAPI(title="Sasha Sales", lifespan=lifespan)
     app.state.job_manager = manager
     app.state.deal_store = deals
-    app.mount("/static", StaticFiles(directory=STATIC_DIRECTORY), name="static")
+    app.mount("/static", NoCacheStaticFiles(directory=STATIC_DIRECTORY), name="static")
+
+    _no_cache_headers = {"Cache-Control": "no-store"}
 
     @app.get("/", response_class=FileResponse)
-    def home() -> Path:
-        return STATIC_DIRECTORY / "index.html"
+    def home() -> FileResponse:
+        return FileResponse(STATIC_DIRECTORY / "index.html", headers=_no_cache_headers)
 
     @app.get("/runs/{run_id}", response_class=FileResponse)
-    def run_page(run_id: str) -> Path:
-        return STATIC_DIRECTORY / "index.html"
+    def run_page(run_id: str) -> FileResponse:
+        return FileResponse(STATIC_DIRECTORY / "index.html", headers=_no_cache_headers)
 
     @app.get("/deals/{deal_id}", response_class=FileResponse)
-    def deal_page(deal_id: str) -> Path:
-        return STATIC_DIRECTORY / "index.html"
+    def deal_page(deal_id: str) -> FileResponse:
+        return FileResponse(STATIC_DIRECTORY / "index.html", headers=_no_cache_headers)
 
     @app.get("/api/deals")
     def list_deals() -> list[dict]:
@@ -113,15 +170,36 @@ def create_app(
             raise HTTPException(status_code=404, detail="Deal not found") from error
         return _deal_payload(deal, manager.list_for_deal(deal_id), include_runs=True)
 
+    @app.get("/api/deals/{deal_id}/notes")
+    def get_deal_notes(deal_id: str) -> dict:
+        try:
+            store = NotesStore(_notes_runs_directory(), deal_id)
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        try:
+            notes = store.load()
+        except (OSError, ValueError) as error:
+            raise HTTPException(
+                status_code=500, detail=f"Could not read deal notes: {error}"
+            ) from error
+        return {"deal_id": deal_id, "notes": notes}
+
     @app.post("/api/runs", status_code=202)
     def create_run(request: RunRequest) -> dict:
         deals.touch(request.deal_id)
-        run = manager.submit(
-            request.deal_id,
-            request.client_message,
-            request.file_urls,
-            workflow=request.workflow,
-        )
+        try:
+            run = manager.submit(
+                request.deal_id,
+                request.client_message,
+                request.file_urls,
+                workflow=request.workflow,
+                turn_type=request.turn_type,
+                follow_up_stage=request.follow_up_stage,
+                as_of_date=request.as_of_date,
+                days_since_client_reply=request.days_since_client_reply,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
         return run.to_dict()
 
     @app.get("/api/runs/{run_id}")
@@ -156,6 +234,14 @@ def _deals_directory() -> Path:
     if configured:
         return Path(configured).expanduser() / environment
     return ROOT / "runs" / "webapp" / "deals" / environment
+
+
+def _notes_runs_directory() -> Path:
+    """Match the runs directory OpenAIManagedRunner uses, so saved deal notes line up."""
+    configured = os.environ.get("OPENAI_MANAGED_RUNS_DIRECTORY", "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    return ROOT / "runs" / "openai-managed"
 
 
 def _backfill_deals(deals: DealStore, runs: list[WebRun]) -> None:

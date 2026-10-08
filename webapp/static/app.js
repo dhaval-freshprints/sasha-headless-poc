@@ -10,18 +10,33 @@ const addDealError = document.querySelector("#add-deal-error");
 const runForm = document.querySelector("#run-form");
 const workflowSelect = document.querySelector("#workflow");
 const runFormCard = document.querySelector("#run-form-card");
+const followupForm = document.querySelector("#followup-form");
+const followupFormCard = document.querySelector("#followup-form-card");
 const submitButton = document.querySelector("#submit-button");
+const followupSubmitButton = document.querySelector("#followup-submit-button");
 const formError = document.querySelector("#form-error");
+const followupFormError = document.querySelector("#followup-form-error");
 const runError = document.querySelector("#run-error");
+
+const FOLLOWUP_STAGE_LABELS = {
+  1: "Reignite interest",
+  2: "Relevance & gentle pressure",
+  3: "Invite honesty",
+  4: "Final answer",
+  5: "Re-engage",
+};
 
 let currentDealId = "";
 let pollTimer = null;
 
 addDealForm.addEventListener("submit", addDeal);
 runForm.addEventListener("submit", startRun);
+followupForm.addEventListener("submit", startFollowup);
 workflowSelect.addEventListener("change", updateMessageRequirement);
 document.querySelector("#start-run-button").addEventListener("click", showRunForm);
 document.querySelector("#cancel-run-button").addEventListener("click", hideRunForm);
+document.querySelector("#start-followup-button").addEventListener("click", showFollowupForm);
+document.querySelector("#cancel-followup-button").addEventListener("click", hideFollowupForm);
 document.addEventListener("click", handleAppLink);
 window.addEventListener("popstate", loadPageFromUrl);
 
@@ -85,6 +100,43 @@ async function startRun(event) {
   }
 }
 
+async function startFollowup(event) {
+  event.preventDefault();
+  hideError(followupFormError);
+  followupSubmitButton.disabled = true;
+  followupSubmitButton.textContent = "Starting…";
+
+  const stage = Number(document.querySelector("#followup-stage").value);
+  const asOfDate = document.querySelector("#as-of-date").value;
+  const daysValue = document.querySelector("#days-since-reply").value.trim();
+  const payload = {
+    deal_id: currentDealId,
+    workflow: "outreach",
+    turn_type: "follow_up",
+    follow_up_stage: stage,
+    as_of_date: asOfDate,
+  };
+  if (daysValue !== "") {
+    payload.days_since_client_reply = Number(daysValue);
+  }
+
+  try {
+    const response = await fetch("/api/runs", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(payload),
+    });
+    const run = await readResponse(response);
+    clearFollowupForm();
+    navigate(`/runs/${run.run_id}`, run);
+  } catch (error) {
+    showError(followupFormError, error.message);
+  } finally {
+    followupSubmitButton.disabled = false;
+    followupSubmitButton.textContent = "Run follow-up";
+  }
+}
+
 function loadPageFromUrl() {
   stopPolling();
   const runMatch = window.location.pathname.match(/^\/runs\/([a-f0-9]+)$/);
@@ -119,9 +171,12 @@ async function loadDeal(dealId) {
   showView("deal");
   currentDealId = dealId;
   hideRunForm();
+  hideFollowupForm();
   hideError(formError);
+  hideError(followupFormError);
   setText("#detail-deal-id", dealId);
   document.title = `Deal ${dealId} · Sasha`;
+  loadDealNotes(dealId, "deal-notes-content");
 
   try {
     const response = await fetch(`/api/deals/${encodeURIComponent(dealId)}`);
@@ -132,6 +187,22 @@ async function loadDeal(dealId) {
     document.querySelector("#no-runs").classList.remove("hidden");
     showError(formError, error.message);
     showRunForm();
+  }
+}
+
+async function loadDealNotes(dealId, elementId) {
+  const element = document.querySelector(`#${elementId}`);
+  if (!element || !dealId) {
+    return;
+  }
+  try {
+    const response = await fetch(`/api/deals/${encodeURIComponent(dealId)}/notes`);
+    const payload = await readResponse(response);
+    element.textContent = payload.notes && payload.notes.trim()
+      ? payload.notes
+      : "No saved notes yet for this deal.";
+  } catch (error) {
+    element.textContent = `Could not load deal notes: ${error.message}`;
   }
 }
 
@@ -239,9 +310,12 @@ function renderRun(run) {
   document.querySelector("#back-to-deal").href = `/deals/${run.deal_id}`;
   setText("#run-id", shortId(run.run_id));
   setText("#run-deal-id", run.deal_id);
+  setText("#turn-type", turnTypeLabel(run));
   setText("#elapsed", formatDuration(currentElapsedSeconds(run)));
   setText("#started-at", formatDate(run.started_at));
   setText("#finished-at", formatDate(run.finished_at));
+  renderFollowupMeta(run);
+  loadDealNotes(run.deal_id, "run-notes-content");
 
   const badge = document.querySelector("#status-badge");
   badge.textContent = capitalize(run.status);
@@ -307,6 +381,7 @@ function renderArtifacts(run) {
 }
 
 function showRunForm() {
+  hideFollowupForm();
   runFormCard.classList.remove("hidden");
   workflowSelect.focus();
 }
@@ -314,17 +389,6 @@ function showRunForm() {
 function updateMessageRequirement() {
   document.querySelector("#client-message").required =
     workflowSelect.value === "client-response-orchestrator";
-}
-
-function runTitle(run) {
-  switch (run.workflow) {
-    case "outreach":
-      return "Initial outreach";
-    case "client-response-orchestrator":
-      return truncate(run.client_message || "Client response", 72);
-    default:
-      return truncate(run.client_message || "Previous run", 72);
-  }
 }
 
 function hideRunForm() {
@@ -336,6 +400,74 @@ function clearRunForm() {
   runForm.reset();
   updateMessageRequirement();
   hideRunForm();
+}
+
+function showFollowupForm() {
+  hideRunForm();
+  followupFormCard.classList.remove("hidden");
+  const dateInput = document.querySelector("#as-of-date");
+  if (!dateInput.value) {
+    dateInput.value = new Date().toISOString().slice(0, 10);
+  }
+  document.querySelector("#followup-stage").focus();
+}
+
+function hideFollowupForm() {
+  followupFormCard.classList.add("hidden");
+  hideError(followupFormError);
+}
+
+function clearFollowupForm() {
+  followupForm.reset();
+  hideFollowupForm();
+}
+
+function runTitle(run) {
+  if (run.turn_type === "follow_up") {
+    const stage = run.follow_up_stage || "?";
+    const label = FOLLOWUP_STAGE_LABELS[stage] || "Follow-up";
+    return `Follow-up · Stage ${stage} · ${label}`;
+  }
+  switch (run.workflow) {
+    case "outreach":
+      return "Initial outreach";
+    case "client-response-orchestrator":
+      return truncate(run.client_message || "Client response", 72);
+    default:
+      return truncate(run.client_message || "Previous run", 72);
+  }
+}
+
+function turnTypeLabel(run) {
+  if (run.turn_type === "follow_up") {
+    return `Follow-up · Stage ${run.follow_up_stage || "?"}`;
+  }
+  if (run.workflow === "outreach" || (!run.workflow && !run.client_message)) {
+    return "Outreach";
+  }
+  return "Client response";
+}
+
+function renderFollowupMeta(run) {
+  const element = document.querySelector("#followup-meta");
+  if (run.turn_type !== "follow_up") {
+    element.classList.add("hidden");
+    element.textContent = "";
+    return;
+  }
+  const parts = [];
+  if (run.as_of_date) {
+    parts.push(`As-of ${run.as_of_date}`);
+  }
+  if (run.days_since_client_reply !== null && run.days_since_client_reply !== undefined) {
+    parts.push(`${run.days_since_client_reply} day(s) since client reply`);
+  }
+  const stageLabel = FOLLOWUP_STAGE_LABELS[run.follow_up_stage] || "";
+  if (stageLabel) {
+    parts.unshift(stageLabel);
+  }
+  element.textContent = parts.join(" · ");
+  element.classList.toggle("hidden", parts.length === 0);
 }
 
 function showView(name) {

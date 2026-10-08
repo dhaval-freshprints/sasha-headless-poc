@@ -132,6 +132,34 @@ class DockerSandboxTests(unittest.TestCase):
             "Ask about quantity and timing.",
         )
 
+    def test_copies_followup_stage_skill_into_run_workspace(self):
+        for stage in range(1, 6):
+            with self.subTest(stage=stage):
+                sandbox = DockerSandbox(self.config, "executor-key")
+                task = SashaTask(
+                    "303839",
+                    f"followup-{stage}-303839",
+                    "https://qa.example/deal?id=303839",
+                    workflow="outreach",
+                    turn_type="follow_up",
+                    follow_up_stage=stage,
+                    as_of_date="2026-10-08",
+                )
+
+                handle = sandbox.prepare(task)
+
+                self.assertEqual(
+                    {path.name for path in (handle.workspace_directory / "capabilities").iterdir()},
+                    {"sasha-sales", f"followup-stage-{stage}"},
+                )
+                skill_file = (
+                    handle.workspace_directory
+                    / "capabilities"
+                    / f"followup-stage-{stage}"
+                    / "SKILL.md"
+                )
+                self.assertTrue(skill_file.is_file(), skill_file)
+
     @patch("openai_managed.sandbox.subprocess.Popen")
     @patch("openai_managed.sandbox.subprocess.run")
     def test_authenticates_in_the_same_container_without_exposing_credentials(

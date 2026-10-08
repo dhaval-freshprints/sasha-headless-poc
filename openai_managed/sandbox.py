@@ -58,7 +58,12 @@ class DockerSandbox:
         workspace_directory.mkdir(parents=True, exist_ok=False)
         try:
             (workspace_directory / "artifacts").mkdir()
-            for skill_name in ("sasha-sales", task.workflow):
+            turn_type = task.resolved_turn_type()
+            if turn_type == "follow_up":
+                workflow_skill = f"followup-stage-{task.follow_up_stage}"
+            else:
+                workflow_skill = task.workflow
+            for skill_name in ("sasha-sales", workflow_skill):
                 shutil.copytree(
                     CAPABILITIES_DIRECTORY / skill_name,
                     capabilities_directory / skill_name,
@@ -72,6 +77,10 @@ class DockerSandbox:
                         "client_message": task.client_message,
                         "workflow": task.workflow,
                         "conversation_history": list(task.conversation_history),
+                        "turn_type": task.resolved_turn_type(),
+                        "follow_up_stage": task.follow_up_stage,
+                        "as_of_date": task.as_of_date,
+                        "days_since_client_reply": task.days_since_client_reply,
                     },
                     indent=2,
                 ),

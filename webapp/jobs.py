@@ -33,6 +33,10 @@ class WebRun:
     client_message: str | None
     file_urls: list[str]
     workflow: Workflow | None = None
+    turn_type: str = "response"
+    follow_up_stage: int | None = None
+    as_of_date: str | None = None
+    days_since_client_reply: int | None = None
     status: str = "queued"
     created_at: str = field(default_factory=utc_now)
     started_at: str = ""
@@ -50,7 +54,13 @@ class WebRun:
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "WebRun":
-        return cls(**value)
+        known = {field.name for field in cls.__dataclass_fields__.values()}
+        payload = {key: value[key] for key in known if key in value}
+        if "turn_type" not in payload:
+            payload["turn_type"] = (
+                "outreach" if payload.get("client_message") is None else "response"
+            )
+        return cls(**payload)
 
 
 RunnerFactory = Callable[[Callable[[str], None]], Any]
@@ -77,10 +87,25 @@ class JobManager:
         file_urls: list[str],
         *,
         workflow: Workflow,
+        turn_type: str | None = None,
+        follow_up_stage: int | None = None,
+        as_of_date: str | None = None,
+        days_since_client_reply: int | None = None,
     ) -> WebRun:
         if not deal_id.isdigit():
             raise ValueError("deal_id must contain only digits")
         validate_workflow(workflow, client_message)
+
+        resolved_turn_type = turn_type or (
+            "outreach" if client_message is None else "response"
+        )
+        if resolved_turn_type == "follow_up":
+            if follow_up_stage is None or not 1 <= follow_up_stage <= 5:
+                raise ValueError("follow_up_stage must be an integer from 1 to 5")
+            if not as_of_date:
+                raise ValueError("as_of_date is required for follow-up runs")
+            client_message = None
+            file_urls = []
 
         run = WebRun(
             run_id=uuid.uuid4().hex,
@@ -88,6 +113,10 @@ class JobManager:
             client_message=client_message,
             file_urls=list(file_urls),
             workflow=workflow,
+            turn_type=resolved_turn_type,
+            follow_up_stage=follow_up_stage,
+            as_of_date=as_of_date,
+            days_since_client_reply=days_since_client_reply,
         )
         with self.lock:
             self.jobs[run.run_id] = run
@@ -148,6 +177,12 @@ class JobManager:
             client_message=run.client_message,
             workflow=run.workflow,
             file_urls=tuple(run.file_urls),
+            turn_type=run.turn_type if run.turn_type in {
+                "outreach", "response", "follow_up"
+            } else None,
+            follow_up_stage=run.follow_up_stage,
+            as_of_date=run.as_of_date,
+            days_since_client_reply=run.days_since_client_reply,
         )
 
     def _start(self, run_id: str) -> None:

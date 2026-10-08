@@ -7,6 +7,7 @@ from typing import Any, Literal
 
 Workflow = Literal["outreach", "client-response-orchestrator"]
 WORKFLOWS = ("outreach", "client-response-orchestrator")
+TurnType = Literal["outreach", "response", "follow_up"]
 
 
 def validate_workflow(workflow: str, client_message: str | None) -> None:
@@ -48,6 +49,17 @@ class SashaTask:
     conversation_history: tuple[dict[str, Any], ...] = ()
     file_urls: tuple[str, ...] = ()
     deal_notes: str = ""
+    turn_type: TurnType | None = None
+    follow_up_stage: int | None = None
+    as_of_date: str | None = None
+    days_since_client_reply: int | None = None
+
+    def resolved_turn_type(self) -> TurnType:
+        if self.turn_type is not None:
+            return self.turn_type
+        if self.client_message is None:
+            return "outreach"
+        return "response"
 
     def __post_init__(self) -> None:
         validate_workflow(self.workflow, self.client_message)

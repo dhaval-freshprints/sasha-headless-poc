@@ -37,9 +37,36 @@ textarea {
 }
 
 .shell {
-  width: min(900px, calc(100% - 32px));
+  width: min(1180px, calc(100% - 32px));
   margin: 0 auto;
   padding: 64px 0 96px;
+}
+
+.view-layout {
+  display: flex;
+  align-items: flex-start;
+  gap: 24px;
+}
+
+.view-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.notes-panel {
+  position: sticky;
+  top: 24px;
+  flex: 0 0 320px;
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+}
+
+.notes-panel pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+  font-size: 0.86rem;
+  line-height: 1.5;
 }
 
 .hero,
@@ -92,6 +119,24 @@ textarea {
   justify-content: space-between;
   gap: 28px;
   margin-bottom: 28px;
+}
+
+.heading-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+select,
+input[type="date"],
+input[type="number"] {
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  color: var(--ink);
 }
 
 h1,
@@ -169,7 +214,7 @@ label span,
 
 .deal-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 16px;
 }
 
@@ -492,6 +537,22 @@ pre {
 
 .hidden {
   display: none !important;
+}
+
+@media (max-width: 900px) {
+  .view-layout {
+    flex-direction: column;
+  }
+
+  .notes-panel {
+    position: static;
+    width: 100%;
+    max-height: none;
+  }
+
+  .deal-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 640px) {
