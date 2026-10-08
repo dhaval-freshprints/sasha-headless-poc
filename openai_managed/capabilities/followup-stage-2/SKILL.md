@@ -7,7 +7,7 @@ description: Draft a Stage 2 scheduled follow-up (days 4–7) that adds relevanc
 
 Use this skill for a scheduled follow-up when the task says stage 2. There is no new inbound client message.
 
-Read [../sasha-sales/references/playbook.md](../sasha-sales/references/playbook.md) for voice, HTML format, evidence, and safety. Read relevant sections in [../sasha-sales/references/workplace.md](../sasha-sales/references/workplace.md) before navigating.
+Read [../sasha-sales/references/shared_crafting.md](../sasha-sales/references/shared_crafting.md) for voice, HTML format, and samples. Read relevant sections in [../sasha-sales/references/workplace.md](../sasha-sales/references/workplace.md) before navigating, and follow the Evidence rules in [../sasha-sales/SKILL.md](../sasha-sales/SKILL.md).
 
 ## Follow-up turn
 
@@ -50,4 +50,4 @@ Rules for this stage:
 
 ## Evidence
 
-Follow the playbook evidence rules. State only facts observed on this run or already present in the supplied conversation.
+Follow the Evidence rules in [../sasha-sales/SKILL.md](../sasha-sales/SKILL.md). State only facts observed on this run or already present in the supplied conversation.

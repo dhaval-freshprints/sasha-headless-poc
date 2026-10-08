@@ -7,7 +7,7 @@ description: Draft a Stage 1 scheduled follow-up (days 1–3) that reignites int
 
 Use this skill for a scheduled follow-up when the task says stage 1. There is no new inbound client message.
 
-Read [../sasha-sales/references/playbook.md](../sasha-sales/references/playbook.md) for voice, HTML format, evidence, and safety. Read relevant sections in [../sasha-sales/references/workplace.md](../sasha-sales/references/workplace.md) before navigating.
+Read [../sasha-sales/references/shared_crafting.md](../sasha-sales/references/shared_crafting.md) for voice, HTML format, and samples. Read relevant sections in [../sasha-sales/references/workplace.md](../sasha-sales/references/workplace.md) before navigating, and follow the Evidence rules in [../sasha-sales/SKILL.md](../sasha-sales/SKILL.md).
 
 ## Follow-up turn
 
@@ -35,7 +35,7 @@ Rules for this stage:
 - Named products need verified names, QA product URLs when shown, and quoter prices only after you read them this turn. Up to three grounded options; one is fine.
 - Design ideas need a real link when the gallery provides one. Never invent peer stories or trend claims.
 - Prefer Stage 1 tactics only. Use timeline honesty if delivery facts make a soft Stage 1 angle misleading.
-- When `product_suggestion` offers a sample, follow the playbook's sample approval rule before promising it.
+- When `product_suggestion` offers a sample, follow the sample approval rule in shared_crafting.md before promising it.
 
 ## Run the turn
 
@@ -51,4 +51,4 @@ Rules for this stage:
 
 ## Evidence
 
-Follow the playbook evidence rules. State only facts observed on this run or already present in the supplied conversation.
+Follow the Evidence rules in [../sasha-sales/SKILL.md](../sasha-sales/SKILL.md). State only facts observed on this run or already present in the supplied conversation.

@@ -7,7 +7,7 @@ description: Draft a Stage 3 scheduled follow-up (days 8–12) that invites hone
 
 Use this skill for a scheduled follow-up when the task says stage 3. There is no new inbound client message.
 
-Read [../sasha-sales/references/playbook.md](../sasha-sales/references/playbook.md) for voice, HTML format, evidence, and safety. Read relevant sections in [../sasha-sales/references/workplace.md](../sasha-sales/references/workplace.md) before navigating.
+Read [../sasha-sales/references/shared_crafting.md](../sasha-sales/references/shared_crafting.md) for voice, HTML format, and samples. Read relevant sections in [../sasha-sales/references/workplace.md](../sasha-sales/references/workplace.md) before navigating, and follow the Evidence rules in [../sasha-sales/SKILL.md](../sasha-sales/SKILL.md).
 
 ## Follow-up turn
 
@@ -22,7 +22,7 @@ Read [../sasha-sales/references/playbook.md](../sasha-sales/references/playbook.
 
 | Tactic | Use when |
 |---|---|
-| `check_on_product` | They may still doubt fit, feel, or quality. Name a real product from this run. Blank sample is optional when playbook sample rules allow it. |
+| `check_on_product` | They may still doubt fit, feel, or quality. Name a real product from this run. Blank sample is optional when the sample rules in shared_crafting.md allow it. |
 | `check_on_price` | They seem price sensitive. Name at least one cheaper grounded alternative with a verified quoter price and print option when a prior priced product exists. |
 | `decision_simplification` | Many proofs or prior options feel overwhelming. Recommend one grounded path and, when possible, a new gallery or design direction link not already used. |
 | `offer_alternative` | Current path is stuck, and a different grounded product, design, or timeline salvage can solve the blocker. |
@@ -48,4 +48,4 @@ Rules for this stage:
 
 ## Evidence
 
-Follow the playbook evidence rules. State only facts observed on this run or already present in the supplied conversation.
+Follow the Evidence rules in [../sasha-sales/SKILL.md](../sasha-sales/SKILL.md). State only facts observed on this run or already present in the supplied conversation.

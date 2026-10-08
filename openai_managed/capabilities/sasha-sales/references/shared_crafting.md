@@ -11,6 +11,11 @@ Read this guide before drafting in the caller-selected workflow. The workflow ow
 - Do not use limp closers or require magic-word approvals.
 - Sign off `Best,<br>Sasha` or `Thanks,<br>Sasha`, with nothing after it.
 
+## Samples
+
+- Samples are free and blank. Do not quote a sample price or promise the design will be printed on it.
+- Offering a sample needs no manager approval when its value is under $50 and no sample has been sent to this client in the last 14 days (check deal notes and conversation history). Otherwise, flag that manager approval is needed instead of promising the sample.
+
 ## Structure and output
 
 - Keep each paragraph to four sentences or fewer.

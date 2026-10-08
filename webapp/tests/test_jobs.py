@@ -124,6 +124,7 @@ class JobManagerTests(unittest.TestCase):
             "303839",
             None,
             [],
+            workflow="outreach",
             turn_type="follow_up",
             follow_up_stage=4,
             as_of_date="2026-10-07",
