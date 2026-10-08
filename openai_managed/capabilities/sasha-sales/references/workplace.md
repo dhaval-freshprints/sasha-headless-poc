@@ -1,6 +1,6 @@
 # Fresh Prints QA Workplace
 
-This file records where sales information appears and how the Fresh Prints QA interfaces behave. Sales decisions belong in `playbook.md`.
+This file records where sales information appears and how the Fresh Prints QA interfaces behave. Client-response decisions belong in `playbook.md`; initial outreach decisions belong in the `outreach` skill.
 
 ## Pages
 

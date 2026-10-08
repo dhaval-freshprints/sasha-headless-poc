@@ -212,8 +212,26 @@ behaviors.
 - `openai_managed/notes.py`: shared Markdown notebooks
 - `openai_managed/attachments.py`: temporary client artwork downloads
 - `openai_managed/SASHA01_agent_instructions.md`: stable agent boundaries
-- `openai_managed/capabilities/sasha-sales/`: Sasha skill and references
+- `openai_managed/capabilities/sasha-sales/`: shared browser, evidence, and formatting rules, plus client-response guidance
+- `openai_managed/capabilities/outreach/SKILL.md`: shared outreach inspection, actions, and message instructions
 - `scripts/run_openai_managed_sasha.py`: CLI entry point
+
+## Customize initial outreach
+
+Edit [the outreach skill](openai_managed/capabilities/outreach/SKILL.md) to change
+what Sasha looks at and does during outreach, and how the message should read.
+Its sections cover inspection and actions, writing style, proof and rush states,
+and details to leave out. This is shared configuration for all outreach runs.
+
+When no client message is supplied, `sasha-sales` reads this skill instead of the
+client-response playbook. Browser mechanics, evidence requirements, HTML output,
+and agent boundaries remain shared. Client responses keep using the sales
+playbook.
+
+Each run copies the capability files when its sandbox is prepared. Skill edits
+apply to subsequently prepared runs; existing run copies do not change. No
+Python changes are needed for later outreach instruction edits. Restart an
+already-running webapp once after installing this extraction's Python change.
 
 ## Tests
 

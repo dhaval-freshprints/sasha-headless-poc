@@ -537,25 +537,22 @@ class ManagedRunnerTests(unittest.TestCase):
         self.assertIn("Sasha result schema", instructions)
         self.assertNotIn("initial outreach", instructions.lower())
 
-    def test_outreach_playbooks_exclude_crm_account_names(self):
+    def test_outreach_skill_excludes_crm_account_names(self):
         repository_root = Path(__file__).resolve().parents[1]
-        playbook_paths = [
+        skill_path = (
             repository_root
             / "openai_managed"
             / "capabilities"
-            / "sasha-sales"
-            / "references"
-            / "playbook.md"
-        ]
+            / "outreach"
+            / "SKILL.md"
+        )
+        skill = skill_path.read_text(encoding="utf-8")
 
-        for playbook_path in playbook_paths:
-            playbook = playbook_path.read_text(encoding="utf-8")
-
-            self.assertIn(
-                "Never mention the client's organization, account, school, club, "
-                "association, or CRM account name in initial outreach",
-                playbook,
-            )
+        self.assertIn(
+            "Never mention the client's organization, account, school, club, "
+            "association, or CRM account name in initial outreach",
+            skill,
+        )
 
     def test_playbooks_use_natural_product_references(self):
         repository_root = Path(__file__).resolve().parents[1]

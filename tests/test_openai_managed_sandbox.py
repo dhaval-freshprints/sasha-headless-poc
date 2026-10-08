@@ -59,23 +59,59 @@ class DockerSandboxTests(unittest.TestCase):
         )
         self.assertEqual(task_data["client_message"], "What's the price for 40?")
 
-    def test_copies_sasha_skill_into_run_workspace(self):
-        sandbox = DockerSandbox(self.config, "executor-key")
-        task = SashaTask(
-            "303839",
-            "response-303839",
-            "https://qa.example/deal?id=303839",
-            "What's the price for 40?",
+    def test_copies_sales_and_outreach_skills_into_each_run_workspace(self):
+        source_directory = (
+            Path(__file__).resolve().parents[1] / "openai_managed" / "capabilities"
         )
-
-        handle = sandbox.prepare(task)
-
-        skill_directory = (
-            handle.workspace_directory / "capabilities" / "sasha-sales"
+        skill_files = (
+            "sasha-sales/SKILL.md",
+            "sasha-sales/references/playbook.md",
+            "sasha-sales/references/workplace.md",
+            "outreach/SKILL.md",
         )
-        self.assertTrue((skill_directory / "SKILL.md").is_file())
-        self.assertTrue((skill_directory / "references" / "playbook.md").is_file())
-        self.assertTrue((skill_directory / "references" / "workplace.md").is_file())
+        for client_message in (None, "What's the price for 40?"):
+            with self.subTest(client_message=client_message):
+                sandbox = DockerSandbox(self.config, "executor-key")
+                task = SashaTask(
+                    "303839",
+                    "task-303839",
+                    "https://qa.example/deal?id=303839",
+                    client_message,
+                )
+
+                handle = sandbox.prepare(task)
+
+                for relative_path in skill_files:
+                    copied_file = (
+                        handle.workspace_directory / "capabilities" / relative_path
+                    )
+                    self.assertEqual(
+                        copied_file.read_text(),
+                        (source_directory / relative_path).read_text(),
+                    )
+
+    def test_outreach_edits_apply_to_new_runs_without_changing_prepared_runs(self):
+        source_directory = self.root / "capabilities"
+        outreach_directory = source_directory / "outreach"
+        outreach_directory.mkdir(parents=True)
+        source_file = outreach_directory / "SKILL.md"
+        source_file.write_text("Ask about quantity.")
+        task = SashaTask("303839", "outreach-303839", "https://qa.example/deal?id=303839")
+
+        with patch("openai_managed.sandbox.CAPABILITIES_DIRECTORY", source_directory):
+            first_run = DockerSandbox(self.config, "executor-key").prepare(task)
+            source_file.write_text("Ask about quantity and timing.")
+            second_run = DockerSandbox(self.config, "executor-key").prepare(task)
+
+        relative_path = Path("capabilities/outreach/SKILL.md")
+        self.assertEqual(
+            (first_run.workspace_directory / relative_path).read_text(),
+            "Ask about quantity.",
+        )
+        self.assertEqual(
+            (second_run.workspace_directory / relative_path).read_text(),
+            "Ask about quantity and timing.",
+        )
 
     @patch("openai_managed.sandbox.subprocess.Popen")
     @patch("openai_managed.sandbox.subprocess.run")
