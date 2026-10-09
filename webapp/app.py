@@ -41,18 +41,13 @@ class NoCacheStaticFiles(StaticFiles):
 
 class RunRequest(BaseModel):
     deal_id: str = Field(pattern=r"^[0-9]+$", min_length=1, max_length=20)
-    workflow: Workflow
+    workflow: Workflow | None = None
     client_message: str | None = Field(default=None, max_length=20_000)
     file_urls: list[str] = Field(default_factory=list, max_length=10)
     turn_type: TurnType | None = None
     follow_up_stage: int | None = Field(default=None, ge=1, le=5)
     as_of_date: str | None = Field(default=None, max_length=32)
     days_since_client_reply: int | None = Field(default=None, ge=0)
-
-    @model_validator(mode="after")
-    def check_workflow(self) -> "RunRequest":
-        validate_workflow(self.workflow, self.client_message)
-        return self
 
     @field_validator("client_message")
     @classmethod
@@ -101,6 +96,8 @@ class RunRequest(BaseModel):
                 raise ValueError("follow-up runs must not include a client_message")
             if self.file_urls:
                 raise ValueError("follow-up runs must not include artwork URLs")
+            if self.workflow is None:
+                self.workflow = "outreach"
         else:
             if self.follow_up_stage is not None or self.as_of_date is not None:
                 raise ValueError(
@@ -110,6 +107,7 @@ class RunRequest(BaseModel):
                 raise ValueError(
                     "days_since_client_reply is only valid for follow-up runs"
                 )
+        validate_workflow(self.workflow, self.client_message)
         return self
 
 

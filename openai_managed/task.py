@@ -44,7 +44,7 @@ class SashaTask:
     deal_id: str
     task_id: str
     deal_url: str
-    workflow: Workflow = field(kw_only=True)
+    workflow: Workflow | None = field(default=None, kw_only=True)
     client_message: str | None = None
     conversation_history: tuple[dict[str, Any], ...] = ()
     file_urls: tuple[str, ...] = ()
@@ -62,6 +62,12 @@ class SashaTask:
         return "response"
 
     def __post_init__(self) -> None:
+        if self.resolved_turn_type() == "follow_up":
+            if self.workflow is not None:
+                validate_workflow(self.workflow, self.client_message)
+            return
+        if self.workflow is None:
+            raise TypeError("workflow is a required keyword argument")
         validate_workflow(self.workflow, self.client_message)
 
 

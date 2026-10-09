@@ -662,7 +662,9 @@ class OpenAIManagedRunner:
 
     @staticmethod
     def _build_task_message(
-        task: SashaTask, application: ApplicationEnvironment, files: AttachmentSet | None = None
+        task: SashaTask,
+        application: ApplicationEnvironment | None = None,
+        files: AttachmentSet | None = None,
     ) -> str:
         previous_conversation = json.dumps(
             list(task.conversation_history),
@@ -734,14 +736,31 @@ class OpenAIManagedRunner:
                 "fresh link. Otherwise continue the task.\n\n"
             )
 
+        if turn_type == "follow_up":
+            header = (
+                f"{opening}\n"
+                f"Runtime version: {RUNNER_VERSION}.\n"
+                f"Use the `{skill_name}` skill.\n\n"
+            )
+        else:
+            application_block = (
+                "Application destinations supplied by the deployment:\n"
+                f"{application.task_context()}\n\n"
+                if application is not None
+                else ""
+            )
+            header = (
+                f"{opening}\n"
+                f"{application_block}"
+                f"Runtime version: {RUNNER_VERSION}.\n"
+                "Use the `sasha-sales` skill.\n\n"
+                f"Selected workflow: {skill_name}.\n"
+                f"Use the `{skill_name}` skill for this turn.\n"
+                "The caller selected this workflow; do not infer or switch workflows.\n\n"
+            )
+
         return (
-            f"{opening}\n"
-            "Application destinations supplied by the deployment:\n"
-            f"{application.task_context()}\n\n"
-            f"Runtime version: {RUNNER_VERSION}.\n"
-            "Use the `sasha-sales` skill.\n\n"
-            f"Use the `{skill_name}` skill for this turn.\n"
-            "The caller selected this workflow; do not infer or switch workflows.\n\n"
+            f"{header}"
             f"Deal ID: {task.deal_id}\n"
             f"Originating task ID: {task.task_id}\n"
             f"Deal URL: {task.deal_url}\n\n"

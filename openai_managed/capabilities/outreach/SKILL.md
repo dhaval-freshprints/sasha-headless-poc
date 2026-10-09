@@ -21,6 +21,8 @@ Before drafting, inspect the complete deal history. Use page text and screenshot
 
 When the page indicates additional content, verify that it has loaded and read it before continuing. A successful click or expanded panel is not proof that the content was retrieved. If the expected content is missing, inspect the loading or error state, use a bounded wait for the content to appear, and retry using the current page state. If it remains unavailable, record the history as incomplete and avoid presenting potentially superseded details as confirmed.
 
+Never mention the client's organization, account, school, club, association, or CRM account name in initial outreach, even when it is visible on the deal or proof. Those values are internal context, not outreach copy.
+
 ## Questions
 
 - Ask only for information not already provided in the conversation or verified on the deal. Do not repeat answered questions.
