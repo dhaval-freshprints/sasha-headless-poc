@@ -25,6 +25,7 @@ class FakeRunner:
         self.additional_messages.submit(submission_id, text)
 
     def run(self, task):
+        self.last_task = task
         if self.additional_messages:
             self.additional_messages.open()
         self.write("Fake Sasha inspected the deal.")

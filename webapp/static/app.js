@@ -1,3 +1,17 @@
+const FOLLOWUP_STAGE_LABELS = {
+  1: "Reignite interest",
+  2: "Relevance & gentle pressure",
+  3: "Invite honesty",
+  4: "Final answer",
+  5: "Re-engage",
+};
+const followupForm = document.querySelector("#followup-form");
+const followupFormCard = document.querySelector("#followup-form-card");
+const followupSubmitButton = document.querySelector("#followup-submit-button");
+const followupFormError = document.querySelector("#followup-form-error");
+followupForm.addEventListener("submit", startFollowup);
+document.querySelector("#start-followup-button").addEventListener("click", showFollowupForm);
+document.querySelector("#cancel-followup-button").addEventListener("click", hideFollowupForm);
 const views = {
   dashboard: document.querySelector("#dashboard-view"),
   deal: document.querySelector("#deal-view"),
@@ -122,6 +136,8 @@ async function loadDashboard() {
 async function loadDeal(dealId) {
   showView("deal");
   currentDealId = dealId;
+  hideFollowupForm();
+  loadDealNotes(dealId, "deal-notes-content");
   hideRunForm();
   hideError(formError);
   setText("#detail-deal-id", dealId);
@@ -238,6 +254,8 @@ function renderDealHistory(deal) {
 }
 
 function renderRun(run) {
+  renderFollowupMeta(run);
+  loadDealNotes(run.deal_id, "run-notes-content");
   if (!currentRun || currentRun.run_id !== run.run_id) {
     const draft = readAdditionalMessageDraft(run.run_id);
     additionalMessageText.value = draft?.text || "";
@@ -397,11 +415,17 @@ function renderArtifacts(run) {
 }
 
 function showRunForm() {
+  hideFollowupForm();
   runFormCard.classList.remove("hidden");
   document.querySelector("#client-message").focus();
 }
 
 function runTitle(run) {
+  if (run.turn_type === "follow_up") {
+    return `Requested follow-up check · Stage ${run.follow_up_stage}`;
+  }
+  if (run.turn_type === "outreach") return "Initial outreach";
+  if (run.turn_type === "response") return truncate(run.client_message || "Client response", 72);
   switch (run.workflow) {
     case "outreach":
       return "Initial outreach";
@@ -528,4 +552,103 @@ function runCountText(count) {
 
 function truncate(value, length) {
   return value.length > length ? `${value.slice(0, length - 1)}…` : value;
+}
+
+async function startFollowup(event) {
+  event.preventDefault();
+  hideError(followupFormError);
+  followupSubmitButton.disabled = true;
+  followupSubmitButton.textContent = "Starting…";
+
+  const stage = Number(document.querySelector("#followup-stage").value);
+  const asOfDate = document.querySelector("#as-of-date").value;
+  const daysValue = document.querySelector("#days-since-reply").value.trim();
+  const payload = {
+    deal_id: currentDealId,
+    turn_type: "follow_up",
+    follow_up_stage: stage,
+    as_of_date: asOfDate,
+  };
+  if (daysValue !== "") {
+    payload.days_since_client_reply = Number(daysValue);
+  }
+
+  try {
+    const response = await fetch("/api/runs", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(payload),
+    });
+    const run = await readResponse(response);
+    clearFollowupForm();
+    navigate(`/runs/${run.run_id}`, run);
+  } catch (error) {
+    showError(followupFormError, error.message);
+  } finally {
+    followupSubmitButton.disabled = false;
+    followupSubmitButton.textContent = "Run follow-up";
+  }
+}
+
+async function loadDealNotes(dealId, elementId) {
+  const element = document.querySelector(`#${elementId}`);
+  if (!element || !dealId) {
+    return;
+  }
+  if (element.dataset.dealId !== dealId) element.textContent = "Loading…";
+  element.dataset.dealId = dealId;
+  try {
+    const response = await fetch(`/api/deals/${encodeURIComponent(dealId)}/notes`);
+    const payload = await readResponse(response);
+    if (element.dataset.dealId !== dealId) return;
+    element.textContent = payload.notes && payload.notes.trim()
+      ? payload.notes
+      : "No saved notes yet for this deal.";
+  } catch (error) {
+    if (element.dataset.dealId !== dealId) return;
+    element.textContent = `Could not load deal notes: ${error.message}`;
+  }
+}
+
+function showFollowupForm() {
+  hideRunForm();
+  followupFormCard.classList.remove("hidden");
+  const dateInput = document.querySelector("#as-of-date");
+  if (!dateInput.value) {
+    const now = new Date();
+    dateInput.value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  }
+  document.querySelector("#followup-stage").focus();
+}
+
+function hideFollowupForm() {
+  followupFormCard.classList.add("hidden");
+  hideError(followupFormError);
+}
+
+function clearFollowupForm() {
+  followupForm.reset();
+  hideFollowupForm();
+}
+
+function renderFollowupMeta(run) {
+  const element = document.querySelector("#followup-meta");
+  if (run.turn_type !== "follow_up") {
+    element.classList.add("hidden");
+    element.textContent = "";
+    return;
+  }
+  const parts = [`Requested follow-up check · Stage ${run.follow_up_stage}`];
+  if (run.as_of_date) {
+    parts.push(`As-of ${run.as_of_date}`);
+  }
+  if (run.days_since_client_reply !== null && run.days_since_client_reply !== undefined) {
+    parts.push(`${run.days_since_client_reply} day(s) since client reply`);
+  }
+  const stageLabel = FOLLOWUP_STAGE_LABELS[run.follow_up_stage] || "";
+  if (stageLabel) {
+    parts.push(stageLabel);
+  }
+  element.textContent = parts.join(" · ");
+  element.classList.toggle("hidden", parts.length === 0);
 }

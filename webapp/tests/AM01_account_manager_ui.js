@@ -5,7 +5,8 @@ const { chromium } = require('playwright');
 
 async function main() {
   const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] });
-  const page = await browser.newPage();
+  const page = await browser.newPage({ timezoneId: 'America/Los_Angeles' });
+  await page.clock.install({ time: new Date('2026-10-13T02:00:00Z') });
   const runId = 'a'.repeat(32);
   let submitted;
   let run = {
@@ -21,7 +22,9 @@ async function main() {
       await route.fulfill({ path: `/repo/webapp${path}` });
       return;
     }
-    if (path === '/api/deals/900001') {
+    if (path === '/api/deals/900001/notes') {
+      data = { deal_id: '900001', notes: 'Stage 1 follow-up generated: offer_art_team' };
+    } else if (path === '/api/deals/900001') {
       data = { deal_id: '900001', runs: [], run_count: 0 };
     } else if (path === '/api/runs' && request.method() === 'POST') {
       submitted = request.postDataJSON();
@@ -39,6 +42,26 @@ async function main() {
     await route.fulfill({ json: data });
   });
   try {
+    await page.goto('http://account-manager.test/deals/900001');
+    await page.locator('#deal-notes-content').getByText('Stage 1 follow-up generated: offer_art_team').waitFor();
+    await page.getByRole('button', { name: 'Follow-up check', exact: true }).click();
+    assert.equal(await page.locator('#as-of-date').inputValue(), '2026-10-12');
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    await page.setViewportSize({ width: 390, height: 844 });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.locator('#followup-stage').selectOption('4');
+    await page.locator('#days-since-reply').fill('99');
+    run = { ...run, turn_type: 'follow_up', follow_up_stage: 4, as_of_date: '2026-10-12', days_since_client_reply: 99 };
+    await page.getByRole('button', { name: 'Run follow-up', exact: true }).click();
+    await page.locator('#additional-message-button:not([disabled])').waitFor();
+    assert.deepEqual(submitted, { deal_id: '900001', turn_type: 'follow_up', follow_up_stage: 4, as_of_date: '2026-10-12', days_since_client_reply: 99 });
+    assert.match(await page.locator('#followup-meta').textContent(), /Requested follow-up check · Stage 4/);
+    await page.locator('#run-notes-content').getByText('Stage 1 follow-up generated: offer_art_team').waitFor();
+    await page.locator('#additional-message-text').fill('Does the sample include printing?');
+    await page.getByRole('button', { name: 'Send Additional Message', exact: true }).click();
+    await page.getByText('Does the sample include printing?\nAccepted', { exact: true }).waitFor();
+    run = { ...run, turn_type: null, follow_up_stage: null, as_of_date: null, days_since_client_reply: null, messages: [] };
     await page.goto('http://account-manager.test/deals/900001');
     await page.getByRole('button', { name: 'Start new run', exact: true }).click();
     assert.equal(await page.locator('#workflow').count(), 0);
@@ -67,7 +90,7 @@ async function main() {
     await page.reload();
     await page.getByText('Fixture browser failure', { exact: true }).waitFor();
     assert.equal(await page.locator('#no-reply-needed').isVisible(), false);
-    console.log('PASS: optional input, removed selector, additional messages, no reply, draft preview, and failure rendering');
+    console.log('PASS: follow-up form, local date, metadata, notes, active follow-up messages, optional input, removed selector, additional messages, no reply, draft preview, and failure rendering');
   } finally {
     await browser.close();
   }

@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Literal
 from urllib.parse import urlparse
 
 from dotenv import load_dotenv
@@ -14,7 +15,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from openai_managed.environment import ApplicationEnvironment
-from openai_managed.task import normalize_client_message
+from openai_managed.task import normalize_client_message, validate_follow_up
+from openai_managed.notes import NotesStore
 
 from .deals import Deal, DealStore
 from .jobs import JobManager, WebRun
@@ -28,10 +30,28 @@ WEB_DIRECTORY = Path(__file__).resolve().parent
 STATIC_DIRECTORY = WEB_DIRECTORY / "static"
 
 
+class NoCacheStaticFiles(StaticFiles):
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+
 class RunRequest(BaseModel):
     deal_id: str = Field(pattern=r"^[0-9]+$", min_length=1, max_length=20)
     client_message: str | None = Field(default=None, max_length=20_000)
     file_urls: list[str] = Field(default_factory=list, max_length=10)
+
+    turn_type: Literal["follow_up"] | None = None
+    follow_up_stage: int | None = Field(default=None, strict=True, ge=1, le=5)
+    as_of_date: str | None = None
+    days_since_client_reply: int | None = Field(default=None, strict=True, ge=0)
+
+    @model_validator(mode="after")
+    def validate_turn(self):
+        validate_follow_up(self.turn_type, self.follow_up_stage, self.as_of_date,
+                           self.days_since_client_reply, self.client_message, self.file_urls)
+        return self
 
     @model_validator(mode="before")
     @classmethod
@@ -97,16 +117,16 @@ def create_app(
     app.state.job_manager = manager
     app.state.deal_store = deals
     app.state.lookup_manager = lookups
-    app.mount("/static", StaticFiles(directory=STATIC_DIRECTORY), name="static")
+    app.mount("/static", NoCacheStaticFiles(directory=STATIC_DIRECTORY), name="static")
 
     @app.get("/", response_class=FileResponse)
-    def home() -> Path:
-        return STATIC_DIRECTORY / "index.html"
+    def home() -> FileResponse:
+        return FileResponse(STATIC_DIRECTORY / "index.html", headers={"Cache-Control": "no-store"})
 
     @app.get("/deal-manager", response_class=FileResponse)
     @app.get("/deal-manager/lookups/{lookup_id}", response_class=FileResponse)
-    def lookup_page() -> Path:
-        return STATIC_DIRECTORY / "deal_manager.html"
+    def lookup_page() -> FileResponse:
+        return FileResponse(STATIC_DIRECTORY / "deal_manager.html", headers={"Cache-Control": "no-store"})
 
     @app.post("/api/deal-manager/lookups", status_code=202)
     def create_lookup(request: LookupRequest) -> dict:
@@ -124,12 +144,12 @@ def create_app(
             raise HTTPException(status_code=404, detail="Lookup not found") from error
 
     @app.get("/runs/{run_id}", response_class=FileResponse)
-    def run_page(run_id: str) -> Path:
-        return STATIC_DIRECTORY / "index.html"
+    def run_page(run_id: str) -> FileResponse:
+        return FileResponse(STATIC_DIRECTORY / "index.html", headers={"Cache-Control": "no-store"})
 
     @app.get("/deals/{deal_id}", response_class=FileResponse)
-    def deal_page(deal_id: str) -> Path:
-        return STATIC_DIRECTORY / "index.html"
+    def deal_page(deal_id: str) -> FileResponse:
+        return FileResponse(STATIC_DIRECTORY / "index.html", headers={"Cache-Control": "no-store"})
 
     @app.get("/api/deals")
     def list_deals() -> list[dict]:
@@ -151,6 +171,18 @@ def create_app(
             raise HTTPException(status_code=404, detail="Deal not found") from error
         return _deal_payload(deal, manager.list_for_deal(deal_id), include_runs=True)
 
+    @app.get("/api/deals/{deal_id}/notes")
+    def get_deal_notes(deal_id: str) -> dict:
+        try:
+            store = NotesStore(_notes_runs_directory(), deal_id)
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        try:
+            notes = store.load()
+        except (OSError, ValueError) as error:
+            raise HTTPException(status_code=500, detail=f"Could not read deal notes: {error}") from error
+        return {"deal_id": deal_id, "notes": notes}
+
     @app.post("/api/runs", status_code=202)
     def create_run(request: RunRequest) -> dict:
         deals.touch(request.deal_id)
@@ -158,6 +190,10 @@ def create_app(
             request.deal_id,
             request.client_message,
             request.file_urls,
+            turn_type=request.turn_type,
+            follow_up_stage=request.follow_up_stage,
+            as_of_date=request.as_of_date,
+            days_since_client_reply=request.days_since_client_reply,
         )
         return run.to_dict()
 
@@ -202,6 +238,13 @@ def _deals_directory() -> Path:
     if configured:
         return Path(configured).expanduser() / environment
     return ROOT / "runs" / "webapp" / "deals" / environment
+
+
+def _notes_runs_directory() -> Path:
+    environment = ApplicationEnvironment.from_environment().name
+    configured = os.environ.get("OPENAI_MANAGED_RUNS_DIRECTORY", "").strip()
+    root = Path(configured).expanduser() if configured else ROOT / "runs" / "openai-managed"
+    return root / environment
 
 
 def _backfill_deals(deals: DealStore, runs: list[WebRun]) -> None:

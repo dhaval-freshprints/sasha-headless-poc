@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from openai_managed.conversation import ConversationStore
 from openai_managed.additional_messages import AdditionalMessageInbox
 from openai_managed.task import SashaTask
+from openai_managed.notes import NotesStore, NOTES_OUTPUT_NAME, follow_up_entries
 from tests import test_openai_managed_runner as runner_tests
 
 
@@ -105,6 +106,56 @@ class AdditionalMessageTests(unittest.TestCase):
         self.worker.join(5)
         self.assertFalse(self.worker.is_alive())
         return self.results[0]
+
+    def followup_task(self):
+        self.task = SashaTask("303839", "follow-up", runner_tests.TASK_URL,
+                             turn_type="follow_up", follow_up_stage=4, as_of_date="2026-10-13")
+
+    def test_followup_completion_race_selects_response_and_discards_proposed_tactic(self):
+        self.followup_task()
+        notes = NotesStore(self.runner.settings.runs_directory, "303839")
+        notes.path.parent.mkdir(parents=True)
+        prior = "- Stage 1 follow-up generated: offer_art_team"
+        notes.path.write_text("## Current decisions\n" + prior)
+        original_publish = self.runner._publish_notes
+        def publish(store, task, result):
+            candidate = self.runner.last_run_directory / "workspace" / NOTES_OUTPUT_NAME
+            candidate.write_text("## Current decisions\n- Stage 4 follow-up generated: close_the_loop")
+            original_publish(store, task, result)
+        self.runner._publish_notes = publish
+        self.test_completion_during_delivery_waits_for_new_turn_and_uses_its_answer()
+        self.assertEqual(follow_up_entries(notes.load()), [prior])
+
+    def test_message_attached_after_same_turn_answer_continues_before_completing(self):
+        self.followup_task()
+        self.control.before_additional_message = lambda: self.control.complete("turn-1", "")
+        self.start()
+        self.runner.submit_message("late-inbound", "Are samples free?")
+        self.assertTrue(self.control.additional_message_sent.wait(2))
+        # Simulate the API's accepted message remaining on a completed turn.
+        self.control.turns["turn-1"] = "completed"
+        self.control.stream.queue.put({"type": "agent.session.turn.completed", "turn_id": "turn-1"})
+        self.control.before_additional_message = None
+        self.control.next_turn = "turn-2"
+        wait_until(lambda: len(self.control.sent) == 3)
+        self.assertTrue(self.worker.is_alive())
+        self.assertEqual(self.control.sent[-1][1], "completion-continuation:late-inbound")
+        self.control.complete("turn-2", "<p>Samples are free and blank.</p>")
+        self.assertEqual(self.finish().message_html, "<p>Samples are free and blank.</p>")
+        self.assertEqual(len(self.sandboxes), 1)
+        history = ConversationStore(self.runner.settings.runs_directory, "303839").load()
+        self.assertEqual([item["content"] for item in history],
+                         ["Are samples free?", "<p>Samples are free and blank.</p>"])
+        self.assertEqual(len(self.runner.additional_messages.messages), 1)
+
+    def test_followup_deferred_delivery_reuses_session(self):
+        self.followup_task()
+        self.test_unsteerable_message_waits_then_reuses_same_submission_key()
+        self.assertEqual(len(self.sandboxes), 1)
+
+    def test_followup_message_during_final_check_prevents_cleanup(self):
+        self.followup_task()
+        self.test_message_arriving_during_final_check_prevents_cleanup()
 
     def test_message_uses_existing_session_and_is_saved_in_history(self):
         self.start()
