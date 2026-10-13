@@ -1,0 +1,186 @@
+{
+  "input": {
+    "channel": "EMAIL",
+    "sender_email": "art@freshprints.com",
+    "body": "We won't be able to do ambriodary print on Proof #1862148",
+    "received_at": null
+  },
+  "status": "matched",
+  "deal_id": "348490",
+  "confidence": "high",
+  "reason": "The referenced number resolves to proof_item 1862148, whose parent proof 611399 (SDSU nursing hats) maps uniquely through deal_proofs row 399398 to deal 348490, SDSU bookstore. Item, proof, mapping and deal are not soft-deleted, and proof/deal both identify client 279248.",
+  "reference_resolution": {
+    "literal_label": "Proof",
+    "literal_id": "1862148",
+    "resolved_entity": "prod-v3.proof_item",
+    "resolved_id": "1862148",
+    "parent_proof_id": "611399",
+    "notice": "No proof_request row or direct deal_proofs mapping exists for 1862148. The message uses Proof for a proof-item identifier; this distinction is preserved."
+  },
+  "candidate_deals": [
+    {
+      "deal_id": "348490",
+      "supports": [
+        "Exact proof-item ID match",
+        "Verified parent proof 611399",
+        "One non-deleted deal mapping",
+        "Proof and deal share client 279248, Tony Starks"
+      ],
+      "conflicts": []
+    }
+  ],
+  "evidence": [
+    {
+      "query_id": "item",
+      "table": "prod-v3.proof_item",
+      "primary_key": {
+        "id": 1862148
+      },
+      "fields": {
+        "proof_id": 611399,
+        "deleted_at": null
+      }
+    },
+    {
+      "query_id": "chain",
+      "table": "prod-v3.proof_request",
+      "primary_key": {
+        "id": 611399
+      },
+      "fields": {
+        "name": "SDSU nursing hats",
+        "client_id": 279248,
+        "deleted_at": null
+      }
+    },
+    {
+      "query_id": "chain",
+      "table": "prod-v3.deal_proofs",
+      "primary_key": {
+        "id": 399398
+      },
+      "fields": {
+        "proof_id": 611399,
+        "deal_id": 348490,
+        "deleted_at": null
+      }
+    },
+    {
+      "query_id": "chain",
+      "table": "prod-v3.deals",
+      "primary_key": {
+        "id": 348490
+      },
+      "fields": {
+        "title": "SDSU bookstore",
+        "client_id": 279248,
+        "stage": "proof-submitted",
+        "deleted_at": null
+      }
+    },
+    {
+      "query_id": "item_designs",
+      "table": "prod-v3.design",
+      "primary_key": {
+        "id": 2619453
+      },
+      "fields": {
+        "proof_id": 611399,
+        "proof_item_id": 1862148,
+        "deleted_at": null
+      }
+    }
+  ],
+  "checks": {
+    "proof_links": {
+      "rows": [],
+      "truncated": false,
+      "row_limit": 1000
+    },
+    "proof": {
+      "rows": [],
+      "truncated": false,
+      "row_limit": 50
+    },
+    "item": {
+      "rows": [
+        {
+          "id": 1862148,
+          "proof_id": 611399,
+          "description": "No description.",
+          "apparel_style": "AD969",
+          "created_at": "2026-05-26 18:11:47",
+          "deleted_at": null
+        }
+      ],
+      "truncated": false,
+      "row_limit": 50
+    },
+    "design": {
+      "rows": [
+        {
+          "id": 1862148,
+          "proof_id": null,
+          "proof_item_id": null,
+          "apparel_name": "LIGHTWEIGHT Sweatpant",
+          "apparel_style_code": "G184",
+          "created_at": "2025-02-23 22:33:38",
+          "deleted_at": null
+        }
+      ],
+      "truncated": false,
+      "row_limit": 50
+    },
+    "mentions": {
+      "rows": [],
+      "truncated": false,
+      "row_limit": 50
+    },
+    "chain": {
+      "rows": [
+        {
+          "proof_item_id": 1862148,
+          "proof_id": 611399,
+          "item_deleted_at": null,
+          "proof_name": "SDSU nursing hats",
+          "proof_client_id": 279248,
+          "proof_deleted_at": null,
+          "mapping_id": 399398,
+          "deal_id": 348490,
+          "mapping_deleted_at": null,
+          "title": "SDSU bookstore",
+          "client_id": 279248,
+          "stage": "proof-submitted",
+          "deal_deleted_at": null,
+          "first_name": "Tony",
+          "last_name": "Starks"
+        }
+      ],
+      "truncated": false,
+      "row_limit": 100
+    },
+    "item_designs": {
+      "rows": [
+        {
+          "id": 2619453,
+          "proof_id": 611399,
+          "proof_item_id": 1862148,
+          "apparel_name": "",
+          "apparel_style_code": "AD969",
+          "decor_method_info": null,
+          "print_type_info": null,
+          "deleted_at": null
+        }
+      ],
+      "truncated": false,
+      "row_limit": 100
+    }
+  },
+  "limitations": [
+    "Current-state lookup; no received timestamp was supplied.",
+    "The same integer is also a design row ID, but that row has no proof_id or proof_item_id and provided no competing proof/deal relationship. It was not treated as the referenced proof.",
+    "This determines the deal association; it does not verify embroidery feasibility or authorize any production changes.",
+    "No user-confirmed expected label has yet been supplied for this sample."
+  ],
+  "next_check": null
+}

@@ -1,0 +1,125 @@
+{
+  "branch": "feature/openai-agent",
+  "base_commit": "7ea37b5",
+  "imported_t1_commit": "638b55b",
+  "resolver_tests": {
+    "passed": 32,
+    "command": ".venv/bin/python -m unittest discover -s sasha_deal_agent/tests -p 'SASHADEAL01_test*.py' -q"
+  },
+  "existing_web_tests": {
+    "passed": 17
+  },
+  "existing_core_tests": {
+    "run": 116,
+    "failures": 1,
+    "skipped": 4,
+    "baseline_failure": "test_outreach_skill_excludes_crm_account_names",
+    "baseline_reproduced_at": "7ea37b5"
+  },
+  "container": {
+    "built": true,
+    "tls_database_select_1": true,
+    "codex_exec_server_available": true,
+    "skills": [
+      "sasha-deal-database",
+      "sasha-resolve-deal"
+    ]
+  },
+  "browser_checks": {
+    "data": "synthetic only",
+    "matched_result": true,
+    "refresh_restores_input_and_result": true,
+    "needs_review_result": true,
+    "saved_lookup_history": true
+  },
+  "skill_validation": "both passed",
+  "live_email_regression": {
+    "status": "completed",
+    "approved_by_user": true,
+    "matches_original_expected_id": 3,
+    "total": 4,
+    "cases": [
+      {
+        "case": "SASHADEAL01_art_proof_item_sample",
+        "lookup_id": "59ba94eda13146de94092d0f4446040f",
+        "job_status": "completed",
+        "original_expected_deal_id": "348490",
+        "matches_original_expected_id": true,
+        "decision_status": "matched",
+        "deal_id": "348490",
+        "candidate_deals": [
+          "348490"
+        ],
+        "reason": "\u201cProof #1862148\u201d is a proof_item ID, not a proof_request ID. That item links to proof request 611399 and its sole non-deleted mapping to deal 348490; the proof request and verified deal share client 279248 (Q002, Q004, Q005, Q007)."
+      },
+      {
+        "case": "SASHADEAL01_drawstrings_sample",
+        "lookup_id": "a0fb96a9452f4555a2a746451ed0ec61",
+        "job_status": "completed",
+        "original_expected_deal_id": "396982",
+        "matches_original_expected_id": false,
+        "decision_status": "needs_review",
+        "deal_id": null,
+        "candidate_deals": [
+          "396982",
+          "396985"
+        ],
+        "reason": "The subject identifies a verified client and proof name, but two non-deleted proofs with that exact name map to two non-deleted deals for the same client (Q001\u2013Q003). The drawstring clue fits scoped client correspondence without a deal link (Q015). Available metadata cannot distinguish the deals."
+      },
+      {
+        "case": "SASHADEAL01_proof_question_sample",
+        "lookup_id": "9623192b3b64454f90544000e8b92d77",
+        "job_status": "completed",
+        "original_expected_deal_id": "348490",
+        "matches_original_expected_id": true,
+        "decision_status": "matched",
+        "deal_id": "348490",
+        "candidate_deals": [
+          "348490"
+        ],
+        "reason": "The exact sender matches one active client with one direct, non-deleted deal. That client's active proofs map to the same deal, corroborating the proof question. No competing deal appeared in the completed scoped lookups."
+      },
+      {
+        "case": "SASHADEAL01_sdsu_bookstore_sample",
+        "lookup_id": "80bc3bf95f60471181bbe68953e91940",
+        "job_status": "completed",
+        "original_expected_deal_id": "348490",
+        "matches_original_expected_id": true,
+        "decision_status": "matched",
+        "deal_id": "348490",
+        "candidate_deals": [
+          "348490"
+        ],
+        "reason": "The message explicitly names Tony and SDSU Bookstore. Q003 links Tony to that organization, Q006 finds one deal for Tony or the account, and Q007 verifies that deal as non-deleted with the title SDSU bookstore. The relationship identifies the deal, though the available records do not establish a budget amount."
+      }
+    ],
+    "kenda_data_change": {
+      "rows": [
+        {
+          "proof_id": 652188,
+          "name": "Design for Kenda Foreman",
+          "proof_created_at": "2026-10-12 10:37:19",
+          "deal_id": 396982,
+          "mapping_id": 452866,
+          "deal_created_at": "2026-10-12 10:37:18",
+          "deal_deleted_at": null,
+          "proof_deleted_at": null
+        },
+        {
+          "proof_id": 652189,
+          "name": "Design for Kenda Foreman",
+          "proof_created_at": "2026-10-12 11:01:10",
+          "deal_id": 396985,
+          "mapping_id": 452867,
+          "deal_created_at": "2026-10-12 11:01:08",
+          "deal_deleted_at": null,
+          "proof_deleted_at": null
+        }
+      ],
+      "truncated": false,
+      "row_limit": 100
+    },
+    "interpretation": "The historical Kenda fixture expected 396982. A later non-deleted proof with the same name now maps to 396985 for the same client. The agent abstained with both candidates. The live regression script exits 1 because that historical expectation is no longer uniquely supported; no expected IDs were changed or sent to the agent.",
+    "runtime_fixes": "Use /opt/lookup-python/bin/python; load container secret/CA paths even when the executor shell omits environment variables. Added offline regression tests. Later live runs used the corrected skill/runtime settings."
+  }
+}

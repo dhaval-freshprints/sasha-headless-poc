@@ -1,0 +1,290 @@
+{
+  "date": "2026-10-12",
+  "scope": [
+    "prod-v3",
+    "dev_sasha_operations_v3",
+    "qa-crm"
+  ],
+  "tests": [
+    {
+      "command": [
+        "/Users/dhaval/Desktop/fresh_prints/sasha_code/sasha-browser-poc-worktrees/explore-alternatives/.venv/bin/python",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "sasha_deal_agent/tests",
+        "-p",
+        "SASHADEAL01_test_*.py",
+        "-v"
+      ],
+      "exit_code": 0,
+      "output": "test_bound_values_and_row_truncation (SASHADEAL01_test_deal_evidence.DatabaseTests.test_bound_values_and_row_truncation) ... ok\ntest_write_and_file_access_rejected_before_execution (SASHADEAL01_test_deal_evidence.DatabaseTests.test_write_and_file_access_rejected_before_execution) ... ok\ntest_crm_multiple_clients_are_preserved_and_flagged (SASHADEAL01_test_deal_evidence.EvidenceTests.test_crm_multiple_clients_are_preserved_and_flagged) ... ok\ntest_crm_phone_pair_includes_both_directions (SASHADEAL01_test_deal_evidence.EvidenceTests.test_crm_phone_pair_includes_both_directions) ... ok\ntest_crm_replay_skips_current_provider_message (SASHADEAL01_test_deal_evidence.EvidenceTests.test_crm_replay_skips_current_provider_message) ... ok\ntest_failures_and_truncation_are_not_silent_no_matches (SASHADEAL01_test_deal_evidence.EvidenceTests.test_failures_and_truncation_are_not_silent_no_matches) ... ok\ntest_missing_deal_is_not_presented_as_verified (SASHADEAL01_test_deal_evidence.EvidenceTests.test_missing_deal_is_not_presented_as_verified) ... ok\ntest_prior_history_excludes_future_rows_and_target (SASHADEAL01_test_deal_evidence.EvidenceTests.test_prior_history_excludes_future_rows_and_target) ... ok\ntest_provider_id_is_not_treated_as_sasha_external_id (SASHADEAL01_test_deal_evidence.EvidenceTests.test_provider_id_is_not_treated_as_sasha_external_id) ... ok\ntest_replay_never_uses_current_message_association (SASHADEAL01_test_deal_evidence.EvidenceTests.test_replay_never_uses_current_message_association) ... ok\ntest_thread_keeps_conflicting_deal_candidates (SASHADEAL01_test_deal_evidence.EvidenceTests.test_thread_keeps_conflicting_deal_candidates) ... ok\ntest_email_preserves_plus_alias (SASHADEAL01_test_deal_evidence.NormalizationTests.test_email_preserves_plus_alias) ... ok\ntest_international_phone_not_reduced_to_ten_digits (SASHADEAL01_test_deal_evidence.NormalizationTests.test_international_phone_not_reduced_to_ten_digits) ... ok\ntest_invalid_entity_id_is_rejected (SASHADEAL01_test_deal_evidence.NormalizationTests.test_invalid_entity_id_is_rejected) ... ok\ntest_national_phone_requires_country (SASHADEAL01_test_deal_evidence.NormalizationTests.test_national_phone_requires_country) ... ok\ntest_timestamp_requires_zone_and_converts_to_utc (SASHADEAL01_test_deal_evidence.NormalizationTests.test_timestamp_requires_zone_and_converts_to_utc) ... ok\n\n----------------------------------------------------------------------\nRan 16 tests in 0.002s\n\nOK\n"
+    },
+    {
+      "command": [
+        "/Users/dhaval/Desktop/fresh_prints/sasha_code/sasha-browser-poc-worktrees/explore-alternatives/.venv/bin/python",
+        "/Users/dhaval/.codex/skills/.system/skill-creator/scripts/quick_validate.py",
+        "sasha_deal_agent/skills/sasha-deal-database"
+      ],
+      "exit_code": 0,
+      "output": "Skill is valid!\n"
+    },
+    {
+      "command": [
+        "/Users/dhaval/Desktop/fresh_prints/sasha_code/sasha-browser-poc-worktrees/explore-alternatives/.venv/bin/python",
+        "/Users/dhaval/.codex/skills/.system/skill-creator/scripts/quick_validate.py",
+        "sasha_deal_agent/skills/sasha-resolve-deal"
+      ],
+      "exit_code": 0,
+      "output": "Skill is valid!\n"
+    }
+  ],
+  "live_checks": [
+    {
+      "name": "sms_evidence",
+      "mode": "live_investigation",
+      "candidate_ids": [
+        303805
+      ],
+      "queries": 3,
+      "errors": [],
+      "warnings": [
+        "SMS history has no sender/recipient columns. Validate the phone pair using scoped activity rows; a history thread alone cannot prove the SMS recipient line."
+      ],
+      "note": "Retrieval only; candidate IDs are not final matching decisions."
+    },
+    {
+      "name": "sms_replay",
+      "mode": "historical_replay",
+      "candidate_ids": [],
+      "queries": 0,
+      "errors": [],
+      "warnings": [
+        "SMS history has no sender/recipient columns. Validate the phone pair using scoped activity rows; a history thread alone cannot prove the SMS recipient line."
+      ],
+      "note": "Retrieval only; candidate IDs are not final matching decisions."
+    },
+    {
+      "name": "phone_evidence",
+      "mode": "historical_replay",
+      "candidate_ids": [
+        303805
+      ],
+      "queries": 8,
+      "errors": [],
+      "warnings": [
+        "SMS history has no sender/recipient columns. Validate the phone pair using scoped activity rows; a history thread alone cannot prove the SMS recipient line.",
+        "National-format database phone matches are candidates, not verified country ownership. No last-ten-digit matching was used for other countries."
+      ],
+      "note": "Retrieval only; candidate IDs are not final matching decisions."
+    },
+    {
+      "name": "email_evidence",
+      "mode": "historical_replay",
+      "candidate_ids": [
+        303805
+      ],
+      "queries": 8,
+      "errors": [],
+      "warnings": [],
+      "note": "Retrieval only; candidate IDs are not final matching decisions."
+    },
+    {
+      "name": "entity_evidence",
+      "mode": "live_investigation",
+      "candidate_ids": [
+        375849,
+        396469
+      ],
+      "queries": 7,
+      "errors": [],
+      "warnings": [],
+      "note": "Retrieval only; candidate IDs are not final matching decisions."
+    },
+    {
+      "name": "collision_evidence",
+      "mode": "live_investigation",
+      "candidate_ids": [
+        302275,
+        302292,
+        302325,
+        302326,
+        302328
+      ],
+      "queries": 12,
+      "errors": [],
+      "warnings": [
+        "Q012: candidate_prior_conversation: results truncated; uniqueness is unproven"
+      ],
+      "note": "Retrieval only; candidate IDs are not final matching decisions."
+    },
+    {
+      "name": "crm_provider_evidence",
+      "mode": "live_investigation",
+      "candidate_ids": [
+        304013
+      ],
+      "queries": 13,
+      "errors": [],
+      "warnings": [
+        "SMS history has no sender/recipient columns. Validate the phone pair using scoped activity rows; a history thread alone cannot prove the SMS recipient line.",
+        "SMS phone-pair lookup requires sender_phone and recipient_phone",
+        "CRM row 7675643 has activity links to multiple clients; verify participant identity before matching",
+        "Q006: prior_contact_activity: results truncated; uniqueness is unproven",
+        "Q010: prior_contact_activity: results truncated; uniqueness is unproven"
+      ],
+      "note": "Retrieval only; candidate IDs are not final matching decisions."
+    },
+    {
+      "name": "crm_pair_evidence",
+      "mode": "historical_replay",
+      "candidate_ids": [
+        304013,
+        327853
+      ],
+      "queries": 20,
+      "errors": [],
+      "warnings": [
+        "SMS history has no sender/recipient columns. Validate the phone pair using scoped activity rows; a history thread alone cannot prove the SMS recipient line.",
+        "Q001: crm_prior_sms_to_business: results truncated; uniqueness is unproven",
+        "Q002: crm_prior_sms_to_client: results truncated; uniqueness is unproven",
+        "Q003: crm_activity_links_check_participants: results truncated; uniqueness is unproven",
+        "Some CRM messages lack a same-time/channel activity link; this is incomplete evidence, not proof that no deal exists",
+        "CRM row 7252512 has activity links to multiple clients; verify participant identity before matching",
+        "CRM row 7253316 has activity links to multiple clients; verify participant identity before matching",
+        "CRM row 7253582 has activity links to multiple clients; verify participant identity before matching",
+        "CRM row 7253604 has activity links to multiple clients; verify participant identity before matching",
+        "CRM row 7253662 has activity links to multiple clients; verify participant identity before matching",
+        "CRM row 7253664 has activity links to multiple clients; verify participant identity before matching",
+        "CRM row 7254629 has activity links to multiple clients; verify participant identity before matching",
+        "CRM row 7257838 has activity links to multiple clients; verify participant identity before matching",
+        "CRM row 7266367 has activity links to multiple clients; verify participant identity before matching",
+        "CRM row 7268760 has activity links to multiple clients; verify participant identity before matching",
+        "CRM row 7268824 has activity links to multiple clients; verify participant identity before matching",
+        "CRM row 7268846 has activity links to multiple clients; verify participant identity before matching",
+        "CRM row 7269065 has activity links to multiple clients; verify participant identity before matching",
+        "CRM row 7273073 has activity links to multiple clients; verify participant identity before matching",
+        "CRM row 7273075 has activity links to multiple clients; verify participant identity before matching",
+        "CRM row 7274284 has activity links to multiple clients; verify participant identity before matching",
+        "CRM row 7274287 has activity links to multiple clients; verify participant identity before matching",
+        "CRM row 7274301 has activity links to multiple clients; verify participant identity before matching",
+        "CRM row 7274317 has activity links to multiple clients; verify participant identity before matching",
+        "CRM row 7274325 has activity links to multiple clients; verify participant identity before matching",
+        "CRM row 7274366 has activity links to multiple clients; verify participant identity before matching",
+        "CRM row 7274385 has activity links to multiple clients; verify participant identity before matching",
+        "CRM row 7275328 has activity links to multiple clients; verify participant identity before matching",
+        "CRM row 7275330 has activity links to multiple clients; verify participant identity before matching",
+        "CRM row 7275331 has activity links to multiple clients; verify participant identity before matching",
+        "CRM row 7275349 has activity links to multiple clients; verify participant identity before matching",
+        "CRM row 7275433 has activity links to multiple clients; verify participant identity before matching",
+        "CRM row 7276814 has activity links to multiple clients; verify participant identity before matching",
+        "CRM row 7277932 has activity links to multiple clients; verify participant identity before matching",
+        "CRM row 7299174 has activity links to multiple clients; verify participant identity before matching",
+        "CRM row 7299185 has activity links to multiple clients; verify participant identity before matching",
+        "CRM row 7299188 has activity links to multiple clients; verify participant identity before matching",
+        "CRM row 7299196 has activity links to multiple clients; verify participant identity before matching",
+        "CRM row 7299203 has activity links to multiple clients; verify participant identity before matching",
+        "CRM row 7299239 has activity links to multiple clients; verify participant identity before matching",
+        "CRM row 7323488 has activity links to multiple clients; verify participant identity before matching",
+        "CRM row 7328741 has activity links to multiple clients; verify participant identity before matching",
+        "CRM row 7334027 has activity links to multiple clients; verify participant identity before matching",
+        "CRM row 7334185 has activity links to multiple clients; verify participant identity before matching",
+        "CRM row 7406831 has activity links to multiple clients; verify participant identity before matching",
+        "CRM row 7406837 has activity links to multiple clients; verify participant identity before matching",
+        "CRM row 7407686 has activity links to multiple clients; verify participant identity before matching",
+        "CRM row 7408510 has activity links to multiple clients; verify participant identity before matching",
+        "CRM row 7409180 has activity links to multiple clients; verify participant identity before matching",
+        "CRM row 7561345 has activity links to multiple clients; verify participant identity before matching",
+        "CRM row 7561346 has activity links to multiple clients; verify participant identity before matching",
+        "CRM row 7561347 has activity links to multiple clients; verify participant identity before matching",
+        "CRM row 7561352 has activity links to multiple clients; verify participant identity before matching",
+        "CRM row 7574978 has activity links to multiple clients; verify participant identity before matching",
+        "National-format database phone matches are candidates, not verified country ownership. No last-ten-digit matching was used for other countries.",
+        "Q009: prior_contact_activity: results truncated; uniqueness is unproven",
+        "Q015: prior_contact_activity: results truncated; uniqueness is unproven"
+      ],
+      "note": "Retrieval only; candidate IDs are not final matching decisions."
+    },
+    {
+      "name": "entity_relationship_rows",
+      "rows": [
+        {
+          "query_id": "Q001",
+          "source": "order_deal_links",
+          "rows": [
+            {
+              "id": 93763,
+              "deal_id": 375849,
+              "order_id": 194224,
+              "deleted_at": null,
+              "created_at": "2026-10-08 15:00:03"
+            }
+          ],
+          "truncated": false,
+          "row_limit": 100
+        },
+        {
+          "query_id": "Q002",
+          "source": "order_direct_link",
+          "rows": [
+            {
+              "id": 194224,
+              "deal_id": null,
+              "client_id": 223346,
+              "proof_id": null,
+              "created_at": "2026-10-08 15:00:01",
+              "deleted_at": null
+            }
+          ],
+          "truncated": false,
+          "row_limit": 100
+        },
+        {
+          "query_id": "Q003",
+          "source": "proof_deal_links",
+          "rows": [
+            {
+              "id": 451790,
+              "deal_id": 396469,
+              "proof_id": 651268,
+              "created_at": "2026-10-06 19:22:08",
+              "deleted_at": null
+            },
+            {
+              "id": 452825,
+              "deal_id": 375849,
+              "proof_id": 651268,
+              "created_at": "2026-10-08 14:59:45",
+              "deleted_at": null
+            }
+          ],
+          "truncated": false,
+          "row_limit": 100
+        }
+      ]
+    }
+  ],
+  "limits": [
+    "No independent gold labels or user-provided failing examples were available.",
+    "These checks validate retrieval and abstention-related invariants, not agent matching accuracy.",
+    "The email and phone fixtures derive contact values from previously stored associations, so they are not independent accuracy evaluations.",
+    "The phone-pair fixture explicitly supplies a synthetic US country context to exercise national-format matching, not to assert country ownership.",
+    "Read-only queries were used; no CRM/deal mutations or messaging were performed."
+  ],
+  "installation": {
+    "paths": [
+      "/Users/dhaval/.codex/skills/sasha-deal-database/SKILL.md",
+      "/Users/dhaval/.codex/skills/sasha-resolve-deal/SKILL.md"
+    ],
+    "source_copies_sha256_verified": true,
+    "installed_collector_help_exit_code": 0
+  },
+  "artifact_checks": {
+    "local_markdown_links_resolve": true,
+    "json_valid": true,
+    "supplied_passwords_absent": true,
+    "python_compile_passed": true,
+    "git_diff_check_passed": true
+  }
+}

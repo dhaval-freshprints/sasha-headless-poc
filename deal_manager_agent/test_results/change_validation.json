@@ -1,0 +1,67 @@
+{
+  "agent": "Deal Manager Agent",
+  "validation_date": "2026-10-12",
+  "offline_checks": [
+    {
+      "command": ".venv/bin/python -m unittest discover -s deal_manager_agent/tests -p 'DEALMANAGER01_test*.py' -q",
+      "tests": 37,
+      "result": "passed"
+    },
+    {
+      "command": ".venv/bin/python -m unittest discover -s webapp/tests -t . -q",
+      "tests": 17,
+      "result": "passed"
+    },
+    {
+      "command": "node --check webapp/static/DEALMANAGER01_find_deal.js",
+      "result": "passed"
+    },
+    {
+      "check": "Both runtime skill manifests validate",
+      "result": "passed"
+    },
+    {
+      "check": "No former schema literals or named sample answers in runtime bundle",
+      "result": "passed"
+    },
+    {
+      "check": "No configured credential values in renamed source and documents",
+      "result": "passed"
+    }
+  ],
+  "runtime_checks": [
+    {
+      "check": "docker build -f deal_manager_agent/DEALMANAGER01_Dockerfile -t deal-manager-agent:local .",
+      "result": "passed"
+    },
+    {
+      "check": "Container SELECT DATABASE(), 1 for all three roles using environment-selected schemas over TLS",
+      "result": "passed"
+    },
+    {
+      "check": "Private database configuration fallback with executor environment variables omitted",
+      "result": "passed"
+    },
+    {
+      "check": "Smoke-test container removed",
+      "result": "passed"
+    }
+  ],
+  "browser_checks": [
+    {
+      "check": "/deal-manager displays Deal Manager Agent and the email input fields",
+      "result": "passed"
+    },
+    {
+      "check": "Previous lookup history retained via DEAL_MANAGER_DIRECTORY",
+      "result": "passed"
+    },
+    {
+      "check": "Saved lookup opens at /deal-manager/lookups/{lookup_id}, restoring input and result",
+      "result": "passed"
+    }
+  ],
+  "limits": [
+    "No new live OpenAI matching runs were performed for this change. Historical live results remain in separate reports."
+  ]
+}

@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Deal Manager Agent</title>
+    <link rel="icon" href="/static/favicon.svg">
+    <link rel="stylesheet" href="/static/styles.css">
+    <script src="/static/deal_manager.js" defer></script>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="hero">
+        <a class="brand" href="/"><span class="brand-mark">S</span><span><span class="eyebrow">Fresh Prints</span><strong>Sasha Test Console</strong></span></a>
+      </header>
+      <a class="back-link" href="/">← Sales workspace</a>
+      <div class="page-heading"><div><p class="eyebrow">Message routing</p><h1>Deal Manager Agent</h1><p class="subtitle">Enter an email to find the existing deal it belongs to.</p></div></div>
+      <section class="card">
+        <form id="lookup-form">
+          <label for="sender-email">Sender email</label>
+          <input id="sender-email" name="sender_email" type="email" maxlength="254" required placeholder="client@example.com">
+          <label for="email-subject">Subject <span>Optional, but useful for proof requests</span></label>
+          <input id="email-subject" name="subject" maxlength="1000" placeholder="Re: Revision Request on Proof…">
+          <label for="email-body">Email body</label>
+          <textarea id="email-body" name="body" rows="8" maxlength="20000" required placeholder="Paste the email here"></textarea>
+          <button id="lookup-submit" type="submit">Find Deal ID</button>
+        </form>
+        <p id="lookup-error" class="error hidden" role="alert"></p>
+      </section>
+      <section id="lookup-run" class="card hidden" aria-live="polite">
+        <div class="section-heading"><h2>Lookup result</h2><span id="lookup-status" class="status"></span></div>
+        <p id="lookup-id" class="subtitle"></p>
+        <details id="lookup-progress-details" open><summary>Progress</summary><ol id="lookup-progress" class="progress-list"></ol></details>
+        <div id="lookup-result" class="hidden">
+          <h2 id="lookup-answer"></h2>
+          <p id="lookup-reason"></p>
+          <button id="copy-deal" class="hidden" type="button">Copy Deal ID</button>
+          <p id="lookup-next"></p>
+          <div id="lookup-candidates"></div>
+          <details><summary>Evidence and structured result</summary><pre id="lookup-json"></pre></details>
+        </div>
+      </section>
+      <section class="card"><h2>Previous lookups</h2><ul id="lookup-history" class="artifact-list"></ul></section>
+    </main>
+  </body>
+</html>

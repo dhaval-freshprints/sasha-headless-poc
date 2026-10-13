@@ -1,0 +1,146 @@
+{
+  "input": {
+    "sender_email": "dhaval@xyz.com",
+    "body": "Hey Sasha,\n\nConnecting on behalf of Tony. What is the budget for conversation happening for SDSU Bookstore.",
+    "received_at": null,
+    "provider_message_id": null,
+    "thread_id": null
+  },
+  "status": "matched",
+  "deal_id": "348490",
+  "confidence": "high",
+  "reason": "User confirmed deal 348490. The message explicitly represents Tony and names SDSU Bookstore; verified client/account/deal relationships uniquely corroborate those clues. The sender need not have an FP Users record.",
+  "candidate_deals": [
+    {
+      "deal_id": "348490",
+      "supports": [
+        "Exact case-insensitive business-name correspondence: SDSU bookstore",
+        "Linked client 279248 is Tony Starks",
+        "Client account 172699 is SDSU Bookstore",
+        "Deal and client are not soft-deleted",
+        "Contact/account candidate lookup returned one deal without truncation",
+        "The user confirmed this deal and clarified that an unknown sender may connect on behalf of the client."
+      ],
+      "conflicts": []
+    }
+  ],
+  "evidence": [
+    {
+      "query_id": "candidate",
+      "table": "prod-v3.deals",
+      "primary_key": {
+        "id": 348490
+      },
+      "fields": {
+        "title": "SDSU bookstore",
+        "client_id": 279248,
+        "account_id": null,
+        "stage": "proof-submitted",
+        "created_at": "2026-05-02 06:08:45",
+        "deleted_at": null
+      },
+      "interpretation": "Verified existing candidate deal with the business name in the sample."
+    },
+    {
+      "query_id": "candidate",
+      "table": "prod-v3.user",
+      "primary_key": {
+        "id": 279248
+      },
+      "fields": {
+        "first_name": "Tony",
+        "last_name": "Starks",
+        "account_id": 172699,
+        "deleted_at": null
+      },
+      "interpretation": "The candidate deal is directly linked to a client named Tony."
+    },
+    {
+      "query_id": "accounts",
+      "table": "prod-v3.account",
+      "primary_key": {
+        "id": 172699
+      },
+      "fields": {
+        "company": "SDSU Bookstore",
+        "deleted_at": null
+      },
+      "interpretation": "The client account corroborates the business name."
+    }
+  ],
+  "checks": [
+    {
+      "query_id": "bookstore",
+      "description": "Deal titles containing bookstore, joined to client names",
+      "row_count": 22,
+      "truncated": false
+    },
+    {
+      "query_id": "candidate",
+      "sql": "SELECT d.id,d.title,d.client_id,d.account_id,d.stage,d.created_at,d.deleted_at,u.first_name,u.last_name,u.account_id AS contact_account_id FROM `prod-v3`.deals d LEFT JOIN `prod-v3`.user u ON u.id=d.client_id WHERE d.client_id=%s OR d.account_id=%s OR u.account_id=%s ORDER BY d.id DESC",
+      "parameters": [
+        279248,
+        172699,
+        172699
+      ],
+      "row_count": 1,
+      "truncated": false
+    },
+    {
+      "query_id": "sender",
+      "description": "Exact prod-v3.user.email lookup for the supplied sender",
+      "row_count": 0,
+      "truncated": false
+    },
+    {
+      "query_id": "sender_crm",
+      "description": "Non-deleted CRM messages with the supplied sender_email",
+      "row_count": 0,
+      "truncated": false
+    },
+    {
+      "query_id": "history",
+      "description": "Sasha communication subjects/bodies containing SDSU",
+      "row_count": 0,
+      "truncated": false
+    },
+    {
+      "query_id": "activity",
+      "description": "Non-deleted communication activities for deal 348490 or client 279248",
+      "row_count": 0,
+      "truncated": false
+    },
+    {
+      "query_id": "context",
+      "description": "Sasha deal contexts for deal 348490 or client 279248",
+      "row_count": 0,
+      "truncated": false
+    },
+    {
+      "query_id": "tony_sender_and_recipient",
+      "description": "Separate exact CRM sender/recipient searches for the email stored on client 279248",
+      "row_count": 0,
+      "truncated": false
+    }
+  ],
+  "limitations": [
+    "No received timestamp or original thread/message ID was supplied.",
+    "Zero rows in these non-production searches does not establish that no budget conversation exists elsewhere.",
+    "The generic SDSU-or-bookstore title search was truncated; a separate bookstore-only search and contact/account lookup completed without truncation.",
+    "One user-confirmed example supports this routing rule; it is not an overall accuracy measurement."
+  ],
+  "next_check": null,
+  "previous_result": {
+    "status": "needs_review",
+    "deal_id": null,
+    "confidence": "medium",
+    "reason": "The only deal returned for the identified contact/account was 348490, titled SDSU bookstore and linked to Tony Starks. These two text clues make it a strong candidate. The sender relationship and the specific conversation could not be verified from the supplied metadata and searched records."
+  },
+  "confirmation": {
+    "source": "User feedback in this conversation",
+    "date": "2026-10-12",
+    "expected_status": "matched",
+    "expected_deal_id": "348490",
+    "quote": "This is correct result. As this client message is not in FP Users but it was connecting on behalf of Tony."
+  }
+}

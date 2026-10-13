@@ -1,0 +1,280 @@
+{
+  "sample_id": "SASHADEAL01_drawstrings_sample",
+  "checked_on": "2026-10-12",
+  "input": {
+    "channel": "EMAIL",
+    "sender_email": "art@freshprints.com",
+    "subject": "Re: Revision Request on Proof : Design for Kenda Foreman",
+    "received_at": null,
+    "thread_id": null,
+    "body": "Hey Sasha,\n\nThe proof is complete. I've updated the mockup to show the item without drawstrings.\nPlease note that this change is only for the visual mockup; the actual production piece will include drawstrings.\n\nBest,\nRaymund"
+  },
+  "decision": {
+    "status": "matched",
+    "deal_id": 396982,
+    "confidence": "high",
+    "candidates": [
+      396982
+    ],
+    "reason": "The subject names the unique non-deleted proof Design for Kenda Foreman (652188), which maps via deal_proofs row 452866 to non-deleted deal 396982. Its client 297125 is Kenda Foreman; the client/account lookup returned only this deal."
+  },
+  "evidence": [
+    {
+      "query_id": "art_counts",
+      "query_description": "SELECT COUNT(*) AS message_count FROM `qa-crm`.message WHERE deleted_at IS NULL AND sender_email=%s",
+      "parameters": [
+        "art@freshprints.com"
+      ],
+      "result": {
+        "rows": [
+          {
+            "message_count": 0
+          }
+        ],
+        "truncated": false,
+        "row_limit": 100
+      }
+    },
+    {
+      "query_id": "raymund",
+      "query_description": "CRM fulltext email_body_plain",
+      "parameters": [
+        "+drawstring* +Raymund"
+      ],
+      "result": {
+        "rows": [],
+        "truncated": false,
+        "row_limit": 100
+      }
+    },
+    {
+      "query_id": "art",
+      "query_description": "CRM sender_email plus fulltext email_body_plain",
+      "parameters": [
+        "art@freshprints.com",
+        "+drawstring*"
+      ],
+      "result": {
+        "rows": [],
+        "truncated": false,
+        "row_limit": 100
+      }
+    },
+    {
+      "query_id": "phrase",
+      "query_description": "CRM fulltext email_body_plain",
+      "parameters": [
+        "+drawstring* +\"visual mockup\""
+      ],
+      "result": {
+        "rows": [],
+        "truncated": false,
+        "row_limit": 30
+      }
+    },
+    {
+      "query_id": "drawstring_phrase",
+      "query_description": "CRM fulltext email_body_plain",
+      "parameters": [
+        "+drawstring* +\"actual production\""
+      ],
+      "result": {
+        "rows": [],
+        "truncated": false,
+        "row_limit": 20
+      }
+    },
+    {
+      "query_id": "internal_hits",
+      "query_description": "Sasha internal emails meta or resolution_notes LIKE",
+      "parameters": [
+        "%drawstring%"
+      ],
+      "result": {
+        "rows": [],
+        "truncated": false,
+        "row_limit": 30
+      }
+    },
+    {
+      "query_id": "comments",
+      "query_description": "Comments scoped by written_by_id; content or context LIKE",
+      "parameters": [
+        284921,
+        "%drawstring%"
+      ],
+      "result": {
+        "rows": [],
+        "truncated": false,
+        "row_limit": 100
+      }
+    },
+    {
+      "query_id": "comments_expanded",
+      "query_description": "Comments scoped by written_by_id; content LIKE alternatives",
+      "parameters": [
+        284921,
+        "%string%",
+        "%mockup%",
+        "%production%"
+      ],
+      "result": {
+        "rows": [],
+        "truncated": false,
+        "row_limit": 50
+      }
+    }
+  ],
+  "identity_hint": {
+    "source": "prod-v3.user",
+    "id": 284921,
+    "first_name": "Raymund",
+    "last_name": "R. Cartuciano",
+    "deleted_at": null,
+    "interpretation": "Earlier name-only search; not used in final routing decision."
+  },
+  "limitations": [
+    "The exact incoming email and drawstring wording were not independently located. Matching is based on the supplied subject and verified proof-to-deal relationship.",
+    "Proof artist_name is Artist Pan, not Raymund; this does not verify the signed author. Author identity is not used as routing evidence.",
+    "No received timestamp or provider/thread identifier was supplied; this is a current-state lookup, not historical replay.",
+    "The verified deal has no rows in the queried Sasha communication history; no matching proof comments were returned.",
+    "Confidence describes routing evidence, not independent confirmation of proof completion or production details."
+  ],
+  "next_required_evidence": null,
+  "previous_decision_without_subject": {
+    "status": "needs_review",
+    "deal_id": null,
+    "candidates": [],
+    "reason": "No distinguishing message, proof, order or deal link was verified from the provided body and sender."
+  },
+  "subject_followup_evidence": [
+    {
+      "query_id": "subject_users",
+      "sql": "SELECT id,first_name,last_name,account_id,deleted_at FROM `user` WHERE first_name=%s AND last_name=%s",
+      "parameters": [
+        "Kenda",
+        "Foreman"
+      ],
+      "result": {
+        "rows": [
+          {
+            "id": 297125,
+            "first_name": "Kenda",
+            "last_name": "Foreman",
+            "account_id": 182128,
+            "deleted_at": null
+          }
+        ],
+        "truncated": false,
+        "row_limit": 100
+      }
+    },
+    {
+      "query_id": "subject_proofs",
+      "sql": "SELECT id,name,client_id,artist_id,artist_name,description,created_at,deleted_at FROM proof_request WHERE name LIKE %s",
+      "parameters": [
+        "%Kenda Foreman%"
+      ],
+      "result": {
+        "rows": [
+          {
+            "id": 652188,
+            "name": "Design for Kenda Foreman",
+            "client_id": 297125,
+            "artist_id": 3,
+            "artist_name": "Artist Pan",
+            "description": null,
+            "created_at": "2026-10-12 10:37:19",
+            "deleted_at": null
+          }
+        ],
+        "truncated": false,
+        "row_limit": 100
+      }
+    },
+    {
+      "query_id": "subject_history",
+      "sql": "SELECT id,deal_id,subject,LEFT(body,3000) AS body,message_timestamp FROM `dev_sasha_operations_v3`.sasha_communication_history WHERE subject LIKE %s",
+      "parameters": [
+        "%Kenda Foreman%"
+      ],
+      "result": {
+        "rows": [],
+        "truncated": false,
+        "row_limit": 100
+      }
+    },
+    {
+      "query_id": "subject_internal",
+      "sql": "SELECT id,deal_id,source_subject,source_sender,entity_type,entity_id,created_at FROM `dev_sasha_operations_v3`.sasha_internal_emails WHERE source_subject LIKE %s",
+      "parameters": [
+        "%Kenda Foreman%"
+      ],
+      "result": {
+        "rows": [],
+        "truncated": false,
+        "row_limit": 100
+      }
+    },
+    {
+      "query_id": "subject_mapping",
+      "sql": "SELECT dp.id AS mapping_id,dp.proof_id,dp.deal_id,dp.deleted_at AS mapping_deleted_at,d.title,d.client_id,d.account_id,d.stage,d.deleted_at AS deal_deleted_at FROM deal_proofs dp LEFT JOIN deals d ON d.id=dp.deal_id WHERE dp.proof_id=%s",
+      "parameters": [
+        652188
+      ],
+      "result": {
+        "rows": [
+          {
+            "mapping_id": 452866,
+            "proof_id": 652188,
+            "deal_id": 396982,
+            "mapping_deleted_at": null,
+            "title": "Kenda Foreman",
+            "client_id": 297125,
+            "account_id": 182128,
+            "stage": "proof-submitted",
+            "deal_deleted_at": null
+          }
+        ],
+        "truncated": false,
+        "row_limit": 100
+      }
+    },
+    {
+      "query_id": "subject_deals",
+      "sql": "SELECT id,title,client_id,account_id,stage,created_at,deleted_at FROM deals WHERE client_id=%s OR account_id=%s",
+      "parameters": [
+        297125,
+        182128
+      ],
+      "result": {
+        "rows": [
+          {
+            "id": 396982,
+            "title": "Kenda Foreman",
+            "client_id": 297125,
+            "account_id": 182128,
+            "stage": "proof-submitted",
+            "created_at": "2026-10-12 10:37:18",
+            "deleted_at": null
+          }
+        ],
+        "truncated": false,
+        "row_limit": 100
+      }
+    },
+    {
+      "query_id": "subject_comments",
+      "sql": "SELECT id,comment_type,relevant_id,written_by,written_by_id,content,created_at,deleted_at FROM `comment` WHERE comment_type=%s AND relevant_id=%s ORDER BY id DESC",
+      "parameters": [
+        1,
+        652188
+      ],
+      "result": {
+        "rows": [],
+        "truncated": false,
+        "row_limit": 100
+      }
+    }
+  ]
+}

@@ -1,0 +1,1497 @@
+{
+  "observed_date": "2026-10-12",
+  "host": "non-prod-db-cluster.cluster-cgenvk032mnf.ap-south-1.rds.amazonaws.com",
+  "note": "Separate read-only observations, not a synchronized whole-database snapshot. No message bodies or credentials included.",
+  "access": {
+    "prod-v3": "Read succeeded with original and newer logins",
+    "dev_sasha_operations_v3": "Read succeeded with original and newer logins",
+    "dev_crm": "MySQL 1044 with both logins; user corrected schema name to qa-crm",
+    "qa-crm": "Read succeeded with newer ahsasv3@freshprints.com login; user explicitly confirmed this schema"
+  },
+  "queries": [
+    {
+      "name": "thread_collisions",
+      "schema": "dev_sasha_operations_v3",
+      "sql": "SELECT message_type,external_thread_id,COUNT(DISTINCT deal_id) AS deal_count,GROUP_CONCAT(DISTINCT deal_id ORDER BY deal_id) AS deal_ids FROM sasha_communication_history WHERE external_thread_id IS NOT NULL AND external_thread_id <> %s GROUP BY message_type,external_thread_id HAVING COUNT(DISTINCT deal_id)>1 ORDER BY deal_count DESC LIMIT 12",
+      "parameters": [
+        ""
+      ],
+      "result": {
+        "rows": [
+          {
+            "message_type": "CHAT",
+            "external_thread_id": "19cf602a2348cb25",
+            "deal_count": 17,
+            "deal_ids": "302380,302396,302440,302476,302484,302500,302541,302542,302544,302545,302549,302553,302554,302578,302582,302586,302617"
+          },
+          {
+            "message_type": "EMAIL",
+            "external_thread_id": "19cf602a2348cb25",
+            "deal_count": 5,
+            "deal_ids": "302275,302292,302325,302326,302328"
+          },
+          {
+            "message_type": "EMAIL",
+            "external_thread_id": "19cf6c6f18a3337f",
+            "deal_count": 2,
+            "deal_ids": "302328,302341"
+          },
+          {
+            "message_type": "EMAIL",
+            "external_thread_id": "19dde0425ca4a520",
+            "deal_count": 2,
+            "deal_ids": "302674,302677"
+          },
+          {
+            "message_type": "EMAIL",
+            "external_thread_id": "19f2314118d8ad4f",
+            "deal_count": 2,
+            "deal_ids": "302879,302880"
+          },
+          {
+            "message_type": "SMS",
+            "external_thread_id": "19cf6c6f18a3337f",
+            "deal_count": 2,
+            "deal_ids": "302328,302341"
+          },
+          {
+            "message_type": "SMS",
+            "external_thread_id": "19dde0425ca4a520",
+            "deal_count": 2,
+            "deal_ids": "302674,302677"
+          }
+        ],
+        "truncated": false,
+        "row_limit": 100
+      }
+    },
+    {
+      "name": "integrity",
+      "schema": "dev_sasha_operations_v3",
+      "sql": "SELECT COUNT(*) AS communication_rows,SUM(d.id IS NULL) AS missing_deal,SUM(c.deal_id<>h.deal_id) AS context_deal_conflicts,SUM(d.deleted_at IS NOT NULL) AS deleted_deal FROM sasha_communication_history h LEFT JOIN `prod-v3`.deals d ON d.id=h.deal_id LEFT JOIN sasha_deal_context c ON c.id=h.sasha_deal_context_id",
+      "parameters": [],
+      "result": {
+        "rows": [
+          {
+            "communication_rows": 11121,
+            "missing_deal": "0",
+            "context_deal_conflicts": "0",
+            "deleted_deal": "3292"
+          }
+        ],
+        "truncated": false,
+        "row_limit": 100
+      }
+    },
+    {
+      "name": "message_collisions",
+      "schema": "dev_sasha_operations_v3",
+      "sql": "SELECT message_type,external_message_id,COUNT(DISTINCT deal_id) AS deal_count,GROUP_CONCAT(DISTINCT deal_id) AS deal_ids FROM sasha_communication_history WHERE external_message_id IS NOT NULL AND external_message_id<>%s GROUP BY message_type,external_message_id HAVING COUNT(DISTINCT deal_id)>1 LIMIT 10",
+      "parameters": [
+        ""
+      ],
+      "result": {
+        "rows": [],
+        "truncated": false,
+        "row_limit": 100
+      }
+    },
+    {
+      "name": "contact_multiplicity",
+      "schema": "dev_sasha_operations_v3",
+      "sql": "SELECT c.client_id,COUNT(DISTINCT c.deal_id) AS deal_count FROM sasha_deal_context c GROUP BY c.client_id HAVING COUNT(DISTINCT c.deal_id)>1 ORDER BY deal_count DESC LIMIT 10",
+      "parameters": [],
+      "result": {
+        "rows": [
+          {
+            "client_id": 259586,
+            "deal_count": 46
+          },
+          {
+            "client_id": 138885,
+            "deal_count": 30
+          },
+          {
+            "client_id": 259862,
+            "deal_count": 23
+          },
+          {
+            "client_id": 259579,
+            "deal_count": 14
+          },
+          {
+            "client_id": 260005,
+            "deal_count": 9
+          },
+          {
+            "client_id": 203707,
+            "deal_count": 7
+          },
+          {
+            "client_id": 259967,
+            "deal_count": 7
+          },
+          {
+            "client_id": 260184,
+            "deal_count": 6
+          },
+          {
+            "client_id": 260373,
+            "deal_count": 5
+          },
+          {
+            "client_id": 260389,
+            "deal_count": 4
+          }
+        ],
+        "truncated": false,
+        "row_limit": 300
+      }
+    },
+    {
+      "name": "channel_identifier_coverage",
+      "schema": "dev_sasha_operations_v3",
+      "sql": "SELECT message_type,direction,COUNT(*) AS total,SUM(external_message_id IS NOT NULL) AS message_ids,SUM(external_thread_id IS NOT NULL) AS thread_ids FROM sasha_communication_history GROUP BY message_type,direction",
+      "parameters": [],
+      "result": {
+        "rows": [
+          {
+            "message_type": "EMAIL",
+            "direction": "OUTBOUND",
+            "total": 3693,
+            "message_ids": "592",
+            "thread_ids": "3409"
+          },
+          {
+            "message_type": "EMAIL",
+            "direction": "INBOUND",
+            "total": 1043,
+            "message_ids": "1042",
+            "thread_ids": "863"
+          },
+          {
+            "message_type": "CHAT",
+            "direction": "INBOUND",
+            "total": 1830,
+            "message_ids": "1830",
+            "thread_ids": "307"
+          },
+          {
+            "message_type": "CHAT",
+            "direction": "OUTBOUND",
+            "total": 2227,
+            "message_ids": "0",
+            "thread_ids": "91"
+          },
+          {
+            "message_type": "SMS",
+            "direction": "OUTBOUND",
+            "total": 2222,
+            "message_ids": "0",
+            "thread_ids": "1416"
+          },
+          {
+            "message_type": "SMS",
+            "direction": "INBOUND",
+            "total": 106,
+            "message_ids": "106",
+            "thread_ids": "0"
+          }
+        ],
+        "truncated": false,
+        "row_limit": 100
+      }
+    }
+  ],
+  "verified_columns": [
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_communication_history",
+      "COLUMN_NAME": "id",
+      "COLUMN_TYPE": "int",
+      "COLUMN_KEY": "PRI"
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_communication_history",
+      "COLUMN_NAME": "sasha_deal_context_id",
+      "COLUMN_TYPE": "int",
+      "COLUMN_KEY": "MUL"
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_communication_history",
+      "COLUMN_NAME": "workflow_run_id",
+      "COLUMN_TYPE": "int",
+      "COLUMN_KEY": "MUL"
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_communication_history",
+      "COLUMN_NAME": "deal_id",
+      "COLUMN_TYPE": "int",
+      "COLUMN_KEY": "MUL"
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_communication_history",
+      "COLUMN_NAME": "direction",
+      "COLUMN_TYPE": "enum('INBOUND','OUTBOUND')",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_communication_history",
+      "COLUMN_NAME": "sender_name",
+      "COLUMN_TYPE": "varchar(255)",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_communication_history",
+      "COLUMN_NAME": "message_type",
+      "COLUMN_TYPE": "enum('EMAIL','SMS','CHAT')",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_communication_history",
+      "COLUMN_NAME": "subject",
+      "COLUMN_TYPE": "varchar(500)",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_communication_history",
+      "COLUMN_NAME": "body",
+      "COLUMN_TYPE": "text",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_communication_history",
+      "COLUMN_NAME": "attachments",
+      "COLUMN_TYPE": "json",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_communication_history",
+      "COLUMN_NAME": "product_recommendations",
+      "COLUMN_TYPE": "json",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_communication_history",
+      "COLUMN_NAME": "questions_asked",
+      "COLUMN_TYPE": "json",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_communication_history",
+      "COLUMN_NAME": "actions_taken",
+      "COLUMN_TYPE": "json",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_communication_history",
+      "COLUMN_NAME": "selected_tactic",
+      "COLUMN_TYPE": "varchar(64)",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_communication_history",
+      "COLUMN_NAME": "tactic_reasoning",
+      "COLUMN_TYPE": "text",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_communication_history",
+      "COLUMN_NAME": "external_message_id",
+      "COLUMN_TYPE": "varchar(255)",
+      "COLUMN_KEY": "MUL"
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_communication_history",
+      "COLUMN_NAME": "external_thread_id",
+      "COLUMN_TYPE": "varchar(255)",
+      "COLUMN_KEY": "MUL"
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_communication_history",
+      "COLUMN_NAME": "message_timestamp",
+      "COLUMN_TYPE": "datetime",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_deal_context",
+      "COLUMN_NAME": "id",
+      "COLUMN_TYPE": "int",
+      "COLUMN_KEY": "PRI"
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_deal_context",
+      "COLUMN_NAME": "deal_id",
+      "COLUMN_TYPE": "int",
+      "COLUMN_KEY": "UNI"
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_deal_context",
+      "COLUMN_NAME": "account_id",
+      "COLUMN_TYPE": "int",
+      "COLUMN_KEY": "MUL"
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_deal_context",
+      "COLUMN_NAME": "client_id",
+      "COLUMN_TYPE": "int",
+      "COLUMN_KEY": "MUL"
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_deal_context",
+      "COLUMN_NAME": "sasha_status",
+      "COLUMN_TYPE": "enum('ACTIVE','PAUSED','HANDOFF_NEEDED','OPTED_OUT','COMPLETED','REJECTED')",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_deal_context",
+      "COLUMN_NAME": "is_workflow_in_progress",
+      "COLUMN_TYPE": "tinyint(1)",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_deal_context",
+      "COLUMN_NAME": "last_interaction_at",
+      "COLUMN_TYPE": "datetime",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_deal_context",
+      "COLUMN_NAME": "current_intent_score",
+      "COLUMN_TYPE": "int",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_deal_context",
+      "COLUMN_NAME": "current_sentiment_score",
+      "COLUMN_TYPE": "int",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_deal_context",
+      "COLUMN_NAME": "current_art_score",
+      "COLUMN_TYPE": "int",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_deal_context",
+      "COLUMN_NAME": "current_price_score",
+      "COLUMN_TYPE": "int",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_deal_context",
+      "COLUMN_NAME": "current_timeline_score",
+      "COLUMN_TYPE": "int",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_deal_context",
+      "COLUMN_NAME": "current_product_score",
+      "COLUMN_TYPE": "int",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_deal_context",
+      "COLUMN_NAME": "meta",
+      "COLUMN_TYPE": "json",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_deal_context",
+      "COLUMN_NAME": "extracted_client_facts",
+      "COLUMN_TYPE": "json",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_deal_context",
+      "COLUMN_NAME": "handoff_summary",
+      "COLUMN_TYPE": "text",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_deal_context",
+      "COLUMN_NAME": "created_at",
+      "COLUMN_TYPE": "datetime",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_deal_context",
+      "COLUMN_NAME": "updated_at",
+      "COLUMN_TYPE": "datetime",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_internal_emails",
+      "COLUMN_NAME": "id",
+      "COLUMN_TYPE": "int",
+      "COLUMN_KEY": "PRI"
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_internal_emails",
+      "COLUMN_NAME": "deal_id",
+      "COLUMN_TYPE": "int",
+      "COLUMN_KEY": "MUL"
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_internal_emails",
+      "COLUMN_NAME": "sasha_deal_context_id",
+      "COLUMN_TYPE": "int",
+      "COLUMN_KEY": "MUL"
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_internal_emails",
+      "COLUMN_NAME": "workflow_run_id",
+      "COLUMN_TYPE": "int",
+      "COLUMN_KEY": "MUL"
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_internal_emails",
+      "COLUMN_NAME": "trace_id",
+      "COLUMN_TYPE": "varchar(64)",
+      "COLUMN_KEY": "MUL"
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_internal_emails",
+      "COLUMN_NAME": "type",
+      "COLUMN_TYPE": "varchar(20)",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_internal_emails",
+      "COLUMN_NAME": "sub_type",
+      "COLUMN_TYPE": "varchar(30)",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_internal_emails",
+      "COLUMN_NAME": "status",
+      "COLUMN_TYPE": "enum('received','communicated','awaiting_client','skipped_notify','resolved','superseded','cancelled')",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_internal_emails",
+      "COLUMN_NAME": "expects_resolution",
+      "COLUMN_TYPE": "tinyint(1)",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_internal_emails",
+      "COLUMN_NAME": "expectation_question",
+      "COLUMN_TYPE": "text",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_internal_emails",
+      "COLUMN_NAME": "communication_id",
+      "COLUMN_TYPE": "int",
+      "COLUMN_KEY": "MUL"
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_internal_emails",
+      "COLUMN_NAME": "communicated_at",
+      "COLUMN_TYPE": "datetime",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_internal_emails",
+      "COLUMN_NAME": "resolved_at",
+      "COLUMN_TYPE": "datetime",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_internal_emails",
+      "COLUMN_NAME": "resolution_workflow_run_id",
+      "COLUMN_TYPE": "int",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_internal_emails",
+      "COLUMN_NAME": "resolution_notes",
+      "COLUMN_TYPE": "text",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_internal_emails",
+      "COLUMN_NAME": "relayed_at",
+      "COLUMN_TYPE": "datetime",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_internal_emails",
+      "COLUMN_NAME": "relay_communication_id",
+      "COLUMN_TYPE": "int",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_internal_emails",
+      "COLUMN_NAME": "source_sender",
+      "COLUMN_TYPE": "varchar(255)",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_internal_emails",
+      "COLUMN_NAME": "source_subject",
+      "COLUMN_TYPE": "varchar(500)",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_internal_emails",
+      "COLUMN_NAME": "source_thread_id",
+      "COLUMN_TYPE": "varchar(255)",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_internal_emails",
+      "COLUMN_NAME": "entity_type",
+      "COLUMN_TYPE": "varchar(50)",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_internal_emails",
+      "COLUMN_NAME": "entity_id",
+      "COLUMN_TYPE": "int",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_internal_emails",
+      "COLUMN_NAME": "dedup_key",
+      "COLUMN_TYPE": "varchar(64)",
+      "COLUMN_KEY": "UNI"
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_internal_emails",
+      "COLUMN_NAME": "meta",
+      "COLUMN_TYPE": "json",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_internal_emails",
+      "COLUMN_NAME": "created_at",
+      "COLUMN_TYPE": "datetime",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "dev_sasha_operations_v3",
+      "TABLE_NAME": "sasha_internal_emails",
+      "COLUMN_NAME": "updated_at",
+      "COLUMN_TYPE": "datetime",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "account",
+      "COLUMN_NAME": "id",
+      "COLUMN_TYPE": "int",
+      "COLUMN_KEY": "PRI"
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "account",
+      "COLUMN_NAME": "active_contact_email",
+      "COLUMN_TYPE": "varchar(50)",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "account",
+      "COLUMN_NAME": "active_contact_phone",
+      "COLUMN_TYPE": "varchar(20)",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "account",
+      "COLUMN_NAME": "deleted_at",
+      "COLUMN_TYPE": "datetime",
+      "COLUMN_KEY": "MUL"
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "activity",
+      "COLUMN_NAME": "id",
+      "COLUMN_TYPE": "int",
+      "COLUMN_KEY": "PRI"
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "activity",
+      "COLUMN_NAME": "type",
+      "COLUMN_TYPE": "int unsigned",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "activity",
+      "COLUMN_NAME": "relevant_id",
+      "COLUMN_TYPE": "int unsigned",
+      "COLUMN_KEY": "MUL"
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "activity",
+      "COLUMN_NAME": "relevant_title",
+      "COLUMN_TYPE": "varchar(200)",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "activity",
+      "COLUMN_NAME": "account_id",
+      "COLUMN_TYPE": "int unsigned",
+      "COLUMN_KEY": "MUL"
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "activity",
+      "COLUMN_NAME": "client_id",
+      "COLUMN_TYPE": "int unsigned",
+      "COLUMN_KEY": "MUL"
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "activity",
+      "COLUMN_NAME": "deal_id",
+      "COLUMN_TYPE": "int unsigned",
+      "COLUMN_KEY": "MUL"
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "activity",
+      "COLUMN_NAME": "client_email",
+      "COLUMN_TYPE": "varchar(50)",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "activity",
+      "COLUMN_NAME": "client_name",
+      "COLUMN_TYPE": "varchar(100)",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "activity",
+      "COLUMN_NAME": "client_phone",
+      "COLUMN_TYPE": "varchar(20)",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "activity",
+      "COLUMN_NAME": "activity_details",
+      "COLUMN_TYPE": "json",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "activity",
+      "COLUMN_NAME": "thread_id",
+      "COLUMN_TYPE": "varchar(30)",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "activity",
+      "COLUMN_NAME": "subject",
+      "COLUMN_TYPE": "varchar(255)",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "activity",
+      "COLUMN_NAME": "content",
+      "COLUMN_TYPE": "mediumtext",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "activity",
+      "COLUMN_NAME": "email_body",
+      "COLUMN_TYPE": "mediumtext",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "activity",
+      "COLUMN_NAME": "email_body_plain",
+      "COLUMN_TYPE": "text",
+      "COLUMN_KEY": "MUL"
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "activity",
+      "COLUMN_NAME": "happened_at",
+      "COLUMN_TYPE": "timestamp",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "activity",
+      "COLUMN_NAME": "created_at",
+      "COLUMN_TYPE": "timestamp",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "activity",
+      "COLUMN_NAME": "updated_at",
+      "COLUMN_TYPE": "timestamp",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "activity",
+      "COLUMN_NAME": "deleted_at",
+      "COLUMN_TYPE": "datetime",
+      "COLUMN_KEY": "MUL"
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "deal_orders",
+      "COLUMN_NAME": "id",
+      "COLUMN_TYPE": "int",
+      "COLUMN_KEY": "PRI"
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "deal_orders",
+      "COLUMN_NAME": "deal_id",
+      "COLUMN_TYPE": "int unsigned",
+      "COLUMN_KEY": "MUL"
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "deal_orders",
+      "COLUMN_NAME": "order_id",
+      "COLUMN_TYPE": "int unsigned",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "deal_orders",
+      "COLUMN_NAME": "created_at",
+      "COLUMN_TYPE": "datetime",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "deal_orders",
+      "COLUMN_NAME": "updated_at",
+      "COLUMN_TYPE": "datetime",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "deal_orders",
+      "COLUMN_NAME": "deleted_at",
+      "COLUMN_TYPE": "datetime",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "deal_proofs",
+      "COLUMN_NAME": "id",
+      "COLUMN_TYPE": "int",
+      "COLUMN_KEY": "PRI"
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "deal_proofs",
+      "COLUMN_NAME": "deal_id",
+      "COLUMN_TYPE": "int unsigned",
+      "COLUMN_KEY": "MUL"
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "deal_proofs",
+      "COLUMN_NAME": "proof_id",
+      "COLUMN_TYPE": "int unsigned",
+      "COLUMN_KEY": "MUL"
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "deal_proofs",
+      "COLUMN_NAME": "created_at",
+      "COLUMN_TYPE": "datetime",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "deal_proofs",
+      "COLUMN_NAME": "updated_at",
+      "COLUMN_TYPE": "datetime",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "deal_proofs",
+      "COLUMN_NAME": "deleted_at",
+      "COLUMN_TYPE": "datetime",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "deals",
+      "COLUMN_NAME": "id",
+      "COLUMN_TYPE": "int unsigned",
+      "COLUMN_KEY": "PRI"
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "deals",
+      "COLUMN_NAME": "title",
+      "COLUMN_TYPE": "varchar(255)",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "deals",
+      "COLUMN_NAME": "stage",
+      "COLUMN_TYPE": "enum('opportunities','leads','proof-submitted','negotiating','won','lost')",
+      "COLUMN_KEY": "MUL"
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "deals",
+      "COLUMN_NAME": "created_by",
+      "COLUMN_TYPE": "int unsigned",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "deals",
+      "COLUMN_NAME": "client_id",
+      "COLUMN_TYPE": "int unsigned",
+      "COLUMN_KEY": "MUL"
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "deals",
+      "COLUMN_NAME": "manager_id",
+      "COLUMN_TYPE": "int unsigned",
+      "COLUMN_KEY": "MUL"
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "deals",
+      "COLUMN_NAME": "account_id",
+      "COLUMN_TYPE": "int unsigned",
+      "COLUMN_KEY": "MUL"
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "deals",
+      "COLUMN_NAME": "source_id",
+      "COLUMN_TYPE": "int unsigned",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "deals",
+      "COLUMN_NAME": "referred_by",
+      "COLUMN_TYPE": "int unsigned",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "deals",
+      "COLUMN_NAME": "referred_by_other",
+      "COLUMN_TYPE": "varchar(255)",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "deals",
+      "COLUMN_NAME": "campaign_id",
+      "COLUMN_TYPE": "int unsigned",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "deals",
+      "COLUMN_NAME": "order_value",
+      "COLUMN_TYPE": "double unsigned",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "deals",
+      "COLUMN_NAME": "order_due_date",
+      "COLUMN_TYPE": "datetime",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "deals",
+      "COLUMN_NAME": "deal_priority",
+      "COLUMN_TYPE": "int",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "deals",
+      "COLUMN_NAME": "deal_mood",
+      "COLUMN_TYPE": "enum('great','okay','in-danger','ghosting')",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "deals",
+      "COLUMN_NAME": "state_transition_date",
+      "COLUMN_TYPE": "datetime",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "deals",
+      "COLUMN_NAME": "deleted_at",
+      "COLUMN_TYPE": "datetime",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "deals",
+      "COLUMN_NAME": "last_activity_id",
+      "COLUMN_TYPE": "int unsigned",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "deals",
+      "COLUMN_NAME": "last_activity_type",
+      "COLUMN_TYPE": "int unsigned",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "deals",
+      "COLUMN_NAME": "last_activity_timestamp",
+      "COLUMN_TYPE": "datetime",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "deals",
+      "COLUMN_NAME": "created_at",
+      "COLUMN_TYPE": "datetime",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "deals",
+      "COLUMN_NAME": "updated_at",
+      "COLUMN_TYPE": "datetime",
+      "COLUMN_KEY": "MUL"
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "order",
+      "COLUMN_NAME": "id",
+      "COLUMN_TYPE": "int",
+      "COLUMN_KEY": "PRI"
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "order",
+      "COLUMN_NAME": "proof_id",
+      "COLUMN_TYPE": "int unsigned",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "order",
+      "COLUMN_NAME": "client_id",
+      "COLUMN_TYPE": "int unsigned",
+      "COLUMN_KEY": "MUL"
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "order",
+      "COLUMN_NAME": "created_at",
+      "COLUMN_TYPE": "datetime",
+      "COLUMN_KEY": "MUL"
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "order",
+      "COLUMN_NAME": "deleted_at",
+      "COLUMN_TYPE": "datetime",
+      "COLUMN_KEY": "MUL"
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "order",
+      "COLUMN_NAME": "deal_id",
+      "COLUMN_TYPE": "int unsigned",
+      "COLUMN_KEY": "MUL"
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "user",
+      "COLUMN_NAME": "id",
+      "COLUMN_TYPE": "bigint unsigned",
+      "COLUMN_KEY": "PRI"
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "user",
+      "COLUMN_NAME": "account_id",
+      "COLUMN_TYPE": "int",
+      "COLUMN_KEY": "MUL"
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "user",
+      "COLUMN_NAME": "email",
+      "COLUMN_TYPE": "varchar(100)",
+      "COLUMN_KEY": "UNI"
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "user",
+      "COLUMN_NAME": "phone",
+      "COLUMN_TYPE": "text",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_SCHEMA": "prod-v3",
+      "TABLE_NAME": "user",
+      "COLUMN_NAME": "deleted_at",
+      "COLUMN_TYPE": "datetime",
+      "COLUMN_KEY": "MUL"
+    }
+  ],
+  "crm_columns": {
+    "rows": [
+      {
+        "COLUMN_NAME": "id",
+        "COLUMN_TYPE": "int",
+        "IS_NULLABLE": "NO",
+        "COLUMN_KEY": "PRI"
+      },
+      {
+        "COLUMN_NAME": "type",
+        "COLUMN_TYPE": "int",
+        "IS_NULLABLE": "NO",
+        "COLUMN_KEY": ""
+      },
+      {
+        "COLUMN_NAME": "message_id",
+        "COLUMN_TYPE": "varchar(50)",
+        "IS_NULLABLE": "YES",
+        "COLUMN_KEY": "UNI"
+      },
+      {
+        "COLUMN_NAME": "thread_id",
+        "COLUMN_TYPE": "varchar(30)",
+        "IS_NULLABLE": "YES",
+        "COLUMN_KEY": ""
+      },
+      {
+        "COLUMN_NAME": "sender_number",
+        "COLUMN_TYPE": "varchar(20)",
+        "IS_NULLABLE": "YES",
+        "COLUMN_KEY": ""
+      },
+      {
+        "COLUMN_NAME": "recipient_number",
+        "COLUMN_TYPE": "varchar(20)",
+        "IS_NULLABLE": "YES",
+        "COLUMN_KEY": ""
+      },
+      {
+        "COLUMN_NAME": "sender_name",
+        "COLUMN_TYPE": "varchar(100)",
+        "IS_NULLABLE": "NO",
+        "COLUMN_KEY": ""
+      },
+      {
+        "COLUMN_NAME": "recipient_name",
+        "COLUMN_TYPE": "varchar(100)",
+        "IS_NULLABLE": "NO",
+        "COLUMN_KEY": ""
+      },
+      {
+        "COLUMN_NAME": "sender_email",
+        "COLUMN_TYPE": "varchar(50)",
+        "IS_NULLABLE": "NO",
+        "COLUMN_KEY": ""
+      },
+      {
+        "COLUMN_NAME": "recipient_email",
+        "COLUMN_TYPE": "varchar(50)",
+        "IS_NULLABLE": "NO",
+        "COLUMN_KEY": ""
+      },
+      {
+        "COLUMN_NAME": "content",
+        "COLUMN_TYPE": "text",
+        "IS_NULLABLE": "YES",
+        "COLUMN_KEY": ""
+      },
+      {
+        "COLUMN_NAME": "subject",
+        "COLUMN_TYPE": "varchar(255)",
+        "IS_NULLABLE": "YES",
+        "COLUMN_KEY": ""
+      },
+      {
+        "COLUMN_NAME": "body_file",
+        "COLUMN_TYPE": "varchar(100)",
+        "IS_NULLABLE": "YES",
+        "COLUMN_KEY": ""
+      },
+      {
+        "COLUMN_NAME": "body_snippet",
+        "COLUMN_TYPE": "varchar(255)",
+        "IS_NULLABLE": "YES",
+        "COLUMN_KEY": ""
+      },
+      {
+        "COLUMN_NAME": "email_body",
+        "COLUMN_TYPE": "text",
+        "IS_NULLABLE": "YES",
+        "COLUMN_KEY": ""
+      },
+      {
+        "COLUMN_NAME": "email_body_plain",
+        "COLUMN_TYPE": "text",
+        "IS_NULLABLE": "YES",
+        "COLUMN_KEY": "MUL"
+      },
+      {
+        "COLUMN_NAME": "attachments",
+        "COLUMN_TYPE": "text",
+        "IS_NULLABLE": "YES",
+        "COLUMN_KEY": ""
+      },
+      {
+        "COLUMN_NAME": "sent_at",
+        "COLUMN_TYPE": "datetime",
+        "IS_NULLABLE": "NO",
+        "COLUMN_KEY": ""
+      },
+      {
+        "COLUMN_NAME": "response_time",
+        "COLUMN_TYPE": "int unsigned",
+        "IS_NULLABLE": "YES",
+        "COLUMN_KEY": ""
+      },
+      {
+        "COLUMN_NAME": "is_new",
+        "COLUMN_TYPE": "int unsigned",
+        "IS_NULLABLE": "YES",
+        "COLUMN_KEY": ""
+      },
+      {
+        "COLUMN_NAME": "created_at",
+        "COLUMN_TYPE": "datetime",
+        "IS_NULLABLE": "NO",
+        "COLUMN_KEY": ""
+      },
+      {
+        "COLUMN_NAME": "updated_at",
+        "COLUMN_TYPE": "datetime",
+        "IS_NULLABLE": "NO",
+        "COLUMN_KEY": ""
+      },
+      {
+        "COLUMN_NAME": "deleted_at",
+        "COLUMN_TYPE": "datetime",
+        "IS_NULLABLE": "YES",
+        "COLUMN_KEY": "MUL"
+      }
+    ],
+    "truncated": false,
+    "row_limit": 100
+  },
+  "crm_indexes": {
+    "rows": [
+      {
+        "INDEX_NAME": "email_body_plain",
+        "COLUMN_NAME": "email_body_plain",
+        "SEQ_IN_INDEX": 1
+      },
+      {
+        "INDEX_NAME": "PRIMARY",
+        "COLUMN_NAME": "id",
+        "SEQ_IN_INDEX": 1
+      },
+      {
+        "INDEX_NAME": "recipient",
+        "COLUMN_NAME": "deleted_at",
+        "SEQ_IN_INDEX": 1
+      },
+      {
+        "INDEX_NAME": "recipient",
+        "COLUMN_NAME": "recipient_number",
+        "SEQ_IN_INDEX": 2
+      },
+      {
+        "INDEX_NAME": "recipient_email",
+        "COLUMN_NAME": "deleted_at",
+        "SEQ_IN_INDEX": 1
+      },
+      {
+        "INDEX_NAME": "recipient_email",
+        "COLUMN_NAME": "recipient_email",
+        "SEQ_IN_INDEX": 2
+      },
+      {
+        "INDEX_NAME": "sender",
+        "COLUMN_NAME": "deleted_at",
+        "SEQ_IN_INDEX": 1
+      },
+      {
+        "INDEX_NAME": "sender",
+        "COLUMN_NAME": "sender_number",
+        "SEQ_IN_INDEX": 2
+      },
+      {
+        "INDEX_NAME": "sender_email",
+        "COLUMN_NAME": "deleted_at",
+        "SEQ_IN_INDEX": 1
+      },
+      {
+        "INDEX_NAME": "sender_email",
+        "COLUMN_NAME": "sender_email",
+        "SEQ_IN_INDEX": 2
+      },
+      {
+        "INDEX_NAME": "sent_at",
+        "COLUMN_NAME": "deleted_at",
+        "SEQ_IN_INDEX": 1
+      },
+      {
+        "INDEX_NAME": "sent_at",
+        "COLUMN_NAME": "sent_at",
+        "SEQ_IN_INDEX": 2
+      },
+      {
+        "INDEX_NAME": "thread_id",
+        "COLUMN_NAME": "deleted_at",
+        "SEQ_IN_INDEX": 1
+      },
+      {
+        "INDEX_NAME": "thread_id",
+        "COLUMN_NAME": "thread_id",
+        "SEQ_IN_INDEX": 2
+      },
+      {
+        "INDEX_NAME": "unique_message_id",
+        "COLUMN_NAME": "message_id",
+        "SEQ_IN_INDEX": 1
+      }
+    ],
+    "truncated": false,
+    "row_limit": 100
+  },
+  "crm_join_sample": {
+    "description": "Bounded newest-1000 communication activity sample joined via relevant_id=CRM message.id, non-deleted rows, newest 10 joins. No private message content included.",
+    "result": {
+      "rows": [
+        {
+          "activity_id": 11072404,
+          "activity_type": 3,
+          "relevant_id": 7675672,
+          "deal_id": null,
+          "crm_message_id": 7675672,
+          "crm_type": 2,
+          "happened_at": "2026-08-31 16:30:51",
+          "sent_at": "2026-08-31 16:30:51",
+          "activity_message_id": null,
+          "message_id": "01ceece4-19fd-47cd-af68-18ae91c15702"
+        },
+        {
+          "activity_id": 11072403,
+          "activity_type": 4,
+          "relevant_id": 7675643,
+          "deal_id": null,
+          "crm_message_id": 7675643,
+          "crm_type": 2,
+          "happened_at": "2026-08-31 16:26:04",
+          "sent_at": "2026-08-31 16:26:04",
+          "activity_message_id": null,
+          "message_id": "d9662cde-9ea1-4cac-8337-4ee5ee950bb0"
+        },
+        {
+          "activity_id": 11072402,
+          "activity_type": 3,
+          "relevant_id": 7675610,
+          "deal_id": null,
+          "crm_message_id": 7675610,
+          "crm_type": 2,
+          "happened_at": "2026-08-31 16:21:59",
+          "sent_at": "2026-08-31 16:21:59",
+          "activity_message_id": null,
+          "message_id": "a73c71ef-f30a-4bc6-8cf1-42fc114c9b5f"
+        },
+        {
+          "activity_id": 11072401,
+          "activity_type": 4,
+          "relevant_id": 7675582,
+          "deal_id": null,
+          "crm_message_id": 7675582,
+          "crm_type": 2,
+          "happened_at": "2026-08-31 16:17:35",
+          "sent_at": "2026-08-31 16:17:35",
+          "activity_message_id": null,
+          "message_id": "6b7d2028-62d0-445f-8c4a-bca91223a760"
+        },
+        {
+          "activity_id": 11072400,
+          "activity_type": 3,
+          "relevant_id": 7675583,
+          "deal_id": null,
+          "crm_message_id": 7675583,
+          "crm_type": 2,
+          "happened_at": "2026-08-31 16:17:17",
+          "sent_at": "2026-08-31 16:17:17",
+          "activity_message_id": null,
+          "message_id": "e9db4628-5223-492e-a3c6-21cae8e3606f"
+        },
+        {
+          "activity_id": 11072399,
+          "activity_type": 3,
+          "relevant_id": 7675586,
+          "deal_id": null,
+          "crm_message_id": 7675586,
+          "crm_type": 2,
+          "happened_at": "2026-08-31 16:17:06",
+          "sent_at": "2026-08-31 16:17:06",
+          "activity_message_id": null,
+          "message_id": "bba4c498-f585-4d44-9792-786a9c56e2dc"
+        },
+        {
+          "activity_id": 11072398,
+          "activity_type": 4,
+          "relevant_id": 7675567,
+          "deal_id": null,
+          "crm_message_id": 7675567,
+          "crm_type": 2,
+          "happened_at": "2026-08-31 16:16:33",
+          "sent_at": "2026-08-31 16:16:33",
+          "activity_message_id": null,
+          "message_id": "d19bbad0-9bbc-445d-8a0b-26bfb3ff6b69"
+        },
+        {
+          "activity_id": 11072397,
+          "activity_type": 3,
+          "relevant_id": 7640363,
+          "deal_id": null,
+          "crm_message_id": 7640363,
+          "crm_type": 2,
+          "happened_at": "2026-08-18 18:04:35",
+          "sent_at": "2026-08-18 18:04:35",
+          "activity_message_id": null,
+          "message_id": "bc209e5b-0f3d-49da-b2a0-12cded4c708e"
+        },
+        {
+          "activity_id": 11072396,
+          "activity_type": 3,
+          "relevant_id": 7640364,
+          "deal_id": null,
+          "crm_message_id": 7640364,
+          "crm_type": 2,
+          "happened_at": "2026-08-18 18:04:11",
+          "sent_at": "2026-08-18 18:04:11",
+          "activity_message_id": null,
+          "message_id": "c011aa70-e408-4e04-a65d-2d0e944fc8d0"
+        },
+        {
+          "activity_id": 11072395,
+          "activity_type": 3,
+          "relevant_id": 7575066,
+          "deal_id": null,
+          "crm_message_id": 7575066,
+          "crm_type": 2,
+          "happened_at": "2026-07-24 21:42:42",
+          "sent_at": "2026-07-24 21:42:42",
+          "activity_message_id": null,
+          "message_id": "32a2b60b-6638-439c-a9c4-e17153f9fd30"
+        }
+      ],
+      "truncated": false,
+      "row_limit": 100
+    }
+  },
+  "crm_duplicate_clients": [
+    {
+      "id": 10666746,
+      "crm_message_id": 7675643,
+      "deal_id": null,
+      "client_id": 267286,
+      "type": 4,
+      "happened_at": "2026-08-31 16:26:04"
+    },
+    {
+      "id": 11072403,
+      "crm_message_id": 7675643,
+      "deal_id": null,
+      "client_id": 297120,
+      "type": 4,
+      "happened_at": "2026-08-31 16:26:04"
+    }
+  ]
+}

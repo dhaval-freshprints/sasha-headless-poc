@@ -18,6 +18,9 @@ from openai_managed.task import Workflow, validate_workflow
 
 from .deals import Deal, DealStore
 from .jobs import JobManager, WebRun
+from .deal_manager_jobs import DealManagerJobs
+from deal_manager_agent.models import LookupRequest
+from deal_manager_agent.settings import storage_directory
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -65,25 +68,49 @@ class DealRequest(BaseModel):
 def create_app(
     job_manager: JobManager | None = None,
     deal_store: DealStore | None = None,
+    lookup_manager: DealManagerJobs | None = None,
 ) -> FastAPI:
     load_dotenv(ROOT / ".env")
     manager = job_manager or JobManager(_jobs_directory())
     deals = deal_store or DealStore(_deals_directory())
+    lookups = lookup_manager or DealManagerJobs(storage_directory() / "jobs")
     _backfill_deals(deals, manager.list_all())
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         yield
         manager.shutdown()
+        lookups.shutdown()
 
     app = FastAPI(title="Sasha Sales", lifespan=lifespan)
     app.state.job_manager = manager
     app.state.deal_store = deals
+    app.state.lookup_manager = lookups
     app.mount("/static", StaticFiles(directory=STATIC_DIRECTORY), name="static")
 
     @app.get("/", response_class=FileResponse)
     def home() -> Path:
         return STATIC_DIRECTORY / "index.html"
+
+    @app.get("/deal-manager", response_class=FileResponse)
+    @app.get("/deal-manager/lookups/{lookup_id}", response_class=FileResponse)
+    def lookup_page() -> Path:
+        return STATIC_DIRECTORY / "deal_manager.html"
+
+    @app.post("/api/deal-manager/lookups", status_code=202)
+    def create_lookup(request: LookupRequest) -> dict:
+        return lookups.submit(request)
+
+    @app.get("/api/deal-manager/lookups")
+    def list_lookups() -> list[dict]:
+        return lookups.list_all()
+
+    @app.get("/api/deal-manager/lookups/{lookup_id}")
+    def get_lookup(lookup_id: str) -> dict:
+        try:
+            return lookups.get(lookup_id)
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail="Lookup not found") from error
 
     @app.get("/runs/{run_id}", response_class=FileResponse)
     def run_page(run_id: str) -> Path:

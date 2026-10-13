@@ -299,6 +299,74 @@ without a workflow keep it unknown and are not automatically assigned one.
 
 ## Tests
 
+### Independent Deal Manager Agent
+
+Open `/deal-manager` from the web app's **Deal Manager Agent** link. Supply sender email,
+subject (optional), and body. The separate resolver uses only `deal-manager-database`
+and `deal-manager-resolve-deal` from `deal_manager_agent/skills`. It has its own prompt,
+result schema, background worker, and saved lookup history. It uses the same
+configured OpenAI model and managed Codex executor technology as the sales runner.
+It does not load sales skills, sign into CRM, send messages, or update deal notes.
+
+Build its dedicated image once:
+
+```bash
+docker build -f deal_manager_agent/Dockerfile -t deal-manager-agent:local .
+```
+
+Set `NON_PROD_HOST`, `NON_PROD_PORT`, `NON_PROD_USER`, `NON_PROD_PASS`, and
+`NON_PROD_SSL_CA` in the private `.env`. The last setting is an absolute path to
+the [AWS RDS CA bundle](https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem).
+Set `DEAL_MANAGER_MAIN_SCHEMA`, `DEAL_MANAGER_OPERATIONS_SCHEMA`, and
+`DEAL_MANAGER_CRM_SCHEMA` to the actual database names for this deployment.
+All three are required; there are no built-in schema names. The configured login
+must read those schemas. Schema values are validated before use in SQL. The agent
+receives a public schema-role map, and result validation checks the configured main
+schema. Table names and relationships remain application-specific; changing schema
+names does not adapt a different database model automatically. Use SELECT-only grants for
+deployment; the Python helper additionally uses read-only transactions and
+bounded queries. Database access must work from Docker. Credentials are passed
+over stdin into container tmpfs; they are not placed in the copied skills,
+task prompt, image, or saved job files. Stop removes the container and its secrets.
+
+`DEAL_MANAGER_IMAGE`, `DEAL_MANAGER_DIRECTORY`, and `DEAL_MANAGER_TIMEOUT_SECONDS`
+configure the resolver. Defaults are `deal-manager-agent:local`,
+`runs/deal-manager-agent`, and 600 seconds. Give different database deployments different
+lookup directories to keep histories separate. Restart the server after configuration
+or Python changes; skill edits apply to newly prepared containers.
+
+`POST /api/deal-manager/lookups` accepts `{ "sender_email": "client@example.com",
+"subject": "Proof question", "body": "Where is my proof?" }` and returns a queued
+lookup. Poll `GET /api/deal-manager/lookups/{lookup_id}` or reopen `/deal-manager/lookups/{lookup_id}`.
+`GET /api/deal-manager/lookups` lists previous lookups. A completed job may have a
+`matched`, `needs_review`, `no_match`, or `error` decision. Only `matched` selects
+a deal ID. Candidates, evidence, limitations and the next useful check remain
+available in the structured result. A missing email timestamp is never replaced
+with the time the user clicked Submit.
+
+Lookup inputs and results are saved under the configured directory. Agent sessions
+receive the email and database evidence as part of the investigation. The existing
+web application's access model also applies to this section.
+
+Run offline resolver tests:
+
+```bash
+.venv/bin/python -m unittest discover -s deal_manager_agent/tests -p 'test*.py' -v
+```
+
+The opt-in live regression script sends the four confirmed email samples through
+the running web app, OpenAI, and database. It incurs API usage and transfers the
+samples and retrieved evidence to the managed service. Run it only with approval
+for that transfer:
+
+```bash
+.venv/bin/python deal_manager_agent/live_web_checks.py --base-url http://127.0.0.1:8100
+```
+
+Real samples, expected IDs, and historical discovery records live outside the runtime
+skills. The test script sends only message inputs to the agent; expected IDs stay on
+the host for evaluation. Results default to `runs/deal-manager-agent/live_checks.json`.
+
 The tests do not make live OpenAI calls or start a real browser:
 
 ```bash
