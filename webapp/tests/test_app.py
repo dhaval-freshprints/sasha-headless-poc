@@ -1,5 +1,7 @@
 import os
 import tempfile
+import threading
+import time
 import unittest
 from tests.test_openai_managed_environment import APPLICATION_VALUES
 from pathlib import Path
@@ -14,6 +16,49 @@ from webapp.tests.helpers import FakeRunner, wait_for_finish
 
 
 class WebAppTests(unittest.TestCase):
+    def test_additional_message_endpoint_routes_to_active_runner_and_deduplicates(self):
+        release = threading.Event()
+        self.addCleanup(release.set)
+        self.manager.runner_factory = lambda write: FakeRunner(write, self.root, release)
+        run = self.client.post("/api/runs", json={
+            "deal_id": "303839", "workflow": "client-response-orchestrator",
+            "client_message": "Navy shirts for 40",
+        }).json()
+        run_id = run["run_id"]
+        deadline = time.monotonic() + 1
+        while not self.manager.get(run_id).accepting_messages:
+            self.assertLess(time.monotonic(), deadline)
+            time.sleep(0.01)
+        url = f"/api/runs/{run_id}/messages"
+        message = {"submission_id": "correction", "text": "Black shirts for 60"}
+        response = self.client.post(url, json=message)
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(self.client.post(url, json=message).json(), response.json())
+        conflict = self.client.post(url, json={**message, "text": "Different message"})
+        self.assertEqual(conflict.status_code, 409)
+        self.assertEqual(len(self.manager.get(run_id).messages), 1)
+        self.assertEqual(len(self.manager.active_runners[run_id].additional_messages.messages), 1)
+        release.set()
+        completed = wait_for_finish(self.manager, run_id)
+        self.assertEqual(completed.messages[0]["status"], "accepted")
+        self.assertFalse(completed.accepting_messages)
+        self.assertNotIn(run_id, self.manager.active_runners)
+        self.assertEqual(self.client.post(url, json=message).json()["status"], "accepted")
+        late = self.client.post(url, json={"submission_id": "late", "text": "Another"})
+        self.assertEqual(late.status_code, 409)
+        saved = JobManager(self.root / "jobs", self.manager.runner_factory)
+        self.addCleanup(saved.shutdown)
+        self.assertEqual(saved.get(run_id).messages, completed.messages)
+
+    def test_additional_message_endpoint_rejects_blank_unknown_and_outreach(self):
+        url = "/api/runs/missing/messages"
+        self.assertEqual(self.client.post(url, json={"submission_id": "one", "text": "  "}).status_code, 422)
+        self.assertEqual(self.client.post(url, json={"submission_id": "one", "text": "Hello"}).status_code, 404)
+        run = self.manager.submit("303839", None, [], workflow="outreach")
+        wait_for_finish(self.manager, run.run_id)
+        response = self.client.post(f"/api/runs/{run.run_id}/messages", json={"submission_id": "one", "text": "Hello"})
+        self.assertEqual(response.status_code, 409)
+
     def test_web_storage_is_separate_for_each_environment(self):
         for environment in ["qa", "production"]:
             with patch.dict(os.environ, {

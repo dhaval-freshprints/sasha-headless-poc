@@ -44,6 +44,8 @@ class WebRun:
     artifact_directory: str = ""
     artifacts: list[str] = field(default_factory=list)
     pricing: dict[str, Any] | None = None
+    messages: list[dict[str, Any]] = field(default_factory=list)
+    accepting_messages: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -67,6 +69,7 @@ class JobManager:
         self.runner_factory = runner_factory or self._create_runner
         self.lock = threading.RLock()
         self.jobs: dict[str, WebRun] = {}
+        self.active_runners: dict[str, OpenAIManagedRunner] = {}
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="sasha-web")
         self._load_saved_jobs()
 
@@ -100,7 +103,48 @@ class JobManager:
             run = self.jobs.get(run_id)
             if run is None:
                 raise KeyError(run_id)
-            return WebRun.from_dict(run.to_dict())
+            value = WebRun.from_dict(run.to_dict())
+            runner = self.active_runners.get(run_id)
+            value.accepting_messages = bool(runner and runner.accepting_messages)
+            return value
+
+    def submit_message(self, run_id: str, submission_id: str, text: str) -> dict:
+        if not text.strip() or len(text) > 20_000:
+            raise ValueError("Client message must contain between 1 and 20,000 characters.")
+        with self.lock:
+            run = self.jobs[run_id]
+            for message in run.messages:
+                if message["submission_id"] == submission_id:
+                    if message["text"] != text:
+                        raise ValueError("This submission ID was already used for a different message.")
+                    return dict(message)
+            if run.workflow != "client-response-orchestrator":
+                raise ValueError("Additional messages are available only for client-response runs.")
+            runner = self.active_runners.get(run_id)
+            if runner is None or not runner.accepting_messages:
+                raise ValueError("This run is not accepting messages. Keep your message for a new run.")
+            message = {
+                "submission_id": submission_id, "text": text, "status": "pending",
+                "error": "", "created_at": utc_now(),
+            }
+            run.messages.append(message)
+            self._save(run)
+            try:
+                runner.submit_message(submission_id, text)
+            except ValueError as error:
+                message.update(status="failed", error=str(error))
+                self._save(run)
+                raise
+            return dict(message)
+
+    def _update_message(self, run_id: str, update: dict) -> None:
+        with self.lock:
+            run = self.jobs[run_id]
+            for message in run.messages:
+                if message["submission_id"] == update["submission_id"]:
+                    message.update(update)
+                    self._save(run)
+                    return
 
     def list_all(self) -> list[WebRun]:
         with self.lock:
@@ -132,10 +176,17 @@ class JobManager:
             run = self.get(run_id)
             runner = self.runner_factory(lambda message: self._add_progress(run_id, message))
             task = self._make_task(run)
+            if run.workflow == "client-response-orchestrator":
+                runner.enable_additional_messages(lambda message: self._update_message(run_id, message))
+                with self.lock:
+                    self.active_runners[run_id] = runner
             result = runner.run(task)
             self._finish(run_id, runner, result, started)
         except Exception as error:
             self._fail(run_id, str(error), started)
+        finally:
+            with self.lock:
+                self.active_runners.pop(run_id, None)
 
     def _make_task(self, run: WebRun) -> SashaTask:
         if run.workflow is None:
@@ -211,6 +262,9 @@ class JobManager:
                 run.status = "failed"
                 run.finished_at = utc_now()
                 run.error_message = "The web server stopped before this run completed."
+                for message in run.messages:
+                    if message["status"] in {"pending", "sending"}:
+                        message.update(status="uncertain", error="The server stopped. Delivery must be checked before resubmitting.")
                 self._save(run)
             self.jobs[run.run_id] = run
 

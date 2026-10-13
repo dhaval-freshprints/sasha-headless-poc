@@ -494,6 +494,12 @@ pre {
   display: none !important;
 }
 
+.additional-message-list li {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin-bottom: 12px;
+}
+
 @media (max-width: 640px) {
   .shell {
     width: min(100% - 20px, 900px);

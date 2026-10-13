@@ -13,6 +13,7 @@ from typing import Any, Callable
 
 from .attachments import AttachmentSet, fetch_to_directory, restore_saved_attachments
 from .conversation import ConversationStore
+from .additional_messages import AdditionalMessageInbox, additional_message_prompt
 from .environment import ApplicationEnvironment
 from .notes import (
     NOTES_OUTPUT_NAME,
@@ -110,11 +111,14 @@ class ManagedRunnerSettings:
 
 class SessionEvents:
     def __init__(
-        self, client: Any, session_id: str, progress: ProgressReporter
+        self, client: Any, session_id: str, progress: ProgressReporter, keep_open: bool = False
     ) -> None:
         self.client = client
         self.session_id = session_id
         self.progress = progress
+        self.keep_open = keep_open
+        self.stopping = False
+        self.stream = None
         self.values: list[dict[str, Any]] = []
         self.connected = threading.Event()
         self.connection_failed = threading.Event()
@@ -134,9 +138,19 @@ class SessionEvents:
     def join(self) -> None:
         self.thread.join(timeout=2)
 
+    def stop(self) -> None:
+        if not self.keep_open or self.stopping:
+            return
+        self.stopping = True
+        if self.stream is not None and hasattr(self.stream, "close"):
+            self.stream.close()
+
     def _collect(self) -> None:
         try:
-            for event in self.client.beta.agents.sessions.events.stream(self.session_id):
+            self.stream = self.client.beta.agents.sessions.events.stream(self.session_id)
+            for event in self.stream:
+                if self.stopping:
+                    return
                 plain_event = _to_plain_value(event)
                 self.values.append(
                     plain_event
@@ -148,6 +162,12 @@ class SessionEvents:
                     self.connected.set()
                     self.connection_settled.set()
                 self._report_event(plain_event, event_type)
+                turn = _read_value(event, "turn")
+                if _read_value(turn, "subagent_id"):
+                    continue
+                if event_type in {"agent.session.turn.created", "agent.session.turn.in_progress"}:
+                    self.terminal_type = ""
+                    self.turn_finished.clear()
                 if event_type in CONNECTION_FAILED_EVENTS:
                     self.connection_failed.set()
                     self.connection_settled.set()
@@ -157,14 +177,22 @@ class SessionEvents:
                     return
                 if event_type in TURN_TERMINAL_EVENTS:
                     self.terminal_type = event_type
+                    self.failure_detail = str(_read_value(_read_value(turn, "error"), "message") or "")
                     self.turn_finished.set()
-                    return
+                    if not self.keep_open:
+                        return
+            if self.stopping:
+                return
             self._record_stream_error(
                 RuntimeError("Event stream ended before the turn finished"),
                 "StreamEnded",
             )
         except Exception as error:
-            self._record_stream_error(error, type(error).__name__)
+            if not self.stopping:
+                self._record_stream_error(error, type(error).__name__)
+        finally:
+            if self.stream is not None and hasattr(self.stream, "close"):
+                self.stream.close()
 
     def has_terminal_turn(self) -> bool:
         return self.terminal_type in TURN_TERMINAL_EVENTS
@@ -235,6 +263,21 @@ class OpenAIManagedRunner:
         self.last_run_directory: Path | None = None
         self.last_conversation_file: Path | None = None
         self.last_cost_estimate: CostEstimate | None = None
+        self.session_id = ""
+        self.additional_messages: AdditionalMessageInbox | None = None
+        self.final_turn_id = ""
+
+    def enable_additional_messages(self, report: Callable[[dict], None]) -> None:
+        self.additional_messages = AdditionalMessageInbox(report)
+
+    @property
+    def accepting_messages(self) -> bool:
+        return self.additional_messages is not None and self.additional_messages.accepting
+
+    def submit_message(self, submission_id: str, text: str) -> None:
+        if self.additional_messages is None:
+            raise ValueError("This run does not support additional message messages.")
+        self.additional_messages.submit(submission_id, text)
 
     @classmethod
     def from_environment(
@@ -410,13 +453,14 @@ class OpenAIManagedRunner:
                 metadata={"task_id": task.task_id, "deal_id": task.deal_id},
             )
             session_id = str(_read_value(session, "id") or "")
+            self.session_id = session_id
             environment = _read_value(session, "environment")
             environment_id = str(_read_value(environment, "id") or "")
             remote_url = str(_read_value(environment, "remote_url") or "")
             if not session_id or not environment_id or not remote_url:
                 raise RuntimeError("Agents API returned an incomplete session environment")
 
-            events = SessionEvents(self.client, session_id, self.progress)
+            events = SessionEvents(self.client, session_id, self.progress, keep_open=self.additional_messages is not None)
             events.start()
             self.progress.report("[4/7] Connecting the local Docker executor")
             sandbox.connect_executor(environment_id, remote_url)
@@ -424,12 +468,19 @@ class OpenAIManagedRunner:
             self.progress.report("[5/7] Sasha is working on the task")
             task_submitted = True
             self._send_task(session_id, task_message, task.task_id)
-            self._wait_for_turn(events)
+            if self.additional_messages is None:
+                self._wait_for_turn(events)
+            else:
+                self.additional_messages.open()
+                self._wait_with_messages(events)
 
             self.progress.report("[6/7] Collecting Sasha's structured JSON output")
             items = self._list_items(session_id)
             _write_json(handle.workspace_directory / "session-items.json", items)
-            result = self._make_result(task, events, items)
+            result_items = items
+            if self.final_turn_id:
+                result_items = [item for item in items if item.get("turn_id") == self.final_turn_id]
+            result = self._make_result(task, events, result_items)
         except BrowserStartError as error:
             result = SashaResult(
                 deal_id=task.deal_id,
@@ -445,6 +496,8 @@ class OpenAIManagedRunner:
                 failure_message=str(error),
             )
         finally:
+            if self.additional_messages is not None:
+                self.additional_messages.close()
             self.progress.report("[7/7] Saving artifacts and cleaning up")
             cleanup = self._clean_up(
                 sandbox,
@@ -459,10 +512,14 @@ class OpenAIManagedRunner:
 
         if result.status == "completed":
             try:
+                additional_messages = []
+                if self.additional_messages is not None:
+                    additional_messages = [message["text"] for message in self.additional_messages.accepted()]
                 conversation.append_completed_turn(
                     history,
                     task.client_message,
                     result.message_html,
+                    additional_messages=additional_messages,
                 )
             except (OSError, ValueError) as error:
                 result = SashaResult(
@@ -497,7 +554,17 @@ class OpenAIManagedRunner:
         self._record_executor_exit_code(sandbox, report)
         if _needs_cancellation(session_id, events, task_submitted):
             self._cancel_unfinished_turn(session_id, report)
+        if session_id and self.additional_messages is not None and self.additional_messages.messages:
+            try:
+                _write_json(workspace_directory / "session-items.json", self._list_items(session_id))
+            except Exception as error:
+                report.errors.append(f"additional message evidence: {error}")
         self._save_pricing(session_id, workspace_directory, report)
+        if events is not None:
+            try:
+                events.stop()
+            except Exception as error:
+                report.errors.append(f"event stream close: {error}")
         if session_id:
             self._delete_session(session_id, report)
         self._stop_sandbox(sandbox, report)
@@ -790,6 +857,73 @@ class OpenAIManagedRunner:
             return
         raise TimeoutError("Managed Sasha turn exceeded its time limit")
 
+    def _wait_with_messages(self, events: SessionEvents) -> None:
+        deadline = time.monotonic() + self.settings.turn_timeout_seconds
+        waiting_for_turn = False
+        while time.monotonic() < deadline:
+            if events.error:
+                raise RuntimeError(f"Session event stream failed: {events.error}")
+            if events.connection_failed.is_set():
+                raise RuntimeError(events.failure_description())
+            if not waiting_for_turn or events.turn_finished.is_set():
+                message = self.additional_messages.take()
+                if message is not None:
+                    try:
+                        waiting_for_turn = not self._deliver_additional_message(message)
+                    except Exception:
+                        events.terminal_type = ""
+                        raise
+                    if waiting_for_turn:
+                        time.sleep(0.2)
+                    continue
+            if events.turn_finished.is_set() and not waiting_for_turn:
+                if self._additional_message_turn_finished(events) and self.additional_messages.close_if_empty():
+                    return
+            time.sleep(0.2)
+        events.terminal_type = ""
+        raise TimeoutError("Managed Sasha run exceeded its time limit, including additional message messages")
+
+    def _deliver_additional_message(self, message: dict) -> bool:
+        self.additional_messages.update(message, "sending")
+        try:
+            self._send_task(self.session_id, additional_message_prompt(message), message["submission_id"])
+        except Exception as error:
+            if getattr(error, "code", None) == "active_turn_not_steerable":
+                self.additional_messages.defer(message)
+                return False
+            status_code = getattr(error, "status_code", None)
+            if status_code is not None and 400 <= status_code < 500 and status_code != 408:
+                self.additional_messages.update(message, "failed", str(error))
+                return True
+            self.additional_messages.update(message, "uncertain", "Delivery could not be confirmed. " + str(error))
+            raise RuntimeError("Additional message delivery is uncertain; inspect the saved session records before retrying.") from error
+        self.additional_messages.update(message, "accepted")
+        self.progress.report("[message] OpenAI accepted another client message in the same session.")
+        return True
+
+    def _additional_message_turn_finished(self, events: SessionEvents) -> bool:
+        messages = self.additional_messages.accepted()
+        if not messages:
+            return True
+        items = self._list_items(self.session_id)
+        for message in messages:
+            turn_id = _find_additional_message_turn(items, additional_message_prompt(message))
+            if not turn_id:
+                return False
+            if message.get("turn_id") != turn_id:
+                self.additional_messages.update(message, "accepted", turn_id=turn_id)
+        # The POST has no turn ID response. Saved user items identify the actual
+        # turn, including when submission raced with the previous completion.
+        turn_id = messages[-1]["turn_id"]
+        turn = self.client.beta.agents.sessions.turns.retrieve(turn_id, session_id=self.session_id)
+        status = _read_value(turn, "status")
+        if status not in {"completed", "failed", "cancelled"}:
+            return False
+        self.final_turn_id = turn_id
+        events.terminal_type = f"agent.session.turn.{status}"
+        events.failure_detail = str(_read_value(_read_value(turn, "error"), "message") or "")
+        return True
+
     def _list_items(self, session_id: str) -> list[dict[str, Any]]:
         page = self.client.beta.agents.sessions.items.list(
             session_id, order="asc", limit=100
@@ -827,6 +961,16 @@ class OpenAIManagedRunner:
                 failure_message=str(error),
             )
         return result
+
+
+def _find_additional_message_turn(items: list[dict], prompt: str) -> str:
+    for item in reversed(items):
+        if item.get("role") != "user":
+            continue
+        for part in item.get("content", []):
+            if part.get("text") == prompt:
+                return str(item.get("turn_id") or "")
+    return ""
 
 
 def _required_environment_value(name: str) -> str:

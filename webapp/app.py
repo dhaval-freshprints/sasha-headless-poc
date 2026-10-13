@@ -65,6 +65,18 @@ class DealRequest(BaseModel):
     deal_id: str = Field(pattern=r"^[0-9]+$", min_length=1, max_length=20)
 
 
+class AdditionalMessageRequest(BaseModel):
+    submission_id: str = Field(pattern=r"^[a-zA-Z0-9_-]{1,100}$")
+    text: str = Field(min_length=1, max_length=20_000)
+
+    @field_validator("text")
+    @classmethod
+    def require_message(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("Client message cannot be blank")
+        return value
+
+
 def create_app(
     job_manager: JobManager | None = None,
     deal_store: DealStore | None = None,
@@ -157,6 +169,15 @@ def create_app(
             return manager.get(run_id).to_dict()
         except KeyError as error:
             raise HTTPException(status_code=404, detail="Run not found") from error
+
+    @app.post("/api/runs/{run_id}/messages", status_code=202)
+    def send_message(run_id: str, request: AdditionalMessageRequest) -> dict:
+        try:
+            return manager.submit_message(run_id, request.submission_id, request.text)
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail="Run not found") from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
 
     @app.get("/api/runs/{run_id}/artifacts/{artifact_path:path}")
     def get_artifact(run_id: str, artifact_path: str) -> FileResponse:

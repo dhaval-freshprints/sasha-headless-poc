@@ -50,14 +50,18 @@ class ConversationStore:
         history: list[dict[str, Any]],
         client_message: str | None,
         message_html: str,
+        additional_messages: list[str] | tuple[str, ...] = (),
     ) -> None:
         updated_history = list(history)
+        client_messages = list(additional_messages)
         if client_message is not None:
+            client_messages.insert(0, client_message)
+        for message in client_messages:
             updated_history.append(
                 {
                     "role": "client",
                     "content_type": "text",
-                    "content": client_message,
+                    "content": message,
                 }
             )
         updated_history.append(

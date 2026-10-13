@@ -253,6 +253,41 @@ behaviors.
 - `openai_managed/capabilities/client-response-orchestrator/SKILL.md`: client-response strategy and action rules
 - `scripts/run_openai_managed_sasha.py`: CLI entry point
 
+## Send an Additional Message during a run
+
+Start a **Client response** run in the web console. Open its run page and wait
+until **Send Additional Message** becomes available. Enter the correction or
+additional request and send it. This first version accepts text only.
+
+The web backend keeps an in-memory mapping from run IDs to active runners. The
+runner sends each additional message to the existing OpenAI session; the same container
+and browser stay connected. An active turn receives steering. A message arriving
+as that turn ends can start another turn in that same session. Completion checks
+use saved user-message items and their turn IDs before selecting the final answer.
+
+The message list shows pending, sending, accepted, failed, or uncertain delivery.
+**Accepted** confirms API acceptance, not that Sasha interpreted the correction
+correctly. Inspect the final answer and `session-items.json` for that check. Drafts
+and submission IDs survive a refresh in the same browser tab. Retrying the same
+submission does not enqueue another copy. New submissions are rejected once the
+runner starts finishing; keep that message for a new run.
+
+For a manual QA check, ask for navy options for 40 shirts, then send “Actually,
+black, and quantity 60” while Sasha is working. Check the final answer, ordered
+client messages in the saved conversation, and session events. Use requests that
+do not authorize saved deal/proof changes for this test.
+
+If OpenAI cannot steer the active turn, the runner holds the message until that
+turn finishes. An uncertain delivery fails the run and preserves the submission
+record for investigation. The run timeout includes additional messages. A server restart
+does not resume active runners: unfinished jobs are marked failed and pending
+or sending messages become uncertain. Keep running the web server with one worker.
+
+The endpoint is `POST /api/runs/{run_id}/messages` with
+`{"submission_id": "unique-message-id", "text": "New client message"}`.
+The run status endpoint includes `messages` and `accepting_messages`. The session
+ID stays inside the backend. Real inbound email routing is not connected here.
+
 ## Select and customize a workflow
 
 The caller must explicitly select `outreach` or `client-response-orchestrator`.

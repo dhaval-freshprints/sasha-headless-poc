@@ -112,6 +112,19 @@
 
           <div id="run-error" class="error hidden" role="alert"></div>
 
+          <section id="additional-message-section" class="hidden">
+            <h2>Additional Messages</h2>
+            <ol id="additional-message-list" class="additional-message-list"></ol>
+            <form id="additional-message-form">
+              <label for="additional-message-text">Additional Message</label>
+              <textarea id="additional-message-text" rows="4" maxlength="20000" required placeholder="Actually, black shirts and quantity 60."></textarea>
+              <p id="additional-message-state"></p>
+              <div id="additional-message-error" class="error hidden" role="alert"></div>
+              <button id="additional-message-button" type="submit" disabled>Send Additional Message</button>
+            </form>
+            <p>Accepted means received by OpenAI. Check Sasha’s final answer to confirm it incorporated the message.</p>
+          </section>
+
           <div class="section-heading">
             <h2>Progress</h2>
             <span id="refresh-note">Updates every 2 seconds</span>

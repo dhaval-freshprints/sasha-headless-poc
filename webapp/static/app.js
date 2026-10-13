@@ -13,12 +13,19 @@ const runFormCard = document.querySelector("#run-form-card");
 const submitButton = document.querySelector("#submit-button");
 const formError = document.querySelector("#form-error");
 const runError = document.querySelector("#run-error");
+const additionalMessageText = document.querySelector("#additional-message-text");
+const additionalMessageButton = document.querySelector("#additional-message-button");
+const additionalMessageError = document.querySelector("#additional-message-error");
+let currentRun = null;
+let sendingAdditionalMessage = false;
 
 let currentDealId = "";
 let pollTimer = null;
 
 addDealForm.addEventListener("submit", addDeal);
 runForm.addEventListener("submit", startRun);
+document.querySelector("#additional-message-form").addEventListener("submit", sendAdditionalMessage);
+additionalMessageText.addEventListener("input", saveAdditionalMessageDraft);
 workflowSelect.addEventListener("change", updateMessageRequirement);
 document.querySelector("#start-run-button").addEventListener("click", showRunForm);
 document.querySelector("#cancel-run-button").addEventListener("click", hideRunForm);
@@ -234,6 +241,12 @@ function renderDealHistory(deal) {
 }
 
 function renderRun(run) {
+  if (!currentRun || currentRun.run_id !== run.run_id) {
+    const draft = readAdditionalMessageDraft(run.run_id);
+    additionalMessageText.value = draft?.text || "";
+    hideError(additionalMessageError);
+  }
+  currentRun = run;
   currentDealId = run.deal_id;
   document.title = `Run ${shortId(run.run_id)} · Sasha`;
   document.querySelector("#back-to-deal").href = `/deals/${run.deal_id}`;
@@ -250,6 +263,7 @@ function renderRun(run) {
   renderProgress(run.progress);
   renderResult(run);
   renderArtifacts(run);
+  renderAdditionalMessages(run);
 
   if (run.error_message) {
     showError(runError, run.error_message);
@@ -260,6 +274,82 @@ function renderRun(run) {
   document.querySelector("#refresh-note").textContent = isFinished(run.status)
     ? "Run finished"
     : "Safe to refresh or close this page";
+}
+
+function readAdditionalMessageDraft(runId) {
+  const key = `additional-message-${runId}`;
+  const legacyKey = `followup-${runId}`;
+  const draft = sessionStorage.getItem(key) || sessionStorage.getItem(legacyKey);
+  if (draft) {
+    sessionStorage.setItem(key, draft);
+    sessionStorage.removeItem(legacyKey);
+  }
+  return JSON.parse(draft || "null");
+}
+
+function saveAdditionalMessageDraft() {
+  if (!currentRun) return;
+  const previous = readAdditionalMessageDraft(currentRun.run_id);
+  const submissionId = previous?.text === additionalMessageText.value
+    ? previous.submission_id
+    : `message-${Array.from(crypto.getRandomValues(new Uint32Array(4)), value => value.toString(16)).join("-")}`;
+  sessionStorage.setItem(`additional-message-${currentRun.run_id}`, JSON.stringify({
+    submission_id: submissionId, text: additionalMessageText.value,
+  }));
+}
+
+async function sendAdditionalMessage(event) {
+  event.preventDefault();
+  if (sendingAdditionalMessage || !currentRun?.accepting_messages) return;
+  const runId = currentRun.run_id;
+  saveAdditionalMessageDraft();
+  const submission = readAdditionalMessageDraft(runId);
+  sendingAdditionalMessage = true;
+  additionalMessageButton.disabled = true;
+  hideError(additionalMessageError);
+  try {
+    const response = await fetch(`/api/runs/${runId}/messages`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(submission),
+    });
+    const message = await readResponse(response);
+    if (["failed", "uncertain"].includes(message.status)) {
+      throw new Error(message.error || "Delivery was not confirmed.");
+    }
+    const draft = readAdditionalMessageDraft(runId);
+    if (draft?.submission_id === submission.submission_id) {
+      sessionStorage.removeItem(`additional-message-${runId}`);
+      if (currentRun.run_id === runId) additionalMessageText.value = "";
+    }
+    if (currentRun.run_id === runId) {
+      currentRun.messages = (currentRun.messages || []).filter(item => item.submission_id !== message.submission_id);
+      currentRun.messages.push(message);
+      renderAdditionalMessages(currentRun);
+    }
+  } catch (error) {
+    if (currentRun.run_id === runId) showError(additionalMessageError, error.message);
+  } finally {
+    sendingAdditionalMessage = false;
+    renderAdditionalMessages(currentRun);
+  }
+}
+
+function renderAdditionalMessages(run) {
+  const enabled = run.workflow === "client-response-orchestrator";
+  document.querySelector("#additional-message-section").classList.toggle("hidden", !enabled);
+  additionalMessageButton.disabled = !run.accepting_messages || sendingAdditionalMessage;
+  setText("#additional-message-state", run.accepting_messages
+    ? "New messages will join this run’s existing conversation."
+    : isFinished(run.status) ? "This run has ended. Start a new run for another message."
+    : "Waiting for the session, or finishing this run. Messages cannot be sent yet.");
+  const list = document.querySelector("#additional-message-list");
+  list.replaceChildren();
+  for (const message of run.messages || []) {
+    const item = document.createElement("li");
+    item.textContent = `${message.text}\n${capitalize(message.status)}${message.error ? ` — ${message.error}` : ""}`;
+    list.append(item);
+  }
 }
 
 function renderProgress(messages) {
