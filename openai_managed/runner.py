@@ -45,7 +45,7 @@ SCRIPT_SUFFIXES = {".js", ".cjs", ".mjs"}
 SKIPPED_WORKSPACE_FOLDERS = {"capabilities", "client-files"}
 DELETE_RETRY_DELAYS_SECONDS = (1, 2, 4, 8)
 CONFLICT_STATUS_CODE = 409
-RUNNER_VERSION = "separate-writing-guides"
+RUNNER_VERSION = "account-manager"
 
 
 class BrowserStartError(RuntimeError):
@@ -223,27 +223,27 @@ class SessionEvents:
                 self.command_count += 1
                 self.command_numbers[item_id] = self.command_count
                 self.progress.report(
-                    f"      Sasha tool step {self.command_count} started"
+                    f"      Account Manager tool step {self.command_count} started"
                 )
                 if _launches_own_chrome(item.get("command")):
-                    self.progress.report("      WARNING: Sasha launched its own Chrome")
+                    self.progress.report("      WARNING: Account Manager launched its own Chrome")
             return
         if event_type == "agent.session.turn.item.done" and isinstance(item, dict):
             if item.get("type") == "command_execution":
                 item_id = str(item.get("id") or "")
                 number = self.command_numbers.get(item_id, self.command_count)
                 status = str(item.get("status") or "finished")
-                self.progress.report(f"      Sasha tool step {number}: {status}")
+                self.progress.report(f"      Account Manager tool step {number}: {status}")
                 if START_BROWSER_COMMAND in str(item.get("command") or ""):
                     browser_status = _read_browser_status(item.get("output"))
-                    self.progress.report(f"      Sasha restarted the browser: {browser_status}")
+                    self.progress.report(f"      Account Manager restarted the browser: {browser_status}")
             return
         if event_type == "agent.session.turn.output_text.done":
             item_id = str(event.get("item_id") or "")
             if self.item_phases.get(item_id) == "commentary":
                 text = str(event.get("text") or "").strip()
                 if text:
-                    self.progress.report(f"      Sasha: {text}")
+                    self.progress.report(f"      Account Manager: {text}")
 
 
 class OpenAIManagedRunner:
@@ -386,7 +386,7 @@ class OpenAIManagedRunner:
         events: SessionEvents | None = None
         task_submitted = False
         sandbox = self._create_sandbox()
-        self.progress.report("[1/7] Preparing disposable Sasha container")
+        self.progress.report("[1/7] Preparing disposable Account Manager container")
         handle = sandbox.prepare(task)
         self.last_run_directory = handle.run_directory
         result: SashaResult | None = None
@@ -465,7 +465,7 @@ class OpenAIManagedRunner:
             self.progress.report("[4/7] Connecting the local Docker executor")
             sandbox.connect_executor(environment_id, remote_url)
             self._wait_for_connection(events)
-            self.progress.report("[5/7] Sasha is working on the task")
+            self.progress.report("[5/7] Account Manager is working on the task")
             task_submitted = True
             self._send_task(session_id, task_message, task.task_id)
             if self.additional_messages is None:
@@ -474,7 +474,7 @@ class OpenAIManagedRunner:
                 self.additional_messages.open()
                 self._wait_with_messages(events)
 
-            self.progress.report("[6/7] Collecting Sasha's structured JSON output")
+            self.progress.report("[6/7] Collecting Account Manager's structured JSON output")
             items = self._list_items(session_id)
             _write_json(handle.workspace_directory / "session-items.json", items)
             result_items = items
@@ -582,7 +582,7 @@ class OpenAIManagedRunner:
             if _launches_own_chrome(script.read_text(encoding="utf-8", errors="ignore")):
                 name = script.relative_to(workspace_directory)
                 self.progress.report(
-                    f"[cleanup] WARNING: Sasha's script {name} launches its own Chrome"
+                    f"[cleanup] WARNING: Account Manager's script {name} launches its own Chrome"
                 )
 
     def _record_executor_exit_code(
@@ -773,14 +773,14 @@ class OpenAIManagedRunner:
             )
 
         return (
-            "Handle one Fresh Prints sales turn.\n"
+            "Handle one Fresh Prints Account Manager turn.\n"
             "Application destinations supplied by the deployment:\n"
             f"{application.task_context()}\n\n"
             f"Runtime version: {RUNNER_VERSION}.\n"
-            "Use the `sasha-sales` skill.\n\n"
-            f"Selected workflow: {task.workflow}.\n"
-            f"Use the `{task.workflow}` skill for this turn.\n"
-            "The caller selected this workflow; do not infer or switch workflows.\n\n"
+            "Use the `account-manager` skill to decide what work is needed from the "
+            "local conversation history and incoming client messages. "
+            "Both `outreach` and `client-response-orchestrator` skills are available. "
+            "CRM activity supplies deal facts, not the routing conversation for this version.\n\n"
             f"Deal ID: {task.deal_id}\n"
             f"Originating task ID: {task.task_id}\n"
             f"Deal URL: {task.deal_url}\n\n"
@@ -806,7 +806,7 @@ class OpenAIManagedRunner:
             "each script, call browser.close() on the connection; this only disconnects. "
             "If attaching fails, run `node /opt/sasha/start_browser.js`, then attach "
             "again. If it fails twice, return a failed result.\n\n"
-            "Start at the exact deal URL, inspect the current "
+            "When browser work is needed, start at the exact deal URL, inspect the current "
             "deal state, and determine the required work from the turn data and skill. "
             "Save screenshots under /workspace/artifacts, then open them with an available "
             "image-viewing tool before making visual decisions. Saving a screenshot alone "
@@ -881,7 +881,7 @@ class OpenAIManagedRunner:
                     return
             time.sleep(0.2)
         events.terminal_type = ""
-        raise TimeoutError("Managed Sasha run exceeded its time limit, including additional message messages")
+        raise TimeoutError("Managed Account Manager run exceeded its time limit, including additional message messages")
 
     def _deliver_additional_message(self, message: dict) -> bool:
         self.additional_messages.update(message, "sending")

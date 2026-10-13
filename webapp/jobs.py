@@ -16,7 +16,7 @@ from openai_managed.pricing import CostReporter
 from openai_managed.progress import ProgressReporter
 from openai_managed.runner import OpenAIManagedRunner
 from openai_managed.environment import ApplicationEnvironment
-from openai_managed.task import SashaResult, SashaTask, Workflow, validate_workflow
+from openai_managed.task import SashaResult, SashaTask, normalize_client_message
 
 
 FINAL_STATUSES = {"completed", "failed"}
@@ -32,7 +32,7 @@ class WebRun:
     deal_id: str
     client_message: str | None
     file_urls: list[str]
-    workflow: Workflow | None = None
+    workflow: str | None = None  # Historical runs retain their caller-selected label.
     status: str = "queued"
     created_at: str = field(default_factory=utc_now)
     started_at: str = ""
@@ -78,19 +78,15 @@ class JobManager:
         deal_id: str,
         client_message: str | None,
         file_urls: list[str],
-        *,
-        workflow: Workflow,
     ) -> WebRun:
         if not deal_id.isdigit():
             raise ValueError("deal_id must contain only digits")
-        validate_workflow(workflow, client_message)
 
         run = WebRun(
             run_id=uuid.uuid4().hex,
             deal_id=deal_id,
-            client_message=client_message,
+            client_message=normalize_client_message(client_message),
             file_urls=list(file_urls),
-            workflow=workflow,
         )
         with self.lock:
             self.jobs[run.run_id] = run
@@ -118,8 +114,6 @@ class JobManager:
                     if message["text"] != text:
                         raise ValueError("This submission ID was already used for a different message.")
                     return dict(message)
-            if run.workflow != "client-response-orchestrator":
-                raise ValueError("Additional messages are available only for client-response runs.")
             runner = self.active_runners.get(run_id)
             if runner is None or not runner.accepting_messages:
                 raise ValueError("This run is not accepting messages. Keep your message for a new run.")
@@ -176,10 +170,9 @@ class JobManager:
             run = self.get(run_id)
             runner = self.runner_factory(lambda message: self._add_progress(run_id, message))
             task = self._make_task(run)
-            if run.workflow == "client-response-orchestrator":
-                runner.enable_additional_messages(lambda message: self._update_message(run_id, message))
-                with self.lock:
-                    self.active_runners[run_id] = runner
+            runner.enable_additional_messages(lambda message: self._update_message(run_id, message))
+            with self.lock:
+                self.active_runners[run_id] = runner
             result = runner.run(task)
             self._finish(run_id, runner, result, started)
         except Exception as error:
@@ -189,15 +182,12 @@ class JobManager:
                 self.active_runners.pop(run_id, None)
 
     def _make_task(self, run: WebRun) -> SashaTask:
-        if run.workflow is None:
-            raise ValueError("A workflow must be selected to start a run")
         application = ApplicationEnvironment.from_environment()
         return SashaTask(
             deal_id=run.deal_id,
             task_id=f"web-{run.deal_id}-{run.run_id[:12]}",
             deal_url=application.deal_url(run.deal_id),
             client_message=run.client_message,
-            workflow=run.workflow,
             file_urls=tuple(run.file_urls),
         )
 
@@ -206,7 +196,7 @@ class JobManager:
             run_id,
             status="running",
             started_at=utc_now(),
-            progress=["Sasha run started."],
+            progress=["Account Manager run started."],
         )
 
     def _finish(

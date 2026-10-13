@@ -57,8 +57,8 @@ class ApplicationEnvironmentTests(unittest.TestCase):
         }
         with patch.dict(os.environ, values, clear=True):
             application = ApplicationEnvironment.from_environment()
-        for workflow in ["outreach", "client-response-orchestrator"]:
-            task = SashaTask("123", "task-1", application.deal_url("123"), workflow=workflow, client_message="Show shirt options")
+        for message in [None, "Show shirt options"]:
+            task = SashaTask("123", "task-1", application.deal_url("123"), client_message=message)
             message = OpenAIManagedRunner._build_task_message(task, application)
             for value in values.values():
                 self.assertIn(value, message)

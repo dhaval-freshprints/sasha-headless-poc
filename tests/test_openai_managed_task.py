@@ -5,29 +5,25 @@ from openai_managed.task import SASHA_RESULT_JSON_SCHEMA, SashaResult, SashaTask
 
 
 class SashaTaskTests(unittest.TestCase):
-    def test_workflow_is_required_even_with_a_message(self):
+    def test_rejects_removed_workflow_argument(self):
         with self.assertRaises(TypeError):
-            SashaTask("303839", "task-1", "https://qa.example/deal", "Hello")
+            SashaTask("303839", "task-1", "https://qa.example/deal", workflow="outreach")
 
-    def test_rejects_unknown_workflows(self):
-        with self.assertRaisesRegex(ValueError, "workflow must be"):
-            SashaTask("303839", "task-1", "https://qa.example/deal", workflow="unknown")
+    def test_blank_messages_are_normalized(self):
+        for message in (None, "", "  ", "\n\t"):
+            with self.subTest(message=message):
+                task = SashaTask("303839", "task-1", "https://qa.example/deal", message)
+                self.assertIsNone(task.client_message)
 
-    def test_client_response_requires_nonblank_message(self):
-        for message in (None, "", "  "):
-            with self.subTest(message=message), self.assertRaisesRegex(ValueError, "requires a client message"):
-                SashaTask("303839", "task-1", "https://qa.example/deal", message, workflow="client-response-orchestrator")
-
-    def test_supplied_message_does_not_change_outreach_selection(self):
-        task = SashaTask("303839", "task-1", "https://qa.example/deal", "Context", workflow="outreach")
-        self.assertEqual(task.workflow, "outreach")
+    def test_preserves_nonblank_message_content(self):
+        task = SashaTask("303839", "task-1", "https://qa.example/deal", "  Hello\n")
+        self.assertEqual(task.client_message, "  Hello\n")
 
     def test_outreach_has_no_client_message(self):
         task = SashaTask(
             "303839",
             "outreach-303839",
             "https://qa.example/deal?id=303839",
-            workflow="outreach",
         )
 
         self.assertEqual(task.deal_id, "303839")
@@ -39,7 +35,6 @@ class SashaTaskTests(unittest.TestCase):
             "response-303839",
             "https://qa.example/deal?id=303839",
             "What's the price for 40?",
-            workflow="client-response-orchestrator",
         )
 
         self.assertEqual(task.client_message, "What's the price for 40?")

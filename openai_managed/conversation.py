@@ -64,14 +64,15 @@ class ConversationStore:
                     "content": message,
                 }
             )
-        updated_history.append(
-            {
-                "role": "sasha",
-                "content_type": "text/html",
-                "content": message_html,
-                "delivery_status": "generated",
-            }
-        )
+        if message_html.strip():
+            updated_history.append(
+                {
+                    "role": "sasha",
+                    "content_type": "text/html",
+                    "content": message_html,
+                    "delivery_status": "generated",
+                }
+            )
         self._write(
             {
                 "deal_id": self.deal_id,

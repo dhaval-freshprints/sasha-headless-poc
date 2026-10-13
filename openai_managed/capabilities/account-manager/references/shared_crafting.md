@@ -1,6 +1,6 @@
 # Shared crafting guide
 
-Read this guide before drafting in the caller-selected workflow. The workflow owns sales decisions, evidence requirements, and whether a reply is needed.
+Read this guide before drafting in the agent-selected workflow. Account Manager decides whether a reply is needed; the specialized skill owns sales actions and evidence requirements.
 
 ## Voice
 

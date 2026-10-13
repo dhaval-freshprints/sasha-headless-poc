@@ -8,7 +8,6 @@ const addDealForm = document.querySelector("#add-deal-form");
 const addDealButton = document.querySelector("#add-deal-button");
 const addDealError = document.querySelector("#add-deal-error");
 const runForm = document.querySelector("#run-form");
-const workflowSelect = document.querySelector("#workflow");
 const runFormCard = document.querySelector("#run-form-card");
 const submitButton = document.querySelector("#submit-button");
 const formError = document.querySelector("#form-error");
@@ -26,7 +25,6 @@ addDealForm.addEventListener("submit", addDeal);
 runForm.addEventListener("submit", startRun);
 document.querySelector("#additional-message-form").addEventListener("submit", sendAdditionalMessage);
 additionalMessageText.addEventListener("input", saveAdditionalMessageDraft);
-workflowSelect.addEventListener("change", updateMessageRequirement);
 document.querySelector("#start-run-button").addEventListener("click", showRunForm);
 document.querySelector("#cancel-run-button").addEventListener("click", hideRunForm);
 document.addEventListener("click", handleAppLink);
@@ -76,7 +74,6 @@ async function startRun(event) {
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({
         deal_id: currentDealId,
-        workflow: workflowSelect.value,
         client_message: message,
         file_urls: fileUrls,
       }),
@@ -88,7 +85,7 @@ async function startRun(event) {
     showError(formError, error.message);
   } finally {
     submitButton.disabled = false;
-    submitButton.textContent = "Run Sasha";
+    submitButton.textContent = "Run Account Manager";
   }
 }
 
@@ -111,7 +108,7 @@ function loadPageFromUrl() {
 
 async function loadDashboard() {
   showView("dashboard");
-  document.title = "Deals · Sasha";
+  document.title = "Deals · Account Manager";
   hideError(addDealError);
 
   try {
@@ -128,7 +125,7 @@ async function loadDeal(dealId) {
   hideRunForm();
   hideError(formError);
   setText("#detail-deal-id", dealId);
-  document.title = `Deal ${dealId} · Sasha`;
+  document.title = `Deal ${dealId} · Account Manager`;
 
   try {
     const response = await fetch(`/api/deals/${encodeURIComponent(dealId)}`);
@@ -248,7 +245,7 @@ function renderRun(run) {
   }
   currentRun = run;
   currentDealId = run.deal_id;
-  document.title = `Run ${shortId(run.run_id)} · Sasha`;
+  document.title = `Run ${shortId(run.run_id)} · Account Manager`;
   document.querySelector("#back-to-deal").href = `/deals/${run.deal_id}`;
   setText("#run-id", shortId(run.run_id));
   setText("#run-deal-id", run.deal_id);
@@ -336,8 +333,7 @@ async function sendAdditionalMessage(event) {
 }
 
 function renderAdditionalMessages(run) {
-  const enabled = run.workflow === "client-response-orchestrator";
-  document.querySelector("#additional-message-section").classList.toggle("hidden", !enabled);
+  document.querySelector("#additional-message-section").classList.remove("hidden");
   additionalMessageButton.disabled = !run.accepting_messages || sendingAdditionalMessage;
   setText("#additional-message-state", run.accepting_messages
     ? "New messages will join this run’s existing conversation."
@@ -370,7 +366,11 @@ function renderResult(run) {
   }
 
   section.classList.remove("hidden");
-  document.querySelector("#message-preview").srcdoc = run.result.message_html || "";
+  const message = run.result.message_html || "";
+  const noReply = run.result.status === "completed" && !message.trim();
+  document.querySelector("#no-reply-needed").classList.toggle("hidden", !noReply);
+  document.querySelector("#message-preview").classList.toggle("hidden", noReply);
+  document.querySelector("#message-preview").srcdoc = message;
   document.querySelector("#result-json").textContent = JSON.stringify(run.result, null, 2);
 }
 
@@ -398,12 +398,7 @@ function renderArtifacts(run) {
 
 function showRunForm() {
   runFormCard.classList.remove("hidden");
-  workflowSelect.focus();
-}
-
-function updateMessageRequirement() {
-  document.querySelector("#client-message").required =
-    workflowSelect.value === "client-response-orchestrator";
+  document.querySelector("#client-message").focus();
 }
 
 function runTitle(run) {
@@ -413,7 +408,7 @@ function runTitle(run) {
     case "client-response-orchestrator":
       return truncate(run.client_message || "Client response", 72);
     default:
-      return truncate(run.client_message || "Previous run", 72);
+      return truncate(run.client_message || "Account Manager", 72);
   }
 }
 
@@ -424,7 +419,6 @@ function hideRunForm() {
 
 function clearRunForm() {
   runForm.reset();
-  updateMessageRequirement();
   hideRunForm();
 }
 

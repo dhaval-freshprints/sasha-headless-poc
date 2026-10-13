@@ -93,7 +93,7 @@ class AdditionalMessageTests(unittest.TestCase):
         self.updates = []
         self.runner.enable_additional_messages(self.updates.append)
         self.results = []
-        self.task = SashaTask("303839", "original", runner_tests.TASK_URL, client_message="Find navy shirts for 40", workflow="client-response-orchestrator")
+        self.task = SashaTask("303839", "original", runner_tests.TASK_URL, client_message="Find navy shirts for 40")
         self.worker = threading.Thread(target=lambda: self.results.append(self.runner.run(self.task)))
 
     def start(self):
@@ -121,6 +121,34 @@ class AdditionalMessageTests(unittest.TestCase):
         self.assertEqual([item["content"] for item in history], [self.task.client_message, "Actually black and quantity 60", result.message_html])
         self.assertEqual(self.updates[-1]["turn_id"], "turn-1")
         self.assertFalse(self.runner.accepting_messages)
+
+    def test_first_client_message_during_outreach_uses_same_session(self):
+        self.task = SashaTask("303839", "original", runner_tests.TASK_URL)
+        self.start()
+        self.runner.submit_message("first-client", "Do you offer samples?")
+        self.assertTrue(self.control.additional_message_sent.wait(2))
+        prompt = self.control.sent[-1][2][0]["input"][0]["content"][0]["text"]
+        self.assertIn("reconsider", prompt)
+        self.assertNotIn("Keep the selected workflow", prompt)
+        self.control.complete("turn-1", "<p>Samples are free and blank.</p>")
+        result = self.finish()
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(len(self.sandboxes), 1)
+        history = ConversationStore(self.runner.settings.runs_directory, "303839").load()
+        self.assertEqual([item["content"] for item in history], ["Do you offer samples?", result.message_html])
+
+    def test_successful_no_reply_keeps_received_messages(self):
+        self.task = SashaTask("303839", "original", runner_tests.TASK_URL, "Thanks")
+        self.start()
+        self.runner.submit_message("acknowledgement", "All set")
+        self.assertTrue(self.control.additional_message_sent.wait(2))
+        self.control.complete("turn-1", "")
+        result = self.finish()
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.message_html, "")
+        history = ConversationStore(self.runner.settings.runs_directory, "303839").load()
+        self.assertEqual([item["content"] for item in history], ["Thanks", "All set"])
+        self.assertTrue(all(item["role"] == "client" for item in history))
 
     def test_completion_during_delivery_waits_for_new_turn_and_uses_its_answer(self):
         sending = threading.Event()

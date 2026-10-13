@@ -1,7 +1,8 @@
-# OpenAI-managed Sasha POC
+# OpenAI-managed Account Manager POC
 
-Sasha handles one Fresh Prints sales turn through an OpenAI managed agent
-session. The same runner supports initial outreach and client responses.
+Account Manager handles one Fresh Prints sales turn through an OpenAI managed agent
+session, using Sasha as its client-facing persona. It chooses outreach, client response,
+or no reply from local conversation history and incoming client messages.
 
 The POC generates a client-facing HTML message. It does not send the message,
 purchase anything, or delete CRM records.
@@ -97,17 +98,16 @@ docker build -t sasha-openai-managed:local .
 
 ## Run
 
-Generate initial outreach:
+Run Account Manager (an empty local conversation produces initial outreach):
 
 ```bash
-.venv/bin/python scripts/run_openai_managed_sasha.py DEAL_ID --workflow outreach --verbose
+.venv/bin/python scripts/run_openai_managed_sasha.py DEAL_ID --verbose
 ```
 
 Handle a client message:
 
 ```bash
 .venv/bin/python scripts/run_openai_managed_sasha.py DEAL_ID \
-  --workflow client-response-orchestrator \
   --message "What's the price for 40?" \
   --verbose \
   --pricing
@@ -117,7 +117,6 @@ Add direct artwork URLs with repeatable `--file` arguments:
 
 ```bash
 .venv/bin/python scripts/run_openai_managed_sasha.py DEAL_ID \
-  --workflow client-response-orchestrator \
   --message "Put this logo on the back." \
   --file "https://example.com/logo.png"
 ```
@@ -248,20 +247,21 @@ behaviors.
 - `openai_managed/notes.py`: shared Markdown notebooks
 - `openai_managed/attachments.py`: temporary client artwork downloads
 - `openai_managed/agent_instructions.md`: stable agent boundaries
-- `openai_managed/capabilities/sasha-sales/`: shared browser, evidence, verification, and formatting rules
+- `openai_managed/capabilities/account-manager/`: conversation routing, shared browser, evidence, verification, and formatting rules
 - `openai_managed/capabilities/outreach/SKILL.md`: outreach inspection and action rules
 - `openai_managed/capabilities/client-response-orchestrator/SKILL.md`: client-response strategy and action rules
 - `scripts/run_openai_managed_sasha.py`: CLI entry point
 
 ## Send an Additional Message during a run
 
-Start a **Client response** run in the web console. Open its run page and wait
+Start an **Account Manager** run in the web console. Open its run page and wait
 until **Send Additional Message** becomes available. Enter the correction or
 additional request and send it. This first version accepts text only.
 
 The web backend keeps an in-memory mapping from run IDs to active runners. The
 runner sends each additional message to the existing OpenAI session; the same container
-and browser stay connected. An active turn receives steering. A message arriving
+and browser stay connected. An active turn receives steering. If it was preparing
+outreach, Account Manager reconsiders its action and handles the new client request. A message arriving
 as that turn ends can start another turn in that same session. Completion checks
 use saved user-message items and their turn IDs before selecting the final answer.
 
@@ -288,51 +288,80 @@ The endpoint is `POST /api/runs/{run_id}/messages` with
 The run status endpoint includes `messages` and `accepting_messages`. The session
 ID stays inside the backend. Real inbound email routing is not connected here.
 
-## Select and customize a workflow
+## Account Manager decisions and skills
 
-The caller must explicitly select `outreach` or `client-response-orchestrator`.
-The CLI requires `--workflow`. The web form requires a Run type selection, and
-`POST /api/runs` requires a `workflow` field with one of those values. Client
-response requires a nonblank `client_message`. A message never selects or
-changes the workflow. Missing or invalid selections are rejected before a run.
+Callers supply a deal ID, an optional client message, and optional artwork URLs.
+There is no flow selector. The agent chooses its action; Python does not route by
+message presence. `--workflow` and API `workflow` fields are rejected. For example:
 
 ```json
 {
   "deal_id": "303992",
-  "workflow": "client-response-orchestrator",
   "client_message": "What's the price for 40?",
   "file_urls": []
 }
 ```
 
-Edit [outreach](openai_managed/capabilities/outreach/SKILL.md) for initial outreach,
-or [client response orchestrator](openai_managed/capabilities/client-response-orchestrator/SKILL.md)
-for client-response strategy, suggestions, pricing, and proofs.
-Each workflow owns its sales decisions. Neither reads the other workflow.
+For this version, only the supplied local conversation and incoming client messages
+establish conversation state. CRM activity supplies deal facts, not routing history.
+Database-backed conversations and automatic handoff from Deal Manager are not connected.
 
-Reply crafting lives in separate reference files:
+| Local conversation and incoming messages | Action |
+|---|---|
+| Empty history and no incoming message | Initial outreach |
+| First incoming client message, even with empty history | Client response |
+| Existing history with an unanswered client request | Client response |
+| Saved Sasha draft and no new request | No reply |
+| Client acknowledgement with nothing outstanding | No reply |
+| Incoming client message during outreach | Reconsider in the same session |
 
-- [Shared crafting](openai_managed/capabilities/sasha-sales/references/shared_crafting.md): voice, structure, sign-off, and HTML formatting.
-- [Outreach crafting](openai_managed/capabilities/outreach/references/outreach_crafting.md): introduction and outreach wording.
-- [Client response crafting](openai_managed/capabilities/client-response-orchestrator/references/client_response_crafting.md): reply structure, product references, and wording for prices, delivery, and uncertainty.
+Blank incoming messages are normalized to absent; the agent ignores blank historical
+entries. A saved nonblank Sasha draft counts as handled for this local simulation,
+but remains marked `generated`, never sent. No proactive follow-up is introduced.
+A successful no-reply result has `status: "completed"` and `message_html: ""`;
+the console displays **No reply needed**. Client messages are still saved after a
+successful no-reply turn, without appending an empty Sasha entry. Failed runs retain
+the existing behavior: they do not append a completed conversation turn.
 
-Before drafting, the selected workflow explicitly loads shared crafting and its own
-crafting guide. These are supporting references, not separately selected skills.
-Keep evidence requirements, action permissions, pricing validity, and decisions
-about whether a reply is needed in the workflow skill. Keep phrasing and
-presentation in its crafting guide.
+Every run copies all three skills:
 
-`sasha-sales` supplies shared browser, evidence, verification, and output rules;
-its Workplace reference describes application pages and controls. The shared
-skill does not select a workflow.
+- [Account Manager](openai_managed/capabilities/account-manager/SKILL.md) owns action selection, no-reply rules, and shared browser/evidence boundaries.
+- [Outreach](openai_managed/capabilities/outreach/SKILL.md) owns read-only initial outreach inspection.
+- [Client response](openai_managed/capabilities/client-response-orchestrator/SKILL.md) owns sales actions for client requests.
 
-Each run copies only `sasha-sales` and its selected workflow when the sandbox is
-prepared. Skill edits apply to subsequently prepared runs; existing run copies
-stay unchanged. Restart an already-running webapp after this refactor to load
-the required workflow field. Existing saved runs remain readable; records
-without a workflow keep it unknown and are not automatically assigned one.
+Account Manager's routing and no-reply rules govern the specialized skills.
+Before drafting, the agent reads [shared crafting](openai_managed/capabilities/account-manager/references/shared_crafting.md)
+and the relevant [outreach](openai_managed/capabilities/outreach/references/outreach_crafting.md)
+or [client response](openai_managed/capabilities/client-response-orchestrator/references/client_response_crafting.md)
+crafting guide. The [Workplace reference](openai_managed/capabilities/account-manager/references/workplace.md)
+describes application pages and controls. Sasha remains the client-facing name.
+
+Restart the web app after deploying the Python and UI changes. Skill edits apply to
+newly prepared containers; active runs retain their copies. Historical jobs remain
+readable, including their old workflow labels. Existing conversation files, notes,
+attachments, environment directories, CLI script paths, and Docker image names are
+unchanged; no data migration is needed.
+
+For behavioral acceptance, use isolated local history directories and read-only
+requests to exercise every row above, including CRM history that differs from the
+local history. Mocked tests verify plumbing, not the model's routing decisions.
+Report real-agent checks separately.
 
 ## Tests
+
+Run the sales and web regression suites:
+
+```bash
+.venv/bin/python -m unittest discover -s tests -p 'test*.py' -v
+.venv/bin/python -m unittest discover -s webapp/tests -p 'test*.py' -v
+```
+
+Run the browser UI test with synthetic HTTP responses (no CRM or OpenAI access):
+
+```bash
+docker run --rm --mount "type=bind,src=$PWD,dst=/repo,readonly" \
+  sasha-openai-managed:local node /repo/webapp/tests/AM01_account_manager_ui.js
+```
 
 ### Independent Deal Manager Agent
 

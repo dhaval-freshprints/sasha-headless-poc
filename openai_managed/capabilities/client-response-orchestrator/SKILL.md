@@ -1,19 +1,19 @@
 ---
 name: client-response-orchestrator
-description: Carry out the caller-selected Fresh Prints client-response workflow. Understand the client's request, find product or design suggestions, verify prices and availability, work with proofs, and draft the response.
+description: Handle client requests selected by Account Manager. Understand the client's request, find product or design suggestions, verify prices and availability, work with proofs, and draft the response.
 ---
 
 # Client Response Orchestrator
 
-This skill owns client-response sales strategy and actions. Reply wording belongs in the linked crafting guides. Use it when explicitly selected by the caller. Use `sasha-sales` for shared browser, evidence, verification, and output rules. Read the relevant sections of [Workplace](../sasha-sales/references/workplace.md) for page locations and control behavior.
+This skill owns client-response sales strategy and actions. Reply wording belongs in the linked crafting guides. Use it when Account Manager identifies a client request to handle. Its routing and no-reply rules take precedence. Use `account-manager` for shared browser, evidence, verification, and output rules. Read the relevant sections of [Workplace](../account-manager/references/workplace.md) for page locations and control behavior.
 
 ## Handle the request
 
-1. Read the client message, supplied conversation and notes, current deal activity, and any proof relevant to the request. Reconcile them before deciding what work is needed.
+1. Identify the current request from the supplied client message or unanswered local conversation. If nothing needs answering, return no reply as defined by account-manager. Otherwise read the supplied notes, current deal activity, and any relevant proof to gather facts for that request.
 2. Choose the actions needed to answer the request. Use the designs gallery for design inspiration, the product catalog and quoter for garment recommendations, and the relevant proof for proof work. A request can need several actions; do not add unrelated work.
 3. Answer a general question directly when no browser action is needed beyond gathering grounded facts. Ask only for information needed to proceed that is not already available.
 4. Perform the requested work using the sales rules below and verify the results using the shared rules.
-5. Before drafting, read [shared crafting](../sasha-sales/references/shared_crafting.md) and [client response crafting](references/client_response_crafting.md). Draft a response to the current request. Distinguish completed work from work that remains unresolved.
+5. Before drafting, read [shared crafting](../account-manager/references/shared_crafting.md) and [client response crafting](references/client_response_crafting.md). Draft a response to the current request. Distinguish completed work from work that remains unresolved.
 
 ## Working rules
 

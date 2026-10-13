@@ -37,6 +37,27 @@ class ConversationStoreTests(unittest.TestCase):
         self.assertEqual(first.load()[0]["content"], "First client")
         self.assertEqual(second.load()[0]["content"], "Second client")
 
+    def test_no_reply_preserves_client_messages_without_an_empty_draft(self):
+        store = ConversationStore(self.runs_directory, "303839")
+        previous = [{"role": "sasha", "content": "Earlier draft", "delivery_status": "generated"}]
+        for reply in ("", "  "):
+            with self.subTest(reply=reply):
+                store.append_completed_turn(previous, "Thanks", reply, ["All set"])
+                history = store.load()
+                self.assertEqual(history[0], previous[0])
+                self.assertEqual([item["content"] for item in history], ["Earlier draft", "Thanks", "All set"])
+                self.assertEqual([item["role"] for item in history], ["sasha", "client", "client"])
+
+    def test_no_reply_without_messages_keeps_history_unchanged(self):
+        store = ConversationStore(self.runs_directory, "303839")
+        store.append_completed_turn([], None, "")
+        self.assertEqual(store.load(), [])
+
+    def test_nonblank_reply_remains_generated(self):
+        store = ConversationStore(self.runs_directory, "303839")
+        store.append_completed_turn([], None, "<p>Hello</p>")
+        self.assertEqual(store.load()[0]["delivery_status"], "generated")
+
     def test_rejects_an_unsafe_deal_id(self):
         with self.assertRaisesRegex(ValueError, "only digits"):
             ConversationStore(self.runs_directory, "../303839")

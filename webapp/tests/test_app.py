@@ -21,8 +21,7 @@ class WebAppTests(unittest.TestCase):
         self.addCleanup(release.set)
         self.manager.runner_factory = lambda write: FakeRunner(write, self.root, release)
         run = self.client.post("/api/runs", json={
-            "deal_id": "303839", "workflow": "client-response-orchestrator",
-            "client_message": "Navy shirts for 40",
+            "deal_id": "303839",
         }).json()
         run_id = run["run_id"]
         deadline = time.monotonic() + 1
@@ -50,11 +49,11 @@ class WebAppTests(unittest.TestCase):
         self.addCleanup(saved.shutdown)
         self.assertEqual(saved.get(run_id).messages, completed.messages)
 
-    def test_additional_message_endpoint_rejects_blank_unknown_and_outreach(self):
+    def test_additional_message_endpoint_rejects_blank_unknown_and_finished_runs(self):
         url = "/api/runs/missing/messages"
         self.assertEqual(self.client.post(url, json={"submission_id": "one", "text": "  "}).status_code, 422)
         self.assertEqual(self.client.post(url, json={"submission_id": "one", "text": "Hello"}).status_code, 404)
-        run = self.manager.submit("303839", None, [], workflow="outreach")
+        run = self.manager.submit("303839", None, [])
         wait_for_finish(self.manager, run.run_id)
         response = self.client.post(f"/api/runs/{run.run_id}/messages", json={"submission_id": "one", "text": "Hello"})
         self.assertEqual(response.status_code, 409)
@@ -70,22 +69,23 @@ class WebAppTests(unittest.TestCase):
                 self.assertEqual(_jobs_directory(), self.root / "jobs" / environment)
                 self.assertEqual(_deals_directory(), self.root / "deals" / environment)
 
-    def test_rejects_missing_or_invalid_workflow_before_creating_jobs(self):
-        for selection in ({}, {"workflow": "unknown"}, {"workflow": "client-response-orchestrator", "client_message": "  "}):
-            with self.subTest(selection=selection):
-                response = self.client.post("/api/runs", json={"deal_id": "303839", **selection})
+    def test_rejects_obsolete_workflow_before_creating_jobs(self):
+        for workflow in ("outreach", "client-response-orchestrator", "unknown", None):
+            with self.subTest(workflow=workflow):
+                response = self.client.post("/api/runs", json={"deal_id": "303839", "workflow": workflow})
                 self.assertEqual(response.status_code, 422)
+                self.assertIn("Remove workflow", response.text)
         self.assertEqual(self.manager.list_all(), [])
         self.assertEqual(self.deals.list_all(), [])
 
-    def test_explicit_outreach_is_preserved_when_message_is_supplied(self):
-        response = self.client.post("/api/runs", json={
-            "deal_id": "303839", "workflow": "outreach", "client_message": "Context",
-        })
-        self.assertEqual(response.status_code, 202)
-        run = wait_for_finish(self.manager, response.json()["run_id"])
-        self.assertEqual(run.workflow, "outreach")
-        self.assertEqual(self.manager._make_task(run).workflow, "outreach")
+    def test_optional_client_message_is_normalized_and_passed_to_task(self):
+        for message in (None, "", "  ", "Context"):
+            with self.subTest(message=message):
+                response = self.client.post("/api/runs", json={"deal_id": "303839", "client_message": message})
+                self.assertEqual(response.status_code, 202)
+                run = wait_for_finish(self.manager, response.json()["run_id"])
+                self.assertEqual(self.manager._make_task(run).client_message, message if message == "Context" else None)
+                self.assertIsNone(run.workflow)
 
     def setUp(self):
         self.temporary_directory = tempfile.TemporaryDirectory()
@@ -114,7 +114,6 @@ class WebAppTests(unittest.TestCase):
             json={
                 "deal_id": "303839",
                 "client_message": "Price 40 shirts",
-                "workflow": "client-response-orchestrator",
                 "file_urls": [],
             },
         )
@@ -123,7 +122,7 @@ class WebAppTests(unittest.TestCase):
         run_id = response.json()["run_id"]
         page = self.client.get(f"/runs/{run_id}")
         self.assertEqual(page.status_code, 200)
-        self.assertIn("Sasha Test Console", page.text)
+        self.assertIn("Account Manager Console", page.text)
 
         completed = wait_for_finish(self.manager, run_id)
         status = self.client.get(f"/api/runs/{run_id}")
@@ -153,14 +152,13 @@ class WebAppTests(unittest.TestCase):
         self.client.post("/api/deals", json={"deal_id": "303901"})
         first = self.client.post(
             "/api/runs",
-            json={"deal_id": "303901", "client_message": None, "file_urls": [], "workflow": "outreach"},
+            json={"deal_id": "303901", "client_message": None, "file_urls": []},
         ).json()
         second = self.client.post(
             "/api/runs",
             json={
                 "deal_id": "303901",
                 "client_message": "Show another option",
-                "workflow": "client-response-orchestrator",
                 "file_urls": [],
             },
         ).json()
@@ -181,7 +179,6 @@ class WebAppTests(unittest.TestCase):
             json={
                 "deal_id": "deal-303839",
                 "client_message": "",
-                "workflow": "outreach",
                 "file_urls": ["file:///tmp/logo.png"],
             },
         )

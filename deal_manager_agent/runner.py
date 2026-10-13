@@ -43,7 +43,7 @@ class DealManagerAgent:
         return text
 
     def report(self, message):
-        self.write(self.redact(message.replace("Sasha", "Deal Manager Agent")))
+        self.write(self.redact(message.replace("Sasha", "Deal Manager Agent").replace("Account Manager", "Deal Manager Agent")))
 
     def run(self, request: LookupRequest, lookup_id: str) -> LookupResult:
         self.pending_session_id = ""

@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from openai_managed.environment import ApplicationEnvironment
-from openai_managed.task import Workflow, validate_workflow
+from openai_managed.task import normalize_client_message
 
 from .deals import Deal, DealStore
 from .jobs import JobManager, WebRun
@@ -30,21 +30,20 @@ STATIC_DIRECTORY = WEB_DIRECTORY / "static"
 
 class RunRequest(BaseModel):
     deal_id: str = Field(pattern=r"^[0-9]+$", min_length=1, max_length=20)
-    workflow: Workflow
     client_message: str | None = Field(default=None, max_length=20_000)
     file_urls: list[str] = Field(default_factory=list, max_length=10)
 
-    @model_validator(mode="after")
-    def check_workflow(self) -> "RunRequest":
-        validate_workflow(self.workflow, self.client_message)
-        return self
+    @model_validator(mode="before")
+    @classmethod
+    def reject_workflow(cls, value):
+        if isinstance(value, dict) and "workflow" in value:
+            raise ValueError("Remove workflow; Account Manager chooses its work from the conversation")
+        return value
 
     @field_validator("client_message")
     @classmethod
     def empty_message_is_none(cls, value: str | None) -> str | None:
-        if value is None or value.strip():
-            return value
-        return None
+        return normalize_client_message(value)
 
     @field_validator("file_urls")
     @classmethod
@@ -94,7 +93,7 @@ def create_app(
         manager.shutdown()
         lookups.shutdown()
 
-    app = FastAPI(title="Sasha Sales", lifespan=lifespan)
+    app = FastAPI(title="Account Manager", lifespan=lifespan)
     app.state.job_manager = manager
     app.state.deal_store = deals
     app.state.lookup_manager = lookups
@@ -159,7 +158,6 @@ def create_app(
             request.deal_id,
             request.client_message,
             request.file_urls,
-            workflow=request.workflow,
         )
         return run.to_dict()
 

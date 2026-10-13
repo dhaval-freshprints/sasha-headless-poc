@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Sasha Sales</title>
+    <title>Account Manager</title>
     <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
     <link rel="stylesheet" href="/static/styles.css">
   </head>
@@ -14,7 +14,7 @@
           <span class="brand-mark">S</span>
           <span>
             <span class="eyebrow">Fresh Prints</span>
-            <strong>Sasha Test Console</strong>
+            <strong>Account Manager Console</strong>
           </span>
         </a>
       </header>
@@ -26,7 +26,7 @@
           <div>
             <p class="eyebrow">Deal workspace</p>
             <h1>Your deals</h1>
-            <p class="subtitle">Open a deal to review its history or start another Sasha run.</p>
+            <p class="subtitle">Open a deal to review its history or start another Account Manager run.</p>
           </div>
         </div>
 
@@ -61,25 +61,18 @@
 
         <section id="run-form-card" class="card hidden">
           <div class="section-heading form-title">
-            <h2>New Sasha run</h2>
+            <h2>New Account Manager run</h2>
             <button id="cancel-run-button" class="text-button" type="button">Cancel</button>
           </div>
           <form id="run-form">
-            <label for="workflow">Run type</label>
-            <select id="workflow" name="workflow" required>
-              <option value="" disabled selected>Choose a run type</option>
-              <option value="outreach">Initial outreach</option>
-              <option value="client-response-orchestrator">Client response</option>
-            </select>
-
-            <label for="client-message">Client message <span>Required for client response</span></label>
+            <label for="client-message">Client message <span>Optional</span></label>
             <textarea id="client-message" name="client_message" rows="6" placeholder="What's the price for 40?"></textarea>
 
             <label for="file-urls">Artwork URLs <span>Optional—one direct URL per line</span></label>
             <textarea id="file-urls" name="file_urls" rows="4" placeholder="https://example.com/logo.png"></textarea>
 
             <div id="form-error" class="error hidden" role="alert"></div>
-            <button id="submit-button" type="submit">Run Sasha</button>
+            <button id="submit-button" type="submit">Run Account Manager</button>
           </form>
         </section>
 
@@ -89,7 +82,7 @@
         <div id="deal-runs-list" class="run-list"></div>
         <section id="no-runs" class="card empty-state hidden">
           <h2>No runs yet</h2>
-          <p>Start the first Sasha interaction for this deal.</p>
+          <p>Start the first Account Manager interaction for this deal.</p>
         </section>
       </section>
 
@@ -122,7 +115,7 @@
               <div id="additional-message-error" class="error hidden" role="alert"></div>
               <button id="additional-message-button" type="submit" disabled>Send Additional Message</button>
             </form>
-            <p>Accepted means received by OpenAI. Check Sasha’s final answer to confirm it incorporated the message.</p>
+            <p>Accepted means received by OpenAI. Check Account Manager’s final answer to confirm it incorporated the message.</p>
           </section>
 
           <div class="section-heading">
@@ -132,8 +125,9 @@
           <ol id="progress-list" class="progress-list"></ol>
 
           <section id="result-section" class="result hidden">
-            <h2>Sasha’s answer</h2>
-            <iframe id="message-preview" sandbox="" title="Sasha response preview"></iframe>
+            <h2>Account Manager’s answer</h2>
+            <p id="no-reply-needed" class="hidden">No reply needed.</p>
+            <iframe id="message-preview" sandbox="" title="Account Manager response preview"></iframe>
             <details>
               <summary>Structured result</summary>
               <pre id="result-json"></pre>
