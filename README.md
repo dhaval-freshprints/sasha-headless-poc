@@ -377,13 +377,13 @@ the console displays **No reply needed**. Client messages are still saved after 
 successful no-reply turn, without appending an empty Sasha entry. Failed runs retain
 the existing behavior: they do not append a completed conversation turn.
 
-Every run copies these skills:
+Every run copies all eight skills:
 
 - [Account Manager](openai_managed/capabilities/account-manager/SKILL.md) owns action selection, no-reply rules, and shared browser/evidence boundaries.
 - [Outreach](openai_managed/capabilities/outreach/SKILL.md) owns read-only initial outreach inspection.
 - [Client response](openai_managed/capabilities/client-response-orchestrator/SKILL.md) owns sales actions for client requests.
 
-- [Follow-up](openai_managed/capabilities/followup/SKILL.md) owns explicit follow-up checks, choosing from one [tactic library](openai_managed/capabilities/followup/references/tactics.md).
+- Follow-up stages [1](openai_managed/capabilities/followup-stage-1/SKILL.md), [2](openai_managed/capabilities/followup-stage-2/SKILL.md), [3](openai_managed/capabilities/followup-stage-3/SKILL.md), [4](openai_managed/capabilities/followup-stage-4/SKILL.md), and [5](openai_managed/capabilities/followup-stage-5/SKILL.md) provide tactic pools and tone rules.
 
 Account Manager's routing and no-reply rules govern the specialized skills.
 All actions use [shared sales rules](openai_managed/capabilities/account-manager/references/sales_rules.md), including pricing, proofs, stock, delivery, and samples.
@@ -406,27 +406,11 @@ Report real-agent checks separately.
 
 ## Explicit follow-up checks
 
-Open a deal and select **Follow-up check**. Choose a business date; it defaults to
-the browser's local calendar date. There is no stage to choose. The runner computes
-follow-up signals and passes them to the `followup` skill:
-
-- days since the client replied and since Sasha last wrote;
-- when the conversation started and how long it has run;
-- message counts, and Sasha messages since the client last wrote;
-- tactics already used, from the notes.
-
-Each saved conversation turn carries its business date (`date`): the as-of date for
-follow-up checks, today otherwise. Older turns without a date are read from the
-deal's activity history. Days since the client's reply is optional and, when given,
-overrides the conversation's own date.
-
-The skill reads those signals with the deal state (proofs, prices shared, deadline,
-likely blocker), places the deal in a phase (momentum, relevance, honesty, decision,
-re-engage) and picks one unused tactic. A confirmed deadline about to be missed or a
-passed event can move the phase; it never moves backwards. A tactic is used only when
-it gives the client something new, such as a verified option, price, date or link.
-Otherwise the result is no reply. The notes sidebar shows the existing notebook from
-the current environment's runs directory.
+Open a deal and select **Follow-up check**. Choose a stage and a business date;
+the date defaults to the browser's local calendar date. Days since the client's
+reply are optional context. The selected stage remains authoritative, even when
+the elapsed days suggest another stage. The notes sidebar shows the existing
+notebook from the current environment's runs directory.
 
 The same entry point is available through `POST /api/runs`:
 
@@ -434,12 +418,13 @@ The same entry point is available through `POST /api/runs`:
 {
   "deal_id": "303992",
   "turn_type": "follow_up",
+  "follow_up_stage": 2,
   "as_of_date": "2026-10-13",
   "days_since_client_reply": 5
 }
 ```
 
-`follow_up_stage` is rejected; date must use `YYYY-MM-DD`; optional days
+Stage must be an integer from 1 to 5; date must use `YYYY-MM-DD`; optional days
 must be a nonnegative integer. Initial follow-up checks cannot include client
 messages or new artwork. Additional client messages remain available during the
 active run. Ordinary requests omit follow-up fields. `turn_type: "outreach"`,
@@ -450,18 +435,16 @@ continues to start ordinary Account Manager turns.
 |---|---|
 | Empty local conversation | No reply |
 | Unanswered local client request | Client response |
-| Conversation exists, no unanswered request | Choose one unused tactic that adds value |
-| No unused tactic adds value | No reply |
+| Conversation exists, no unanswered request | Evaluate one supported unused tactic in the requested stage |
+| No supported unused tactic | No reply |
 | Client message arrives during follow-up work | Reconsider and handle it in the same session |
 
 Run metadata says **requested follow-up check**, since the final action may be a
 client response or no reply. Follow-up research is read-only. There is no second
 agent, scheduler, automatic sending, or database conversation integration.
 
-The notebook retains every prior follow-up entry. Only a successful nonblank
-follow-up draft adds one entry, `- Follow-up generated: tactic_id`. Older
-`Stage N follow-up …` entries still count as used tactics, and a tactic is never
-repeated, whatever stage it was recorded under. No-reply, failed,
+The notebook retains every prior `Stage N follow-up generated: tactic_id` entry.
+Only a successful nonblank follow-up draft adds one entry. No-reply, failed,
 ordinary, or superseded work does not add a used tactic. Historical `sent` entries
 also count as used, but that wording does not prove delivery. Generated drafts
 count as used in this POC. No history migration is needed.

@@ -33,7 +33,7 @@ class WebRun:
     client_message: str | None
     file_urls: list[str]
     turn_type: str | None = None
-    follow_up_stage: int | None = None  # Historical runs only; follow-ups no longer take a stage.
+    follow_up_stage: int | None = None
     as_of_date: str | None = None
     days_since_client_reply: int | None = None
     workflow: str | None = None  # Historical runs retain their caller-selected label.
@@ -86,13 +86,14 @@ class JobManager:
         deal_check: dict[str, Any] | None = None,
         *,
         turn_type: str | None = None,
+        follow_up_stage: int | None = None,
         as_of_date: str | None = None,
         days_since_client_reply: int | None = None,
     ) -> WebRun:
         if not deal_id.isdigit():
             raise ValueError("deal_id must contain only digits")
 
-        validate_follow_up(turn_type, as_of_date,
+        validate_follow_up(turn_type, follow_up_stage, as_of_date,
                            days_since_client_reply, client_message, file_urls)
         run = WebRun(
             run_id=uuid.uuid4().hex,
@@ -101,6 +102,7 @@ class JobManager:
             file_urls=list(file_urls),
             deal_check=deal_check,
             turn_type=turn_type,
+            follow_up_stage=follow_up_stage,
             as_of_date=as_of_date,
             days_since_client_reply=days_since_client_reply,
         )
@@ -206,6 +208,7 @@ class JobManager:
             client_message=run.client_message,
             file_urls=tuple(run.file_urls),
             turn_type=run.turn_type if run.turn_type == "follow_up" else None,
+            follow_up_stage=run.follow_up_stage,
             as_of_date=run.as_of_date,
             days_since_client_reply=run.days_since_client_reply,
         )

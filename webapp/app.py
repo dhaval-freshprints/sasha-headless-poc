@@ -46,12 +46,13 @@ class RunRequest(BaseModel):
     file_urls: list[str] = Field(default_factory=list, max_length=10)
 
     turn_type: Literal["follow_up"] | None = None
+    follow_up_stage: int | None = Field(default=None, strict=True, ge=1, le=5)
     as_of_date: str | None = None
     days_since_client_reply: int | None = Field(default=None, strict=True, ge=0)
 
     @model_validator(mode="after")
     def validate_turn(self):
-        validate_follow_up(self.turn_type, self.as_of_date,
+        validate_follow_up(self.turn_type, self.follow_up_stage, self.as_of_date,
                            self.days_since_client_reply, self.client_message, self.file_urls)
         return self
 
@@ -60,8 +61,6 @@ class RunRequest(BaseModel):
     def reject_workflow(cls, value):
         if isinstance(value, dict) and "workflow" in value:
             raise ValueError("Remove workflow; Account Manager chooses its work from the conversation")
-        if isinstance(value, dict) and "follow_up_stage" in value:
-            raise ValueError("Remove follow_up_stage; the follow-up skill reads the timing itself")
         return value
 
     @field_validator("client_message")
@@ -255,6 +254,7 @@ def create_app(
             request.file_urls,
             deal_check=check.to_dict(),
             turn_type=request.turn_type,
+            follow_up_stage=request.follow_up_stage,
             as_of_date=request.as_of_date,
             days_since_client_reply=request.days_since_client_reply,
         )

@@ -121,12 +121,19 @@
                 <button id="cancel-followup-button" class="text-button" type="button">Cancel</button>
               </div>
               <form id="followup-form">
-                <p class="subtitle">Sasha reads the conversation timing, deal state and earlier follow-ups, then picks one tactic that adds value, or no reply.</p>
+                <label for="followup-stage">Stage</label>
+                <select id="followup-stage" name="follow_up_stage" required>
+                  <option value="1">1 — Reignite interest (days 1–3)</option>
+                  <option value="2">2 — Relevance &amp; gentle pressure (days 4–7)</option>
+                  <option value="3">3 — Invite honesty (days 8–12)</option>
+                  <option value="4">4 — Final answer (days 13–18)</option>
+                  <option value="5">5 — Re-engage (weeks 3+)</option>
+                </select>
 
                 <label for="as-of-date">As-of date <span>Mocked business date for this run</span></label>
                 <input id="as-of-date" name="as_of_date" type="date" required>
 
-                <label for="days-since-reply">Days since client reply <span>Optional; overrides the date of the client's last saved message</span></label>
+                <label for="days-since-reply">Days since client reply <span>Optional timing context; stage stays as selected</span></label>
                 <input id="days-since-reply" name="days_since_client_reply" type="number" min="0" step="1" placeholder="Leave empty if unknown">
 
                 <div id="followup-form-error" class="error hidden" role="alert"></div>
