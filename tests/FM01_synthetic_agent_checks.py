@@ -1,0 +1,152 @@
+"""Real managed-agent routing checks against a synthetic, container-local CRM."""
+import json
+import sys
+import subprocess
+import threading
+import time
+from dataclasses import replace
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from dotenv import dotenv_values
+from openai import OpenAI
+from openai_managed.runner import OpenAIManagedRunner, ManagedRunnerSettings
+from openai_managed.sandbox import DockerSandbox
+from openai_managed.environment import ApplicationEnvironment
+from openai_managed.progress import ProgressReporter
+from openai_managed.conversation import ConversationStore
+from openai_managed.task import SashaTask
+from openai_managed.notes import NotesStore, follow_up_entries
+
+configuration = dotenv_values(ROOT / '.env')
+# Only OpenAI credentials and runtime settings are used from configuration.
+# No deployment CRM credentials or records enter the runner or sandbox.
+DIRECTORY = ROOT / 'runs' / 'FM01_synthetic_followup_checks'
+DIRECTORY.mkdir(parents=True, exist_ok=True)
+BASE = 'http://127.0.0.1:8765'
+application = ApplicationEnvironment('synthetic', BASE, BASE + '/login', BASE + '/catalog', BASE + '/designs', BASE + '/design-tool', BASE + '/help')
+settings = ManagedRunnerSettings(
+    model=configuration.get('OPENAI_AGENT_MODEL', 'gpt-6-astra'),
+    reasoning_effort=configuration.get('OPENAI_AGENT_REASONING_EFFORT', 'medium'),
+    executor_api_key=configuration['OPENAI_EXECUTOR_API_KEY'],
+    application=application, login_user='synthetic', login_password='synthetic',
+    sandbox_image=configuration.get('OPENAI_MANAGED_SANDBOX_IMAGE', 'sasha-openai-managed:local'),
+    runs_directory=DIRECTORY, connection_timeout_seconds=90, turn_timeout_seconds=300,
+)
+FIXTURE = """<!doctype html><html><head><title>Synthetic CRM</title></head><body>
+<h1>Deal 900001 — Synthetic test deal</h1><p>Client: Alex</p>
+<p>Event: Fall club recruitment in November 2026. No client-confirmed hard deadline.</p>
+<p>Product already discussed: Synthetic Cotton Tee, navy. Verified fabric: 100% cotton.</p>
+<p>Client concern: unsure about the feel and fit. Several design revisions have already been reviewed.</p>
+<p>Proof: none currently linked. No pending art request. No order placed.</p>
+<p>Shipping and stock: unknown. No verified alternative or expedited delivery path.</p>
+<h2>CRM conversation (different from local conversation)</h2>
+<p>Client: Please change the design now.</p>
+<h2>Sample evidence</h2><p>SAMPLE_EVIDENCE</p>
+</body></html>"""
+
+class FixtureSandbox(DockerSandbox):
+    def prepare(self, task):
+        handle = super().prepare(task)
+        (handle.workspace_directory / 'FM01_fixture.html').write_text(FIXTURE.replace("SAMPLE_EVIDENCE", sample_evidence))
+        (handle.workspace_directory / 'FM01_fixture_server.js').write_text("const http = require('http'); const fs = require('fs'); http.createServer((req,res) => {res.writeHead(200, {'Content-Type':'text/html'}); res.end(fs.readFileSync('/workspace/FM01_fixture.html'));}).listen(8765, '127.0.0.1');")
+        return handle
+
+    def authenticate(self, *arguments):
+        subprocess.run(['docker', 'exec', '--detach', self.handle.container_name, 'node', '/workspace/FM01_fixture_server.js'], check=True)
+
+class ReadOnlyRunner(OpenAIManagedRunner):
+    @staticmethod
+    def _load_instructions():
+        return OpenAIManagedRunner._load_instructions() + '\nVerification constraint: Use only the supplied synthetic localhost applications. This is a read-only verification run: do not create or change any deal, proof, or art request. Local notebook updates are allowed.\n'
+
+DEAL = '900001'
+question = 'Are samples free, and do they include the printed design?'
+client = {'role':'client','content_type':'text','content':question}
+history = [
+    {'role':'client', 'content_type':'text', 'content':'We are considering tees for fall club recruitment in November. I am unsure about the feel and fit. Still discussing internally, no action needed yet.'},
+    {'role':'sasha', 'content_type':'text/html', 'content':'<p>Take your time discussing the Synthetic Cotton Tee with the club.</p>', 'delivery_status':'generated'},
+]
+prior_notes = "## Current decisions\n- Stage 1 follow-up sent: curated_design_idea\n"
+exhausted = prior_notes + "".join(f"- Stage 1 follow-up generated: {tactic}\n" for tactic in ['product_suggestion', 'offer_art_team', 'expertise_value_add'])
+cases = [
+    (f'stage_{stage}', history, None, False, 'follow_up', stage, prior_notes, 'Sample value and shipping history unknown.')
+    for stage in range(1, 6)
+]
+cases += [
+    ('empty_followup', [], None, False, 'no_reply', 1, prior_notes, 'Unknown.'),
+    ('exhausted', history, None, False, 'no_reply', 1, exhausted, 'Unknown.'),
+    ('unanswered_client', [client], None, False, 'response', 3, prior_notes, 'Unknown.'),
+    ('message_during_followup', history, None, True, 'response', 4, prior_notes, 'Unknown.'),
+    ('message_during_empty_followup', [], None, True, 'response', 1, prior_notes, 'Unknown.'),
+    ('ordinary_empty', [], None, False, 'outreach', None, prior_notes, 'Unknown.'),
+    ('ordinary_handled', history, None, False, 'no_reply', None, prior_notes, 'Unknown.'),
+    ('acknowledgement', history, 'Thanks, nothing else needed.', False, 'no_reply', None, prior_notes, 'Unknown.'),
+]
+for name, evidence in [
+    ('sample_under_50_at_14_days', 'Verified sample value $49.99. Last sample sent exactly 14 days ago. No other sample sent since. Manager approval absent.'),
+    ('sample_50', 'Verified sample value $50. Last sample sent 20 days ago. No other sample sent since. Manager approval absent.'),
+    ('sample_recent', 'Verified sample value $20. Last sample sent 13 days ago. Manager approval absent.'),
+    ('sample_missing_value', 'Sample value unknown. Verified no samples ever sent. Manager approval absent.'),
+    ('sample_missing_history', 'Verified sample value $20. Sample shipment history unavailable. Manager approval absent.'),
+]:
+    cases.append((name, history, 'Can you offer me a free blank sample of this tee?', False, 'sample', None, prior_notes, evidence))
+selected = set(sys.argv[1:])
+if selected:
+    cases = [case for case in cases if case[0] in selected]
+results_path = DIRECTORY / 'FM01_results.json'
+results = json.loads(results_path.read_text()) if selected and results_path.exists() else []
+for name, history, message, additional, expected, stage, notes_text, sample_evidence in cases:
+    directory = DIRECTORY / name
+    store = ConversationStore(directory, DEAL)
+    store._write({'deal_id':DEAL,'conversation_history':history})
+    notes = NotesStore(directory, DEAL)
+    notes.path.parent.mkdir(parents=True, exist_ok=True)
+    notes.path.write_text(notes_text)
+    first_tool = threading.Event()
+    updates = []
+    def progress(value):
+        print(name + ': ' + value, flush=True)
+        if 'tool step 1 started' in value:
+            first_tool.set()
+    runner = ReadOnlyRunner(OpenAI(api_key=configuration['OPENAI_API_KEY']), replace(settings, runs_directory=directory), sandbox_factory=FixtureSandbox, progress=ProgressReporter(progress))
+    runner.enable_additional_messages(updates.append)
+    outputs = []
+    errors = []
+    def execute():
+        try:
+            outputs.append(runner.run(SashaTask(DEAL, 'FM01_' + name, application.deal_url(DEAL), message, turn_type='follow_up' if stage else None, follow_up_stage=stage, as_of_date='2026-10-13' if stage else None, days_since_client_reply=99 if stage else None)))
+        except Exception as error:
+            errors.append(type(error).__name__ + ': ' + str(error))
+    worker = threading.Thread(target=execute)
+    worker.start()
+    if additional:
+        while worker.is_alive() and not (runner.accepting_messages and first_tool.is_set()):
+            time.sleep(0.2)
+        if runner.accepting_messages:
+            runner.submit_message('FM01_first_inbound', question)
+    worker.join()
+    result = outputs[0].to_dict() if outputs else {'status':'failed','failure_message':str(errors)}
+    reply = result.get('message_html', '')
+    checks = {'completed':result['status']=='completed', 'expected_reply_presence':bool(reply.strip())==(expected!='no_reply')}
+    if expected == 'response':
+        checks['answers_sample_question'] = 'sample' in reply.lower() and ('blank' in reply.lower() or 'unprinted' in reply.lower() or 'not printed' in reply.lower())
+    if expected == 'outreach':
+        checks['introduces_sasha'] = 'sasha' in reply.lower() and 'account manager' in reply.lower()
+    before_entries = follow_up_entries(notes_text)
+    after_entries = follow_up_entries(notes.load())
+    checks['prior_tactics_preserved'] = all(entry in after_entries for entry in before_entries)
+    checks['new_tactic_count'] = len(after_entries) - len(before_entries) == (1 if expected == 'follow_up' else 0)
+    if expected == 'follow_up':
+        checks['requested_stage_generated'] = any(entry.startswith(f'- Stage {stage} follow-up generated:') and entry not in before_entries for entry in after_entries)
+    if additional:
+        checks['additional_message_accepted'] = any(update.get('status')=='accepted' for update in updates)
+    results = [result for result in results if result['case'] != name]
+    results.append({'case':name,'expected':expected,'checks':checks,'result':result,'run_directory':str(runner.last_run_directory),'messages':updates,'history_after':store.load(), 'notes_after':notes.load(), 'sample_evidence':sample_evidence})
+    results_path.write_text(json.dumps(results, indent=2))
+    print('CASE_RESULT ' + json.dumps({'case':name,'checks':checks,'result':result}), flush=True)
+
+print('EVIDENCE ' + str(results_path), flush=True)
+checked = [result for result in results if not selected or result['case'] in selected]
+raise SystemExit(0 if checked and all(all(result['checks'].values()) for result in checked) else 1)

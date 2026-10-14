@@ -69,7 +69,13 @@ class DockerSandboxTests(unittest.TestCase):
         copied = handle.workspace_directory / "capabilities"
         self.assertEqual(
             {path.name for path in copied.iterdir()},
-            {"account-manager", "outreach", "client-response-orchestrator", "internal-email"},
+            {
+                "account-manager",
+                "outreach",
+                "client-response-orchestrator",
+                "internal-email",
+                *(f"followup-stage-{stage}" for stage in range(1, 6)),
+            },
         )
         self.assertNotIn("workflow", json.loads((handle.workspace_directory / "task.json").read_text()))
         for source in source_directory.rglob("*.md"):
@@ -91,6 +97,10 @@ class DockerSandboxTests(unittest.TestCase):
         internal_directory = source_directory / "internal-email"
         internal_directory.mkdir()
         (internal_directory / "SKILL.md").write_text("Handle team updates.")
+        for stage in range(1, 6):
+            directory = source_directory / f"followup-stage-{stage}"
+            directory.mkdir()
+            (directory / "SKILL.md").write_text("Follow-up tactics.")
         source_file = outreach_directory / "SKILL.md"
         source_file.write_text("Ask about quantity.")
         task = SashaTask("303839", "outreach-303839", "https://qa.example/deal?id=303839")
