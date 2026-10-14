@@ -186,15 +186,6 @@ Client response without deal ID, in order:
    deal context) and its Slack alerts.
 4. **Account Manager** runs on the deal with the message as the client message.
 
-**Internal team mail.** An email from `INTERNAL_SENDER_DOMAINS` (default `freshprints.com`),
-such as art@ proof replies, `[HQ] Order #…` or logistics@ forwards, takes the same flow with
-three differences: step 1 is skipped (a staff address never maps to the client), so the Deal
-Manager agent finds the deal from the message; step 3 only checks the deal is active or won
-for Sasha and never merges deals or writes to the CRM; and it never joins an open
-conversation. Account Manager recognises the team `From:` line and uses its `internal-email`
-skill to confirm the update on the deal, decide whether the client needs to hear about it,
-and draft the client message or return no reply.
-
 **More messages while it runs.** Like additional messages on a run, a client can send
 more while the flow is open: `POST /api/inbound/{inbound_id}/messages` with `{"text": "..."}`,
 or **Send additional message** on the page. Until Account Manager starts, messages are
