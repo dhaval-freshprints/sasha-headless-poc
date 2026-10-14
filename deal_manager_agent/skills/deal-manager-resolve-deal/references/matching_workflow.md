@@ -128,6 +128,10 @@ Use both the subject and new body text. A shared art-team sender does not identi
 
 For a supplied proof number, query proof_request.id and deal_proofs.proof_id. If neither exists, query proof_item.id and follow its proof_id to proof_request and deal_proofs. Retain deleted flags and all mappings. Explain the proof-item interpretation in the result; do not silently relabel IDs. Failed queries do not establish absence. The collector implements this fallback for proof_ids, but incomplete queries still require review.
 
+When the number matches a proof_request.id, that is the proof. Do not then query proof_item.id for the same number: proof requests and proof items are different ID namespaces, and a proof item that happens to share the number is not a competing interpretation. Only a competing deal can block a match. A record that leads to no deal mapping, or only to deleted mappings, is not a competing deal.
+
+Fresh Prints team mail (art@, logistics@, sales@ and similar) is often pasted or forwarded without a subject, thread, message ID or received time, and its sender never identifies the client. Those gaps are not a review reason by themselves. When a typed proof, order or deal reference leads to exactly one live, non-deleted deal whose client matches the proof or order, return `matched`.
+
 For a subject such as “Re: Revision Request on Proof : Design for <client name>”, extract the actual design name from the supplied subject and query proof_request.name with a bound value. Compare every matching proof and mapping. Verify the named client's relationship and the final deal; a name alone without a verified relationship is insufficient. The collector accepts proof_names hints with a real received_at timestamp. For the three-field web form, run bounded manual queries instead.
 
 ```sql
@@ -149,4 +153,4 @@ LEFT JOIN `<main>`.deal_proofs dp ON dp.proof_id=pi.proof_id
 WHERE pi.id=%s
 ```
 
-If exact names have no hits, use a bounded distinctive-name search and inspect all relevant candidates. Prefer information_schema for unknown columns. Missing sender/history rows do not invalidate a unique proof/client/deal relationship. Conversely, a generic proof-complete body with no distinguishing metadata must remain needs_review. Current database state does not prove a match at a historical time when the incoming timestamp is unknown.
+If exact names have no hits, use a bounded distinctive-name search and inspect all relevant candidates. Prefer information_schema for unknown columns. Missing sender/history rows do not invalidate a unique proof/client/deal relationship. Conversely, a generic proof-complete body with no typed reference and no distinguishing metadata must remain needs_review. When the incoming timestamp is unknown, a live, non-deleted mapping from a typed reference is still sufficient; abstain only when the current rows show a competing or changed mapping, such as a deleted mapping or a proof moved between deals.
