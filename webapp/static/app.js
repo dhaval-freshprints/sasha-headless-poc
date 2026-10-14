@@ -110,6 +110,12 @@ function buildRunPayload() {
   return {
     deal_id: currentDealId,
     client_message: body ? composeClientMessage() : null,
+    incoming_message: body ? {
+      body,
+      sender_name: document.querySelector("#cr-from").value.trim(),
+      message_type: channelSelect.value === "sms" ? "SMS" : "EMAIL",
+      subject: channelSelect.value === "email" ? document.querySelector("#cr-subject").value.trim() || null : null,
+    } : null,
     file_urls: splitLines(document.querySelector("#cr-file-urls").value),
   };
 }

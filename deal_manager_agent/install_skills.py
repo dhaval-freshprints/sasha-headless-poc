@@ -17,6 +17,10 @@ def main():
     destination.mkdir(parents=True, exist_ok=True)
     for name in names:
         shutil.copytree(source / name, destination / name, ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
+        if name == 'deal-manager-database':
+            shutil.copytree(source.parent.parent / 'sasha_database',
+                            destination / name / 'scripts' / 'sasha_database',
+                            ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
         print(destination / name / 'SKILL.md')
 
 

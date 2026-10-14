@@ -189,6 +189,13 @@ async function maybeStartAccountManager(job) {
       body: JSON.stringify({
         deal_id: job.result.deal_id,
         client_message: clientMessage,
+        incoming_message: {
+          body: input.body,
+          sender_name: input.sender_email || "",
+          message_type: "EMAIL",
+          subject: input.subject || null,
+          external_thread_id: input.thread_id || null,
+        },
         file_urls: [],
       }),
     });

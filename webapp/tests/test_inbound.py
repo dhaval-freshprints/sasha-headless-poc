@@ -1,3 +1,4 @@
+from tests.database_helpers import setup_database
 """Webhook -> code lookup -> (Deal Manager) -> validation -> Account Manager, all faked."""
 import tempfile
 import threading
@@ -50,6 +51,14 @@ INTERNAL = {"email": "art@FreshPrints.com", "subject": "Design Done for Alpha Ph
 
 
 class InboundRequestTests(unittest.TestCase):
+    def test_sms_batch_keeps_separate_messages_and_provider_metadata(self):
+        request = InboundRequest.model_validate({**SMS, "message_id": "batch-1"})
+        messages = request.to_messages("2026-10-14T10:00:00+00:00")
+        self.assertEqual([message.body for message in messages], SMS["body"])
+        self.assertEqual([message.external_message_id for message in messages], ["batch-1", None])
+        self.assertTrue(all(message.message_type == "SMS" for message in messages))
+        self.assertTrue(all(message.external_thread_id == "t-2" for message in messages))
+
     def test_phone_requires_an_array_and_email_requires_a_string(self):
         for payload in ({"phone": "+14155550100", "body": "Hi"}, {"email": "a@b.co", "body": ["Hi"]},
                         {"body": "Hi"}, {"email": "a@b.co", "body": "  "},
@@ -72,6 +81,7 @@ class InboundRequestTests(unittest.TestCase):
 
 class InboundWorkflowTests(unittest.TestCase):
     def setUp(self):
+        setup_database(self)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         root = Path(self.temp.name)
@@ -99,10 +109,10 @@ class InboundWorkflowTests(unittest.TestCase):
         self.addCleanup(self.client.__exit__, None, None, None)
         self.root = root
 
-    def start_run(self, deal_id, message, deal_check=None):
+    def start_run(self, deal_id, message, deal_check=None, incoming_messages=()):
         self.runs.append((deal_id, message))
         self.deals.touch(deal_id)
-        return self.sales.submit(deal_id, message, []).to_dict()
+        return self.sales.submit(deal_id, message, [], incoming_messages=incoming_messages).to_dict()
 
     def post(self, payload, **headers):
         return self.client.post("/api/inbound", json=payload, headers=headers)
@@ -235,6 +245,7 @@ class FollowUpMessageTests(unittest.TestCase):
     finished = InboundWorkflowTests.finished
 
     def setUp(self):
+        setup_database(self)
         InboundWorkflowTests.setUp(self)
         # Cleanups run last-in first-out: let runs and deliveries finish before the temp dir goes.
         self.addCleanup(self.wait_for_background_work)
@@ -339,6 +350,7 @@ class InternalMailTests(unittest.TestCase):
     wait_until = FollowUpMessageTests.wait_until
 
     def setUp(self):
+        setup_database(self)
         InboundWorkflowTests.setUp(self)
         self.addCleanup(self.wait_for_background_work)
 

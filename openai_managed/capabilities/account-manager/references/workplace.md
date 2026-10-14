@@ -23,7 +23,7 @@ Use the application destinations supplied in the task. CRM paths below are relat
 ## Deal page
 
 - The client card and activity feed show the client's name.
-- The activity feed shows CRM history, newest first. Use it for deal facts; Account Manager uses the supplied local conversation for routing in this version.
+- The activity feed shows CRM history, newest first. Use it for deal facts; Account Manager uses the supplied database conversation for routing in this version.
 - A proof count such as `2 Proofs` links the deal's proofs. `Proofs` without a count means the deal has no proof.
 - The deal page is the authority for which proofs belong to the deal. A proof associated with the same client elsewhere does not establish that relationship.
 

@@ -16,6 +16,9 @@ from openai_managed.pricing import CostReporter
 from openai_managed.progress import ProgressReporter
 from openai_managed.runner import OpenAIManagedRunner
 from openai_managed.environment import ApplicationEnvironment
+from sasha_database.storage import SashaStorage
+from sasha_database.messages import IncomingMessage, incoming_message
+
 from openai_managed.task import SashaResult, SashaTask, normalize_client_message, validate_follow_up
 
 
@@ -49,6 +52,7 @@ class WebRun:
     artifacts: list[str] = field(default_factory=list)
     pricing: dict[str, Any] | None = None
     messages: list[dict[str, Any]] = field(default_factory=list)
+    incoming_messages: list[dict] = field(default_factory=list)
     accepting_messages: bool = False
     deal_check: dict[str, Any] | None = None  # Validation/consolidation before this run.
 
@@ -68,9 +72,11 @@ class JobManager:
         self,
         jobs_directory: Path,
         runner_factory: RunnerFactory | None = None,
+        storage_factory=None,
     ) -> None:
         self.jobs_directory = jobs_directory
         self.jobs_directory.mkdir(parents=True, exist_ok=True)
+        self.storage_factory = storage_factory or SashaStorage
         self.runner_factory = runner_factory or self._create_runner
         self.lock = threading.RLock()
         self.jobs: dict[str, WebRun] = {}
@@ -85,6 +91,7 @@ class JobManager:
         file_urls: list[str],
         deal_check: dict[str, Any] | None = None,
         *,
+        incoming_messages: tuple[IncomingMessage, ...] = (),
         turn_type: str | None = None,
         follow_up_stage: int | None = None,
         as_of_date: str | None = None,
@@ -106,6 +113,17 @@ class JobManager:
             as_of_date=as_of_date,
             days_since_client_reply=days_since_client_reply,
         )
+        messages = incoming_messages
+        if not messages and run.client_message:
+            messages = (incoming_message(run.client_message, file_urls),)
+        for message in messages:
+            for url in message.attachments:
+                if url not in run.file_urls:
+                    run.file_urls.append(url)
+        storage = self.storage_factory()
+        storage.sender_email()
+        stored = storage.prepare_run(deal_id, run.run_id, messages)
+        run.incoming_messages = [message.to_dict() for message in stored]
         with self.lock:
             self.jobs[run.run_id] = run
             self._save(run)
@@ -122,7 +140,7 @@ class JobManager:
             value.accepting_messages = bool(runner and runner.accepting_messages)
             return value
 
-    def submit_message(self, run_id: str, submission_id: str, text: str) -> dict:
+    def submit_message(self, run_id: str, submission_id: str, text: str, incoming: IncomingMessage | None = None) -> dict:
         if not text.strip() or len(text) > 20_000:
             raise ValueError("Client message must contain between 1 and 20,000 characters.")
         with self.lock:
@@ -131,6 +149,8 @@ class JobManager:
                 if message["submission_id"] == submission_id:
                     if message["text"] != text:
                         raise ValueError("This submission ID was already used for a different message.")
+                    if message["status"] == "failed":
+                        raise ValueError(message.get("error") or "This message could not be delivered")
                     return dict(message)
             runner = self.active_runners.get(run_id)
             if runner is None or not runner.accepting_messages:
@@ -142,8 +162,8 @@ class JobManager:
             run.messages.append(message)
             self._save(run)
             try:
-                runner.submit_message(submission_id, text)
-            except ValueError as error:
+                runner.submit_message(submission_id, text, incoming)
+            except (ValueError, RuntimeError, OSError) as error:
                 message.update(status="failed", error=str(error))
                 self._save(run)
                 raise
@@ -204,6 +224,8 @@ class JobManager:
         return SashaTask(
             deal_id=run.deal_id,
             task_id=f"web-{run.deal_id}-{run.run_id[:12]}",
+            run_id=run.run_id,
+            incoming_messages=tuple(IncomingMessage(**message) for message in run.incoming_messages),
             deal_url=application.deal_url(run.deal_id),
             client_message=run.client_message,
             file_urls=tuple(run.file_urls),

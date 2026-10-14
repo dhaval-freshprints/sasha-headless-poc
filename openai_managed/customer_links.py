@@ -8,10 +8,8 @@ from urllib.parse import quote, urlsplit
 
 
 CONTEXT_PATH = Path("/opt/sasha/customer_link_context.json")
-DATABASE_ENVIRONMENT_VARIABLES = (
-    "NON_PROD_HOST", "NON_PROD_PORT", "NON_PROD_USER", "NON_PROD_PASS", "NON_PROD_SSL_CA",
-    "DEAL_MANAGER_MAIN_SCHEMA", "DEAL_MANAGER_OPERATIONS_SCHEMA", "DEAL_MANAGER_CRM_SCHEMA",
-)
+from sasha_database import read as database_helper
+from sasha_database.config import DATABASE_ENVIRONMENT_VARIABLES
 
 
 class CustomerLinkError(Exception):
@@ -91,9 +89,6 @@ def run(proof_id) -> dict:
         context = json.loads(CONTEXT_PATH.read_text())
     except (OSError, ValueError):
         raise CustomerLinkError("task_configuration_error", "Customer link task context is unavailable.") from None
-    # This is the existing read-only Deal Manager helper, mounted beside this file.
-    import database as database_helper
-
     return build_customer_link(database_helper, context, proof_id)
 
 

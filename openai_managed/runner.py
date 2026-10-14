@@ -6,21 +6,19 @@ import json
 import os
 import threading
 import time
+import uuid
 from datetime import datetime, timezone
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable
 
 from .attachments import AttachmentSet, fetch_to_directory, restore_saved_attachments
-from .conversation import ConversationStore
+from sasha_database.storage import SashaStorage
+from sasha_database.connection import DatabaseError
+from sasha_database.messages import IncomingMessage, incoming_message, join_messages
 from .additional_messages import AdditionalMessageInbox, additional_message_prompt
 from .environment import ApplicationEnvironment
-from .notes import (
-    NOTES_OUTPUT_NAME,
-    NotesStore,
-    remove_notes_output,
-    saved_attachment_urls,
-)
+from .notes import prepare_notes, saved_attachment_urls
 from .pricing import CostEstimate, CostReporter, estimate_cost
 from .progress import ProgressReporter
 from .sandbox import DockerSandbox, SandboxConfig
@@ -254,6 +252,7 @@ class OpenAIManagedRunner:
         sandbox_factory: Callable[[SandboxConfig, str], DockerSandbox] = DockerSandbox,
         progress: ProgressReporter | None = None,
         cost_reporter: CostReporter | None = None,
+        storage_factory=SashaStorage,
     ) -> None:
         self.client = client
         self.settings = settings
@@ -261,7 +260,11 @@ class OpenAIManagedRunner:
         self.progress = progress or ProgressReporter()
         self.cost_reporter = cost_reporter
         self.last_run_directory: Path | None = None
-        self.last_conversation_file: Path | None = None
+        self.storage_factory = storage_factory
+        self.storage = None
+        self.current_task = None
+        self.persistence_error = None
+        self.additional_attachment_urls = []
         self.last_cost_estimate: CostEstimate | None = None
         self.session_id = ""
         self.additional_messages: AdditionalMessageInbox | None = None
@@ -274,10 +277,31 @@ class OpenAIManagedRunner:
     def accepting_messages(self) -> bool:
         return self.additional_messages is not None and self.additional_messages.accepting
 
-    def submit_message(self, submission_id: str, text: str) -> None:
-        if self.additional_messages is None:
-            raise ValueError("This run does not support additional message messages.")
-        self.additional_messages.submit(submission_id, text)
+    def submit_message(self, submission_id: str, text: str, incoming: IncomingMessage | None = None) -> None:
+        if not self.accepting_messages or self.current_task is None:
+            raise ValueError("This run is not accepting additional messages")
+        default = self.current_task.incoming_messages[-1] if self.current_task.incoming_messages else None
+        message = incoming or incoming_message(text, default=default)
+
+        def persist_message():
+            try:
+                stored = self.storage.prepare_run(self.current_task.deal_id, self.current_task.run_id, (message,))[0]
+                self.additional_attachment_urls.extend(stored.attachments)
+                return self._additional_prompt(stored)
+            except (DatabaseError, ValueError, OSError) as error:
+                self.persistence_error = error
+                raise
+
+        self.additional_messages.submit(submission_id, text, prepare=persist_message)
+
+    def _additional_prompt(self, message: IncomingMessage) -> str:
+        if not message.attachments:
+            return message.prompt()
+        workspace = self.last_run_directory / "workspace"
+        directory = workspace / "client-files" / uuid.uuid4().hex
+        files = fetch_to_directory(list(message.attachments), directory)
+        paths = "\n".join(f"- {item.name}: /workspace/{item.path.relative_to(workspace)}" for item in files.items)
+        return message.prompt() + "\n\nAdditional artwork files:\n" + paths
 
     @classmethod
     def from_environment(
@@ -298,7 +322,9 @@ class OpenAIManagedRunner:
 
     def run(self, task: SashaTask) -> SashaResult:
         self.last_run_directory = None
-        self.last_conversation_file = None
+        self.persistence_error = None
+        self.additional_attachment_urls = []
+        self.current_task = None
         self.last_cost_estimate = None
         try:
             self.settings.application.validate_deal_url(task.deal_url)
@@ -308,84 +334,39 @@ class OpenAIManagedRunner:
                 failure_message=str(error),
             )
         try:
-            conversation = ConversationStore(self.settings.runs_directory, task.deal_id)
-            notes = NotesStore(self.settings.runs_directory, task.deal_id)
-        except ValueError as error:
-            return SashaResult(
-                task.deal_id, "failed", failure_code="conversation_error",
-                failure_message=str(error),
-            )
-        return self._run_with_context(task, conversation, notes)
-
-    def _run_with_context(
-        self, task: SashaTask, conversation: ConversationStore, notes: NotesStore
-    ) -> SashaResult:
-        try:
-            self.last_conversation_file = conversation.path
-            self.progress.report(f"[context] Conversation file: {conversation.path}")
-            history = conversation.load()
-        except (OSError, ValueError) as error:
-            return SashaResult(
-                deal_id=task.deal_id,
-                status="failed",
-                failure_code="conversation_error",
-                failure_message=str(error),
-            )
-
-        notes_text, notes_writable = self._load_notes(notes)
-        file_urls = []
-        for url in task.file_urls:
-            if url not in file_urls:
-                file_urls.append(url)
-        task = replace(
-            task, conversation_history=tuple(history), deal_notes=notes_text,
-            file_urls=tuple(file_urls),
-        )
-        try:
-            result = self._run_turn(task, conversation, history)
-            if result.status == "completed" and notes_writable:
-                self._publish_notes(notes, task, result)
-            return result
-        finally:
-            self._remove_notes_output()
-
-    def _load_notes(self, notes: NotesStore) -> tuple[str, bool]:
-        try:
-            return notes.load(), True
-        except (OSError, ValueError) as error:
-            self.progress.report(
-                f"[notes] WARNING: Could not read deal notes; updates disabled: {error}"
-            )
-            return "", False
-
-    def _publish_notes(self, notes: NotesStore, task: SashaTask, result: SashaResult) -> None:
-        urls = saved_attachment_urls(task.deal_notes)
-        for url in task.file_urls:
-            if url not in urls:
-                urls.append(url)
-        try:
-            has_additional_message = self.additional_messages and self.additional_messages.accepted()
-            if task.turn_type == "follow_up" and result.message_html.strip() and not has_additional_message:
-                notes.publish(self.last_run_directory / "workspace", attachment_urls=urls,
-                              follow_up=True)
-            else:
-                notes.publish(self.last_run_directory / "workspace", attachment_urls=urls)
-            self.progress.report(f"[notes] Updated deal notes: {notes.path}")
-        except (OSError, ValueError) as error:
-            self.progress.report(
-                f"[notes] WARNING: Could not update deal notes; previous notes retained: {error}"
-            )
-
-    def _remove_notes_output(self) -> None:
-        if self.last_run_directory is None:
-            return
-        try:
-            remove_notes_output(self.last_run_directory / "workspace")
-        except OSError as error:
-            self.progress.report(f"[notes] WARNING: Could not remove temporary notes: {error}")
+            self.storage = self.storage_factory()
+            self.storage.sender_email()
+            messages = task.incoming_messages
+            if not messages and task.client_message:
+                messages = (incoming_message(task.client_message, task.file_urls),)
+            messages = self.storage.prepare_run(task.deal_id, task.run_id, messages)
+            notes, history = self.storage.load_context(task.deal_id)
+            self.progress.report("[context] Loaded notes and conversation from database")
+            current_ids = {message.row_id for message in messages}
+            history = [entry for entry in history if entry["id"] not in current_ids]
+            task = replace(task, incoming_messages=messages, client_message=join_messages(messages),
+                           conversation_history=tuple(history), deal_notes=notes)
+            self.current_task = task
+            result = self._run_turn(task)
+            if self.persistence_error is not None:
+                raise self.persistence_error
+            if result.status == "completed":
+                urls = list(dict.fromkeys([
+                    *saved_attachment_urls(notes), *task.file_urls, *self.additional_attachment_urls,
+                ]))
+                updated = prepare_notes(notes, result.notes, urls, result.convo_type == "followup")
+                self.storage.complete_run(task.deal_id, task.run_id, notes, updated,
+                                          result.message_html, result.convo_type)
+                result = replace(result, notes=updated)
+        except (DatabaseError, ValueError, OSError) as error:
+            result = SashaResult(task.deal_id, "failed", failure_code="persistence_error",
+                                 failure_message=str(error))
+        if self.last_run_directory is not None:
+            _write_json(self.last_run_directory / "workspace" / "result.json", result.to_dict())
+        return result
 
     def _run_turn(
-        self, task: SashaTask, conversation: ConversationStore, history: list[dict[str, Any]]
+        self, task: SashaTask
     ) -> SashaResult:
         session_id = ""
         events: SessionEvents | None = None
@@ -514,29 +495,6 @@ class OpenAIManagedRunner:
             result = _append_cleanup_errors(result, cleanup.errors)
             _write_json(handle.workspace_directory / "cleanup.json", cleanup.to_dict())
             _write_json(handle.workspace_directory / "result.json", result.to_dict())
-
-        if result.status == "completed":
-            try:
-                additional_messages = []
-                if self.additional_messages is not None:
-                    additional_messages = [message["text"] for message in self.additional_messages.accepted()]
-                conversation.append_completed_turn(
-                    history,
-                    task.client_message,
-                    result.message_html,
-                    additional_messages=additional_messages,
-                )
-            except (OSError, ValueError) as error:
-                result = SashaResult(
-                    deal_id=task.deal_id,
-                    status="failed",
-                    failure_code="conversation_error",
-                    failure_message=f"Could not save conversation: {error}",
-                )
-                _write_json(
-                    handle.workspace_directory / "result.json",
-                    result.to_dict(),
-                )
 
         return result
 
@@ -759,8 +717,8 @@ class OpenAIManagedRunner:
                 f"Manually selected follow_up_stage: {task.follow_up_stage} (authoritative).\n"
                 f"Business as_of_date: {task.as_of_date}.\n"
                 f"days_since_client_reply: {task.days_since_client_reply} (context only).\n"
-                "Empty local history means no reply only while no incoming client message exists. "
-                "An incoming message or unanswered local client request takes priority. "
+                "Empty database history means no reply only while no incoming client message exists. "
+                "An incoming message or unanswered client request in the database history takes priority. "
                 "Otherwise evaluate one supported unused tactic from the requested stage.\n\n"
             )
 
@@ -796,9 +754,8 @@ class OpenAIManagedRunner:
             f"{application.task_context()}\n\n"
             f"Runtime version: {RUNNER_VERSION}.\n"
             "Use the `account-manager` skill to decide what work is needed from the "
-            "local conversation history and incoming client messages. "
-            "The outreach, client-response-orchestrator, and followup-stage-1 through "
-            "followup-stage-5 skills are available. "
+            "database conversation history and incoming client messages. "
+            "The outreach, client-response-orchestrator, internal-email, and followup skills are available. "
             "CRM activity supplies deal facts, not the routing conversation for this version.\n\n"
             f"Deal ID: {task.deal_id}\n"
             f"Originating task ID: {task.task_id}\n"
@@ -834,9 +791,10 @@ class OpenAIManagedRunner:
             "rather than guessing canvas coordinates or claiming artwork is uneditable. "
             "Save the browser URLs visited "
             "as /workspace/artifacts/visited_urls.json. "
-            "Before returning, write the complete revised Markdown deal notebook to "
-            f"/workspace/{NOTES_OUTPUT_NAME}. Follow the deal-notes instructions; "
-            "keep it within 16 KiB and do not create snapshots or other notes files. "
+            "Return the complete revised Markdown notebook in the notes field. "
+            "Keep it within 16 KiB; do not write notes files. "
+            "Set convo_type to the final action: outreach, client_response, internal_mail, "
+            "or followup. For no reply, set convo_type to null. "
             "Return only the required Sasha result JSON object."
         )
 
@@ -881,6 +839,9 @@ class OpenAIManagedRunner:
         deadline = time.monotonic() + self.settings.turn_timeout_seconds
         waiting_for_turn = False
         while time.monotonic() < deadline:
+            if self.persistence_error is not None:
+                events.terminal_type = ""
+                raise self.persistence_error
             if events.error:
                 raise RuntimeError(f"Session event stream failed: {events.error}")
             if events.connection_failed.is_set():
@@ -904,6 +865,8 @@ class OpenAIManagedRunner:
         raise TimeoutError("Managed Account Manager run exceeded its time limit, including additional message messages")
 
     def _deliver_additional_message(self, message: dict) -> bool:
+        if self.persistence_error is not None:
+            raise self.persistence_error
         self.additional_messages.update(message, "sending")
         try:
             submission_key = message["submission_id"]
@@ -999,6 +962,9 @@ class OpenAIManagedRunner:
                 failure_code="invalid_result",
                 failure_message=str(error),
             )
+        if result.deal_id != task.deal_id:
+            return SashaResult(task.deal_id, "failed", failure_code="invalid_result",
+                               failure_message="Result deal ID does not match this run")
         return result
 
 

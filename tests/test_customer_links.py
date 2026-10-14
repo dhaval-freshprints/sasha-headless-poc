@@ -9,10 +9,9 @@ from subprocess import CompletedProcess
 from unittest.mock import MagicMock, patch
 
 from openai_managed import customer_links
-from openai_managed.customer_link_database import CustomerLinkDatabase, load_customer_link_database
+from sasha_database.config import DatabaseSettings as CustomerLinkDatabase
 from openai_managed.sandbox import DockerSandbox, SandboxConfig
 from openai_managed.task import SashaTask
-from deal_manager_agent.deal_queries import load_database_helper
 
 
 DATABASE_ENVIRONMENT = {
@@ -20,10 +19,8 @@ DATABASE_ENVIRONMENT = {
     "NON_PROD_PORT": "3306",
     "NON_PROD_USER": "database-user",
     "NON_PROD_PASS": "database-secret",
-    "NON_PROD_SSL_CA": "/opt/rds-ca.pem",
     "DEAL_MANAGER_MAIN_SCHEMA": "configured_main",
     "DEAL_MANAGER_OPERATIONS_SCHEMA": "configured_operations",
-    "DEAL_MANAGER_CRM_SCHEMA": "configured_crm",
 }
 
 
@@ -120,7 +117,7 @@ class CustomerLinkTests(unittest.TestCase):
                 self.assertEqual(error.exception.code, "database_configuration_error")
 
     def test_helper_uses_environment_configuration_without_database_json(self):
-        database = load_database_helper()
+        database = customer_links.database_helper
         with tempfile.TemporaryDirectory() as directory:
             context_path = Path(directory) / "context.json"
             context_path.write_text(json.dumps(self.context))
@@ -138,22 +135,13 @@ class CustomerLinkTests(unittest.TestCase):
 
 
 class CustomerLinkRuntimeTests(unittest.TestCase):
-    def test_incomplete_configuration_disables_only_database_access(self):
-        with patch("openai_managed.customer_link_database.required", side_effect=ValueError("missing")):
-            self.assertIsNone(load_customer_link_database())
-
     def test_container_scopes_deal_and_keeps_secrets_out_of_arguments_and_workspace(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            certificate = root / "ca.pem"
-            certificate.write_text("synthetic certificate")
-            settings = CustomerLinkDatabase(
-                {name: value for name, value in DATABASE_ENVIRONMENT.items() if name != "NON_PROD_SSL_CA"},
-                certificate,
-            )
+            settings = CustomerLinkDatabase(dict(DATABASE_ENVIRONMENT))
             sandbox = DockerSandbox(SandboxConfig("image", root, "https://hq.example"), "executor")
             handle = sandbox.prepare(SashaTask("100", "task", "https://crm.example/deal?id=100"))
-            with patch.object(sandbox, "_load_customer_link_database", return_value=settings), \
+            with patch("openai_managed.sandbox.DatabaseSettings.from_environment", return_value=settings), \
                     patch.dict(os.environ, {"UNRELATED_SECRET": "unrelated", "OPENAI_API_KEY": "openai-secret"}), \
                     patch("openai_managed.sandbox.subprocess.run", return_value=CompletedProcess([], 0)) as run:
                 sandbox.start_container()
@@ -165,8 +153,9 @@ class CustomerLinkRuntimeTests(unittest.TestCase):
             self.assertNotIn("/run/secrets", command)
             self.assertNotIn("--env-file", arguments)
             forwarded_names = {arguments[index + 1] for index, value in enumerate(arguments) if value == "--env"}
-            self.assertEqual(forwarded_names, set(DATABASE_ENVIRONMENT))
-            self.assertIn("dst=/opt/rds-ca.pem,readonly", command)
+            self.assertEqual(forwarded_names, set(DATABASE_ENVIRONMENT) | {"PYTHONPATH=/opt"})
+            self.assertNotIn("rds-ca.pem", command)
+            self.assertNotIn("NON_PROD_SSL_CA", forwarded_names)
             self.assertEqual(json.loads((handle.run_directory / "customer_link_context.json").read_text()),
                              {"deal_id": "100", "hq_base_url": "https://hq.example"})
             for name, value in DATABASE_ENVIRONMENT.items():
@@ -178,12 +167,12 @@ class CustomerLinkRuntimeTests(unittest.TestCase):
                 if path.is_file():
                     self.assertNotIn("database-secret", path.read_text())
 
-    def test_missing_database_does_not_stop_container_or_connect(self):
+    def test_missing_database_prevents_container_start(self):
         with tempfile.TemporaryDirectory() as directory:
-            sandbox = DockerSandbox(SandboxConfig("image", Path(directory), "https://hq.example"), "executor")
+            sandbox = DockerSandbox(SandboxConfig("image", Path(directory)), "executor")
             sandbox.prepare(SashaTask("100", "task", "https://crm.example/deal?id=100"))
-            with patch.object(sandbox, "_load_customer_link_database", return_value=None), \
+            with patch("openai_managed.sandbox.DatabaseSettings.from_environment", side_effect=ValueError("missing")), \
                     patch("openai_managed.sandbox.subprocess.run") as run:
-                sandbox.start_container()
-            self.assertEqual(run.call_count, 1)
-            self.assertNotIn("--env", run.call_args.args[0])
+                with self.assertRaises(ValueError):
+                    sandbox.start_container()
+                run.assert_not_called()

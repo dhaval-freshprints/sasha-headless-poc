@@ -4,24 +4,18 @@ Mirrors sasha-ai-assistant-v3 `core/workflow/deal_resolution/queries.py` and
 `deal_consolidation.pick_canonical_deal_id`.
 """
 
-import importlib.util
 import os
 from contextlib import contextmanager
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Callable
 
-DATABASE_HELPER = (Path(__file__).resolve().parent / "skills" / "deal-manager-database"
-                   / "scripts" / "database.py")
 CLOSED_STAGES = ("won", "lost")  # The only closed CRM stages (v3 CRM_DEAL_CLOSED_STAGES).
 DEFAULT_SASHA_USER_ID = 297140  # Sasha's CRM user for active deals; set SASHA_USER_ID to override.
 
 
 def load_database_helper():
-    spec = importlib.util.spec_from_file_location("deal_manager_database", DATABASE_HELPER)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    from sasha_database import read
+    return read
 
 
 def sasha_user_id() -> int:
@@ -93,16 +87,14 @@ def proof_ids_for_deal(db: DatabaseSession, deal_id: int) -> set[int]:
 
 
 def latest_outbound_by_deal(db: DatabaseSession, deal_ids) -> dict[int, object]:
-    """Latest Sasha outbound time for each deal Sasha has outreached (context + outbound row)."""
+    """Latest non-deleted Sasha outbound timestamp for each candidate deal."""
     if not deal_ids:
         return {}
     slots = ",".join(["%s"] * len(deal_ids))
-    history = f"{db.operations}.sasha_communication_history"
+    history = f"{db.operations}.sasha_conversation_history"
     rows = db.query(
-        f"SELECT h.deal_id, MAX(h.message_timestamp) AS last_outbound_at FROM {history} h "
-        f"WHERE h.deal_id IN ({slots}) AND UPPER(COALESCE(h.direction,''))='OUTBOUND' "
-        f"AND h.message_timestamp IS NOT NULL AND EXISTS "
-        f"(SELECT 1 FROM {db.operations}.sasha_deal_context c WHERE c.deal_id=h.deal_id) "
+        f"SELECT h.deal_id, MAX(COALESCE(h.message_timestamp,h.created_at)) AS last_outbound_at FROM {history} h "
+        f"WHERE h.deal_id IN ({slots}) AND h.direction='OUTBOUND' AND h.deleted_at IS NULL "
         f"GROUP BY h.deal_id",
         [str(deal_id) for deal_id in deal_ids],
     )["rows"]

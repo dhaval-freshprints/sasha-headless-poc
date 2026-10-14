@@ -11,15 +11,14 @@ Files use plain descriptive names within `deal_manager_agent/`. `SKILL.md` is th
 
 ## Database configuration
 
-Set the connection settings and all three schema variables in a private environment file. `DEAL_MANAGER_MAIN_SCHEMA` contains deals, users, accounts, activities, orders and proofs. `DEAL_MANAGER_OPERATIONS_SCHEMA` contains Sasha conversation/context tables. `DEAL_MANAGER_CRM_SCHEMA` contains original CRM messages. No schema name is built in. The application relationships are documented in the database skill; inspect tables when using another deployment.
+Set the connection settings and both schema variables in a private environment file. `DEAL_MANAGER_MAIN_SCHEMA` contains deals, users, accounts, orders and proofs. `DEAL_MANAGER_OPERATIONS_SCHEMA` contains Sasha status, notes and `sasha_conversation_history`. DM uses this conversation table for provider, thread, sender and deal history lookups. No schema name is built in. The application relationships are documented in the database skill; inspect tables when using another deployment.
 
 From this package directory:
 
 ```sh
 python skills/deal-manager-database/scripts/database.py --env-file /absolute/private/database.env schemas
 python skills/deal-manager-database/scripts/database.py --env-file /absolute/private/database.env --role main tables
-python skills/deal-manager-database/scripts/database.py --env-file /absolute/private/database.env --role operations describe sasha_communication_history
-python skills/deal-manager-database/scripts/database.py --env-file /absolute/private/database.env --role crm describe message
+python skills/deal-manager-database/scripts/database.py --env-file /absolute/private/database.env --role operations describe sasha_conversation_history
 python skills/deal-manager-resolve-deal/scripts/collect_evidence.py --env-file /absolute/private/database.env --input /absolute/private/message.json
 ```
 

@@ -1,6 +1,6 @@
 """Timing and engagement signals for an explicit follow-up check.
 
-Computed from the dated local conversation, the deal notes' follow-up history and the
+Computed from the dated database conversation, the deal notes' follow-up history and the
 business as_of_date, so the follow-up skill chooses a tactic from facts instead of a stage.
 """
 

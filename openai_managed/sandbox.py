@@ -14,7 +14,7 @@ from typing import IO
 from urllib.parse import urlparse
 
 from .task import SashaTask
-from .customer_link_database import load_customer_link_database
+from sasha_database.config import DatabaseSettings, container_database_options
 
 
 SAFE_NAME = re.compile(r"[^a-zA-Z0-9_.-]+")
@@ -116,15 +116,8 @@ class DockerSandbox:
 
     def start_container(self) -> None:
         handle = self._require_handle()
-        database = self._load_customer_link_database() if self.config.hq_base_url else None
-        database_options = []
-        process_environment = dict(os.environ)
-        if database is not None:
-            database_options = ["--mount", f"type=bind,src={database.certificate},dst=/opt/rds-ca.pem,readonly"]
-            database_values = {**database.values, "NON_PROD_SSL_CA": "/opt/rds-ca.pem"}
-            process_environment.update(database_values)
-            for name in database_values:
-                database_options.extend(["--env", name])
+        database = DatabaseSettings.from_environment()
+        database_options, process_environment = container_database_options(database)
         subprocess.run(
             [
                 "docker",
@@ -165,10 +158,6 @@ class DockerSandbox:
             text=True,
             env=process_environment,
         )
-
-    @staticmethod
-    def _load_customer_link_database():
-        return load_customer_link_database()
 
     def authenticate(
         self,

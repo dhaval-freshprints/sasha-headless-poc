@@ -6,7 +6,7 @@ from openai_managed.task import SASHA_RESULT_JSON_SCHEMA, SashaResult, SashaTask
 
 class SashaTaskTests(unittest.TestCase):
     def test_followup_validation_also_applies_outside_the_web_api(self):
-        valid = {"turn_type": "follow_up", "as_of_date": "2026-10-13"}
+        valid = {"turn_type": "follow_up", "follow_up_stage": 1, "as_of_date": "2026-10-13"}
         task = SashaTask("303839", "followup", "https://qa.example/deal", **valid)
         self.assertEqual(task.as_of_date, "2026-10-13")
         for changed in ({"turn_type": "response"}, {"turn_type": None}, {"as_of_date": None},
@@ -16,10 +16,10 @@ class SashaTaskTests(unittest.TestCase):
             with self.subTest(changed=changed), self.assertRaises(ValueError):
                 SashaTask("303839", "followup", "https://qa.example/deal", **{**valid, **changed})
 
-    def test_rejects_removed_follow_up_stage_argument(self):
-        with self.assertRaises(TypeError):
+    def test_rejects_invalid_follow_up_stage_argument(self):
+        with self.assertRaises(ValueError):
             SashaTask("303839", "followup", "https://qa.example/deal", turn_type="follow_up",
-                      follow_up_stage=2, as_of_date="2026-10-13")
+                      follow_up_stage=6, as_of_date="2026-10-13")
 
     def test_rejects_removed_workflow_argument(self):
         with self.assertRaises(TypeError):
@@ -64,6 +64,8 @@ class SashaResultTests(unittest.TestCase):
             "message_html": "Any model-generated HTML",
             "failure_code": "",
             "failure_message": "",
+            "notes": "Saved notes",
+            "convo_type": "outreach",
         }
 
         result = SashaResult.from_json(json.dumps(value))

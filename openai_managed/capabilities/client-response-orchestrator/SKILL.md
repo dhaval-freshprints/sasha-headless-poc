@@ -9,7 +9,7 @@ This skill owns client-response sales strategy and actions. Reply wording belong
 
 ## Handle the request
 
-1. Identify the current request from the supplied client message or unanswered local conversation. If nothing needs answering, return no reply as defined by account-manager. Otherwise read the supplied notes, current deal activity, and any relevant proof to gather facts for that request.
+1. Identify the current request from the supplied client message or unanswered database conversation. If nothing needs answering, return no reply as defined by account-manager. Otherwise read the supplied notes, current deal activity, and any relevant proof to gather facts for that request.
 2. Choose the actions needed to answer the request. Use the designs gallery for design inspiration, the product catalog and quoter for garment recommendations, and the relevant proof for proof work. A request can need several actions; do not add unrelated work.
 3. Answer a general question directly when no browser action is needed beyond gathering grounded facts. Ask only for information needed to proceed that is not already available.
 4. Perform the requested work using the [shared sales rules](../account-manager/references/sales_rules.md) and verify the results using the shared rules.

@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from openai_managed.conversation import ConversationStore
 from openai_managed.additional_messages import AdditionalMessageInbox
 from openai_managed.task import SashaTask
-from openai_managed.notes import NotesStore, NOTES_OUTPUT_NAME, follow_up_entries
+from openai_managed.notes import follow_up_entries
 from tests import test_openai_managed_runner as runner_tests
 
 
@@ -70,7 +70,9 @@ class ControlledSession:
 
     def complete(self, turn_id, answer):
         self.turns[turn_id] = "completed"
-        result = {"deal_id": "303839", "status": "completed", "message_html": answer}
+        result = {"deal_id": "303839", "status": "completed", "message_html": answer,
+                  "notes": "## Current decisions\n- Follow-up generated: close_the_loop",
+                  "convo_type": "client_response" if answer else None}
         self.items.append({"role": "assistant", "phase": "final_answer", "turn_id": turn_id, "content": [{"type": "output_text", "text": json.dumps(result)}]})
         self.stream.queue.put({"type": "agent.session.turn.completed", "turn_id": turn_id, "turn": {"id": turn_id, "subagent_id": None}})
 
@@ -109,22 +111,14 @@ class AdditionalMessageTests(unittest.TestCase):
 
     def followup_task(self):
         self.task = SashaTask("303839", "follow-up", runner_tests.TASK_URL,
-                             turn_type="follow_up", as_of_date="2026-10-13")
+                             turn_type="follow_up", follow_up_stage=1, as_of_date="2026-10-13")
 
     def test_followup_completion_race_selects_response_and_discards_proposed_tactic(self):
         self.followup_task()
-        notes = NotesStore(self.runner.settings.runs_directory, "303839")
-        notes.path.parent.mkdir(parents=True)
-        prior = "- Stage 1 follow-up generated: offer_art_team"  # Older entry format.
-        notes.path.write_text("## Current decisions\n" + prior)
-        original_publish = self.runner._publish_notes
-        def publish(store, task, result):
-            candidate = self.runner.last_run_directory / "workspace" / NOTES_OUTPUT_NAME
-            candidate.write_text("## Current decisions\n- Follow-up generated: close_the_loop")
-            original_publish(store, task, result)
-        self.runner._publish_notes = publish
+        prior = "- Stage 1 follow-up generated: offer_art_team"
+        self.fixture.database.notes["303839"] = "## Current decisions\n" + prior
         self.test_completion_during_delivery_waits_for_new_turn_and_uses_its_answer()
-        self.assertEqual(follow_up_entries(notes.load()), [prior])
+        self.assertEqual(follow_up_entries(self.fixture.database.notes["303839"]), [prior])
 
     def test_message_attached_after_same_turn_answer_continues_before_completing(self):
         self.followup_task()
@@ -143,7 +137,7 @@ class AdditionalMessageTests(unittest.TestCase):
         self.control.complete("turn-2", "<p>Samples are free and blank.</p>")
         self.assertEqual(self.finish().message_html, "<p>Samples are free and blank.</p>")
         self.assertEqual(len(self.sandboxes), 1)
-        history = ConversationStore(self.runner.settings.runs_directory, "303839").load()
+        history = self.fixture.database.history.get("303839", [])
         self.assertEqual([item["content"] for item in history],
                          ["Are samples free?", "<p>Samples are free and blank.</p>"])
         self.assertEqual(len(self.runner.additional_messages.messages), 1)
@@ -168,7 +162,7 @@ class AdditionalMessageTests(unittest.TestCase):
         self.assertEqual(self.control.sent[1][1], "correction-1")
         self.assertEqual(len(self.sandboxes), 1)
         self.assertEqual(self.sessions.operations, ["delete", "stop"])
-        history = ConversationStore(self.runner.settings.runs_directory, "303839").load()
+        history = self.fixture.database.history.get("303839", [])
         self.assertEqual([item["content"] for item in history], [self.task.client_message, "Actually black and quantity 60", result.message_html])
         self.assertEqual(self.updates[-1]["turn_id"], "turn-1")
         self.assertFalse(self.runner.accepting_messages)
@@ -185,7 +179,7 @@ class AdditionalMessageTests(unittest.TestCase):
         result = self.finish()
         self.assertEqual(result.status, "completed")
         self.assertEqual(len(self.sandboxes), 1)
-        history = ConversationStore(self.runner.settings.runs_directory, "303839").load()
+        history = self.fixture.database.history.get("303839", [])
         self.assertEqual([item["content"] for item in history], ["Do you offer samples?", result.message_html])
 
     def test_successful_no_reply_keeps_received_messages(self):
@@ -197,7 +191,7 @@ class AdditionalMessageTests(unittest.TestCase):
         result = self.finish()
         self.assertEqual(result.status, "completed")
         self.assertEqual(result.message_html, "")
-        history = ConversationStore(self.runner.settings.runs_directory, "303839").load()
+        history = self.fixture.database.history.get("303839", [])
         self.assertEqual([item["content"] for item in history], ["Thanks", "All set"])
         self.assertTrue(all(item["role"] == "client" for item in history))
 
@@ -252,11 +246,11 @@ class AdditionalMessageTests(unittest.TestCase):
         wait_until(lambda: len(self.control.items) == 2)
         self.control.complete("turn-1", "<p>Black, 60</p>")
         self.assertEqual(self.finish().status, "completed")
-        history = ConversationStore(self.runner.settings.runs_directory, "303839").load()
+        history = self.fixture.database.history.get("303839", [])
         self.assertEqual([item["content"] for item in history[1:3]], ["Use black", "Make it 60"])
         self.assertEqual([sent[1] for sent in self.control.sent[1:]], ["color", "quantity"])
 
-    def test_rejected_delivery_is_not_added_to_conversation(self):
+    def test_rejected_delivery_remains_in_database(self):
         error = RuntimeError("Invalid input")
         error.status_code = 400
         self.control.delivery_error = error
@@ -265,8 +259,9 @@ class AdditionalMessageTests(unittest.TestCase):
         wait_until(lambda: any(update["status"] == "failed" for update in self.updates))
         self.control.complete("turn-1", "<p>Original answer</p>")
         self.assertEqual(self.finish().status, "completed")
-        history = ConversationStore(self.runner.settings.runs_directory, "303839").load()
-        self.assertEqual(len(history), 2)
+        history = self.fixture.database.history.get("303839", [])
+        self.assertEqual(len(history), 3)
+        self.assertEqual(history[1]["content"], "Use black")
 
     def test_message_arriving_during_final_check_prevents_cleanup(self):
         original_check = self.runner._additional_message_turn_finished
@@ -305,3 +300,62 @@ class AdditionalMessageTests(unittest.TestCase):
         self.assertTrue(inbox.close_if_empty())
         with self.assertRaises(ValueError):
             inbox.submit("two", "Too late")
+
+    def test_additional_artwork_is_staged_without_exposing_signed_url(self):
+        from unittest.mock import patch
+        from sasha_database.messages import IncomingMessage
+        from openai_managed.notes import saved_attachment_urls
+        self.start()
+        url = 'https://example.test/logo.svg?signature=synthetic-secret'
+        message = IncomingMessage('Use this logo', 'client@example.com', attachments=(url,))
+        with patch('openai_managed.attachments.urllib.request.urlopen',
+                   return_value=runner_tests.FakeResponse(b'<svg/>', 'image/svg+xml')):
+            self.runner.submit_message('artwork', message.body, message)
+        self.assertTrue(self.control.additional_message_sent.wait(2))
+        prompt = self.control.sent[-1][2][0]['input'][0]['content'][0]['text']
+        self.assertIn('/workspace/client-files/', prompt)
+        self.assertNotIn('synthetic-secret', prompt)
+        self.control.complete('turn-1', '<p>Using your logo.</p>')
+        result = self.finish()
+        self.assertEqual(result.status, 'completed')
+        self.assertEqual(saved_attachment_urls(result.notes), [url])
+
+    def test_persistence_failure_stops_run_before_message_delivery(self):
+        from unittest.mock import patch
+        from sasha_database.connection import DatabaseError
+        self.start()
+        with patch.object(self.fixture.database, 'prepare_run', side_effect=DatabaseError('Unavailable')):
+            with self.assertRaises(DatabaseError):
+                self.runner.submit_message('db-failure', 'New request')
+        self.assertEqual(self.finish().failure_code, 'persistence_error')
+        self.assertEqual(len(self.control.sent), 1)
+        self.assertEqual(self.fixture.database.completed, [])
+
+    def test_completion_waits_for_persistence_and_enqueue(self):
+        inbox = AdditionalMessageInbox(lambda message: None)
+        inbox.open()
+        saving = threading.Event()
+        release = threading.Event()
+        closed = threading.Event()
+        self.addCleanup(release.set)
+        def prepare():
+            saving.set()
+            release.wait(2)
+            return 'Channel: EMAIL\n\nHello'
+        submitted = threading.Thread(target=lambda: inbox.submit('one', 'Hello', prepare))
+        result = []
+        def finish():
+            result.append(inbox.close_if_empty())
+            closed.set()
+        submitted.start()
+        self.assertTrue(saving.wait(1))
+        finishing = threading.Thread(target=finish)
+        finishing.start()
+        self.assertFalse(closed.wait(0.05))
+        release.set()
+        submitted.join(2)
+        finishing.join(2)
+        self.assertEqual(result, [False])
+        message = inbox.take()
+        self.assertEqual(message['text'], 'Hello')
+        self.assertEqual(message['prompt_text'], 'Channel: EMAIL\n\nHello')

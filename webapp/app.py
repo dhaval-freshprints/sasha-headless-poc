@@ -10,13 +10,15 @@ from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from openai_managed.environment import ApplicationEnvironment
 from openai_managed.task import normalize_client_message, validate_follow_up
-from openai_managed.notes import NotesStore
+from sasha_database.storage import SashaStorage, validate_deal_id
+from sasha_database.connection import DatabaseError
+from sasha_database.messages import IncomingMessage, incoming_message
 
 from .deals import Deal, DealStore
 from .jobs import JobManager, WebRun
@@ -40,10 +42,39 @@ class NoCacheStaticFiles(StaticFiles):
         return response
 
 
+class MessageInput(BaseModel):
+    body: str = Field(min_length=1, max_length=20_000)
+    sender_name: str = Field(default="", max_length=255)
+    message_type: Literal["EMAIL", "SMS"] = "EMAIL"
+    subject: str | None = Field(default=None, max_length=500)
+    external_message_id: str | None = Field(default=None, max_length=255)
+    external_thread_id: str | None = Field(default=None, max_length=255)
+    content_type: Literal["text", "text/html"] = "text"
+    message_timestamp: str | None = None
+    attachments: list[str] = Field(default_factory=list, max_length=10)
+
+    def to_message(self, attachments=()):
+        envelope = f"Channel: {self.message_type}\nFrom: {self.sender_name}\n\n{self.body}"
+        kind = incoming_message(envelope).convo_type
+        values = self.model_dump(exclude_none=True)
+        urls = list(dict.fromkeys([*values.pop("attachments"), *attachments]))
+        for url in urls:
+            parsed = urlparse(url)
+            if parsed.scheme not in {"http", "https"} or not parsed.netloc or len(url) > 2048:
+                raise ValueError("Attachment URLs must be HTTP(S) URLs of at most 2048 characters")
+        return IncomingMessage(**values, attachments=tuple(urls), convo_type=kind)
+
+    @model_validator(mode="after")
+    def validate_message(self):
+        self.to_message()
+        return self
+
+
 class RunRequest(BaseModel):
     deal_id: str = Field(pattern=r"^[0-9]+$", min_length=1, max_length=20)
     client_message: str | None = Field(default=None, max_length=20_000)
     file_urls: list[str] = Field(default_factory=list, max_length=10)
+    incoming_message: MessageInput | None = None
 
     turn_type: Literal["follow_up"] | None = None
     follow_up_stage: int | None = Field(default=None, strict=True, ge=1, le=5)
@@ -53,7 +84,8 @@ class RunRequest(BaseModel):
     @model_validator(mode="after")
     def validate_turn(self):
         validate_follow_up(self.turn_type, self.follow_up_stage, self.as_of_date,
-                           self.days_since_client_reply, self.client_message, self.file_urls)
+                           self.days_since_client_reply,
+                           self.incoming_message.body if self.incoming_message else self.client_message, self.file_urls)
         return self
 
     @model_validator(mode="before")
@@ -94,6 +126,7 @@ class DealRequest(BaseModel):
 class AdditionalMessageRequest(BaseModel):
     submission_id: str = Field(pattern=r"^[a-zA-Z0-9_-]{1,100}$")
     text: str = Field(min_length=1, max_length=20_000)
+    incoming_message: MessageInput | None = None
 
     @field_validator("text")
     @classmethod
@@ -118,9 +151,9 @@ def create_app(
 
     resolver = deal_resolver or DealResolver()
 
-    def start_account_manager(deal_id: str, client_message: str, deal_check: dict | None = None) -> dict:
+    def start_account_manager(deal_id: str, client_message: str, deal_check: dict | None = None, incoming_messages=()) -> dict:
         deals.touch(deal_id)
-        return manager.submit(deal_id, client_message, [], deal_check=deal_check).to_dict()
+        return manager.submit(deal_id, client_message, [], deal_check=deal_check, incoming_messages=incoming_messages).to_dict()
 
     inbound = inbound_manager or InboundJobs(
         storage_directory() / "inbound", ActiveDealFinder(), lookups, start_account_manager, resolver,
@@ -136,6 +169,14 @@ def create_app(
         inbound.shutdown()
 
     app = FastAPI(title="Account Manager", lifespan=lifespan)
+    @app.exception_handler(DatabaseError)
+    async def database_error(_, error):
+        return JSONResponse(status_code=503, content={"detail": str(error)})
+
+    @app.exception_handler(ValueError)
+    async def input_error(_, error):
+        return JSONResponse(status_code=422, content={"detail": str(error)})
+
     app.state.job_manager = manager
     app.state.deal_store = deals
     app.state.lookup_manager = lookups
@@ -229,20 +270,26 @@ def create_app(
     @app.get("/api/deals/{deal_id}/notes")
     def get_deal_notes(deal_id: str) -> dict:
         try:
-            store = NotesStore(_notes_runs_directory(), deal_id)
+            validate_deal_id(deal_id)
         except ValueError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
         try:
-            notes = store.load()
-        except (OSError, ValueError) as error:
-            raise HTTPException(status_code=500, detail=f"Could not read deal notes: {error}") from error
+            notes = manager.storage_factory().load_notes(deal_id)
+        except (DatabaseError, ValueError, OSError) as error:
+            raise HTTPException(status_code=503, detail=f"Could not read deal notes: {error}") from error
         return {"deal_id": deal_id, "notes": notes}
 
     @app.post("/api/runs", status_code=202)
     def create_run(request: RunRequest) -> dict:
         # Every run is checked first, as in Sasha v3: with a client message it is a client
         # response, without one an outreach. Account Manager may run on a merged deal.
-        workflow = "client_response" if request.client_message else "outreach"
+        message = request.incoming_message.to_message(request.file_urls) if request.incoming_message else None
+        if message is None and request.client_message:
+            message = incoming_message(request.client_message, request.file_urls)
+        client_message = message.prompt() if request.incoming_message else request.client_message
+        workflow = "client_response" if client_message else "outreach"
+        if message and message.convo_type == "internal_mail":
+            workflow = "internal_email"
         check = resolver.resolve(request.deal_id, workflow)
         if check.status != "proceed":
             verb = "skipped" if check.status == "skipped" else "not started"
@@ -250,8 +297,9 @@ def create_app(
         deals.touch(check.deal_id)
         run = manager.submit(
             check.deal_id,
-            request.client_message,
+            client_message,
             request.file_urls,
+            incoming_messages=(message,) if message else (),
             deal_check=check.to_dict(),
             turn_type=request.turn_type,
             follow_up_stage=request.follow_up_stage,
@@ -270,7 +318,8 @@ def create_app(
     @app.post("/api/runs/{run_id}/messages", status_code=202)
     def send_message(run_id: str, request: AdditionalMessageRequest) -> dict:
         try:
-            return manager.submit_message(run_id, request.submission_id, request.text)
+            incoming = request.incoming_message.to_message() if request.incoming_message else None
+            return manager.submit_message(run_id, request.submission_id, request.text, incoming)
         except KeyError as error:
             raise HTTPException(status_code=404, detail="Run not found") from error
         except ValueError as error:
@@ -301,13 +350,6 @@ def _deals_directory() -> Path:
     if configured:
         return Path(configured).expanduser() / environment
     return ROOT / "runs" / "webapp" / "deals" / environment
-
-
-def _notes_runs_directory() -> Path:
-    environment = ApplicationEnvironment.from_environment().name
-    configured = os.environ.get("OPENAI_MANAGED_RUNS_DIRECTORY", "").strip()
-    root = Path(configured).expanduser() if configured else ROOT / "runs" / "openai-managed"
-    return root / environment
 
 
 def _backfill_deals(deals: DealStore, runs: list[WebRun]) -> None:

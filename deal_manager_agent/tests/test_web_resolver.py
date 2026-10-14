@@ -85,8 +85,7 @@ class ResolverTests(unittest.TestCase):
             image="test-image", directory=self.root / "executions",
             database={"NON_PROD_PASS": "database-secret",
                       "DEAL_MANAGER_MAIN_SCHEMA": "test-main",
-                      "DEAL_MANAGER_OPERATIONS_SCHEMA": "test_operations",
-                      "DEAL_MANAGER_CRM_SCHEMA": "test_crm"}, certificate=self.root / "ca.pem",
+                      "DEAL_MANAGER_OPERATIONS_SCHEMA": "test_operations"},
             connection_timeout=0.01, turn_timeout=0.01,
         )
 
@@ -119,22 +118,24 @@ class ResolverTests(unittest.TestCase):
         self.assertFalse((handle.workspace_directory / "task.json").exists())
         self.assertNotIn("database-secret", (handle.workspace_directory / "message.json").read_text())
         self.assertEqual(json.loads((handle.workspace_directory / "database_schemas.json").read_text()), {
-            "main": "test-main", "operations": "test_operations", "crm": "test_crm",
+            "main": "test-main", "operations": "test_operations",
         })
         self.assertFalse(any(path.name.endswith("verified_findings.json")
                              for path in handle.workspace_directory.rglob("*")))
         self.assertFalse((handle.workspace_directory / "test_results").exists())
 
-    def test_database_secret_is_passed_over_stdin_not_docker_arguments(self):
+    def test_database_settings_use_environment_without_secret_files(self):
         sandbox = DealManagerSandbox(self.settings)
-        handle = sandbox.prepare(request())
-        with patch('deal_manager_agent.sandbox.subprocess.run') as process:
+        handle = sandbox.prepare(LookupRequest(sender_email="a@b.co", body="Hello"))
+        with patch("deal_manager_agent.sandbox.subprocess.run") as process:
             sandbox.start_container()
-        self.assertEqual(process.call_count, 2)
-        for call in process.call_args_list:
-            self.assertNotIn('database-secret', ' '.join(call.args[0]))
-        self.assertIn('database-secret', process.call_args.kwargs['input'])
-        self.assertFalse(any(path.name == 'database.json' for path in handle.workspace_directory.rglob('*')))
+        process.assert_called_once()
+        arguments = process.call_args.args[0]
+        self.assertNotIn('database-secret', str(arguments))
+        self.assertNotIn('/run/secrets', str(arguments))
+        self.assertEqual(process.call_args.kwargs['env']['NON_PROD_PASS'], 'database-secret')
+        self.assertIn('NON_PROD_PASS', arguments)
+        self.assertFalse(list(handle.run_directory.rglob('database.json')))
 
     def make_runner(self, result=None):
         sandbox = DealManagerSandbox(self.settings)

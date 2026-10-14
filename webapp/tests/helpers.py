@@ -21,7 +21,7 @@ class FakeRunner:
     def accepting_messages(self):
         return bool(self.additional_messages and self.additional_messages.accepting)
 
-    def submit_message(self, submission_id, text):
+    def submit_message(self, submission_id, text, incoming=None):
         self.additional_messages.submit(submission_id, text)
 
     def run(self, task):

@@ -4,6 +4,9 @@ from dataclasses import asdict, dataclass
 import json
 from datetime import date
 from typing import Any, Literal
+import uuid
+from dataclasses import field
+from sasha_database.messages import IncomingMessage, CONVERSATION_TYPES, join_messages
 
 
 def normalize_client_message(message: str | None) -> str | None:
@@ -40,6 +43,8 @@ SASHA_RESULT_JSON_SCHEMA = {
         "deal_id",
         "status",
         "message_html",
+        "notes",
+        "convo_type",
         "failure_code",
         "failure_message",
     ],
@@ -47,6 +52,8 @@ SASHA_RESULT_JSON_SCHEMA = {
         "deal_id": {"type": "string"},
         "status": {"type": "string", "enum": ["completed", "failed"]},
         "message_html": {"type": "string"},
+        "notes": {"type": "string"},
+        "convo_type": {"type": ["string", "null"], "enum": ["client_response", "followup", "internal_mail", "outreach", None]},
         "failure_code": {"type": "string"},
         "failure_message": {"type": "string"},
     },
@@ -62,6 +69,8 @@ class SashaTask:
     conversation_history: tuple[dict[str, Any], ...] = ()
     file_urls: tuple[str, ...] = ()
     deal_notes: str = ""
+    run_id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    incoming_messages: tuple[IncomingMessage, ...] = ()
     turn_type: Literal["follow_up"] | None = None
     follow_up_stage: int | None = None
     as_of_date: str | None = None
@@ -70,7 +79,7 @@ class SashaTask:
     def __post_init__(self) -> None:
         object.__setattr__(self, "client_message", normalize_client_message(self.client_message))
         validate_follow_up(self.turn_type, self.follow_up_stage, self.as_of_date,
-                           self.days_since_client_reply, self.client_message, self.file_urls)
+                           self.days_since_client_reply, self.client_message or join_messages(self.incoming_messages), self.file_urls)
 
 
 @dataclass(frozen=True)
@@ -80,10 +89,22 @@ class SashaResult:
     message_html: str = ""
     failure_code: str = ""
     failure_message: str = ""
+    notes: str = ""
+    convo_type: str | None = None
 
-    def to_dict(self) -> dict[str, str]:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
     @classmethod
     def from_json(cls, value: str) -> "SashaResult":
-        return cls(**json.loads(value))
+        result = cls(**json.loads(value))
+        if result.status not in {"completed", "failed"}:
+            raise ValueError("Invalid result status")
+        for name in ("deal_id", "message_html", "notes", "failure_code", "failure_message"):
+            if not isinstance(getattr(result, name), str):
+                raise ValueError(f"Result {name} must be text")
+        if result.status == "completed" and result.message_html.strip() and result.convo_type not in CONVERSATION_TYPES:
+            raise ValueError("A generated draft requires a valid convo_type")
+        if result.status == "completed" and not result.message_html.strip() and result.convo_type is not None:
+            raise ValueError("No-reply results must have null convo_type")
+        return result

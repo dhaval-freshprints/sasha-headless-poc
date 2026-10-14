@@ -16,9 +16,11 @@ from openai_managed.runner import OpenAIManagedRunner, ManagedRunnerSettings
 from openai_managed.sandbox import DockerSandbox
 from openai_managed.environment import ApplicationEnvironment
 from openai_managed.progress import ProgressReporter
-from openai_managed.conversation import ConversationStore
+from tests.database_helpers import MemoryStorage
+from sasha_database.config import DatabaseSettings
+from unittest.mock import patch
 from openai_managed.task import SashaTask
-from openai_managed.notes import NotesStore, follow_up_entries
+from openai_managed.notes import follow_up_entries
 
 configuration = dotenv_values(ROOT / '.env')
 # Only OpenAI credentials and runtime settings are used from configuration.
@@ -48,9 +50,14 @@ FIXTURE = """<!doctype html><html><head><title>Synthetic CRM</title></head><body
 </body></html>"""
 
 class FixtureSandbox(DockerSandbox):
-    @staticmethod
-    def _load_customer_link_database():
-        return None
+    def start_container(self):
+        database = DatabaseSettings({
+            'NON_PROD_HOST': '127.0.0.1', 'NON_PROD_PORT': '3306',
+            'NON_PROD_USER': 'synthetic', 'NON_PROD_PASS': 'synthetic',
+            'DEAL_MANAGER_MAIN_SCHEMA': 'synthetic', 'DEAL_MANAGER_OPERATIONS_SCHEMA': 'synthetic',
+        })
+        with patch('openai_managed.sandbox.DatabaseSettings.from_environment', return_value=database):
+            super().start_container()
 
     def prepare(self, task):
         handle = super().prepare(task)
@@ -109,24 +116,22 @@ results = json.loads(results_path.read_text()) if selected and results_path.exis
 for name, history, message, additional, expected, follow_up, notes_text, sample_evidence in cases:
     as_of_date, days_since_reply = follow_up or (None, None)
     directory = DIRECTORY / name
-    store = ConversationStore(directory, DEAL)
-    store._write({'deal_id':DEAL,'conversation_history':history})
-    notes = NotesStore(directory, DEAL)
-    notes.path.parent.mkdir(parents=True, exist_ok=True)
-    notes.path.write_text(notes_text)
+    storage = MemoryStorage()
+    storage.history[DEAL] = [dict(entry, id=index + 1) for index, entry in enumerate(history)]
+    storage.notes[DEAL] = notes_text
     first_tool = threading.Event()
     updates = []
     def progress(value):
         print(name + ': ' + value, flush=True)
         if 'tool step 1 started' in value:
             first_tool.set()
-    runner = ReadOnlyRunner(OpenAI(api_key=configuration['OPENAI_API_KEY']), replace(settings, runs_directory=directory), sandbox_factory=FixtureSandbox, progress=ProgressReporter(progress))
+    runner = ReadOnlyRunner(OpenAI(api_key=configuration['OPENAI_API_KEY']), replace(settings, runs_directory=directory), sandbox_factory=FixtureSandbox, progress=ProgressReporter(progress), storage_factory=lambda: storage)
     runner.enable_additional_messages(updates.append)
     outputs = []
     errors = []
     def execute():
         try:
-            outputs.append(runner.run(SashaTask(DEAL, 'FM01_' + name, application.deal_url(DEAL), message, turn_type='follow_up' if follow_up else None, as_of_date=as_of_date, days_since_client_reply=days_since_reply)))
+            outputs.append(runner.run(SashaTask(DEAL, 'FM01_' + name, application.deal_url(DEAL), message, turn_type='follow_up' if follow_up else None, follow_up_stage=1 if follow_up else None, as_of_date=as_of_date, days_since_client_reply=days_since_reply)))
         except Exception as error:
             errors.append(type(error).__name__ + ': ' + str(error))
     worker = threading.Thread(target=execute)
@@ -145,7 +150,7 @@ for name, history, message, additional, expected, follow_up, notes_text, sample_
     if expected == 'outreach':
         checks['introduces_sasha'] = 'sasha' in reply.lower() and 'account manager' in reply.lower()
     before_entries = follow_up_entries(notes_text)
-    after_entries = follow_up_entries(notes.load())
+    after_entries = follow_up_entries(storage.load_notes(DEAL))
     checks['prior_tactics_preserved'] = all(entry in after_entries for entry in before_entries)
     checks['new_tactic_count'] = len(after_entries) - len(before_entries) == (1 if expected == 'follow_up' else 0)
     if expected == 'follow_up':
@@ -155,7 +160,7 @@ for name, history, message, additional, expected, follow_up, notes_text, sample_
     if additional:
         checks['additional_message_accepted'] = any(update.get('status')=='accepted' for update in updates)
     results = [result for result in results if result['case'] != name]
-    results.append({'case':name,'expected':expected,'checks':checks,'result':result,'run_directory':str(runner.last_run_directory),'messages':updates,'history_after':store.load(), 'notes_after':notes.load(), 'sample_evidence':sample_evidence})
+    results.append({'case':name,'expected':expected,'checks':checks,'result':result,'run_directory':str(runner.last_run_directory),'messages':updates,'history_after':storage.load_context(DEAL)[1], 'notes_after':storage.load_notes(DEAL), 'sample_evidence':sample_evidence})
     results_path.write_text(json.dumps(results, indent=2))
     print('CASE_RESULT ' + json.dumps({'case':name,'checks':checks,'result':result}), flush=True)
 

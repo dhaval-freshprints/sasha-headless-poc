@@ -1,0 +1,333 @@
+"""Storage tests run against an explicitly enabled, disposable local MySQL instance."""
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
+import os
+from pathlib import Path
+import unittest
+from unittest.mock import patch
+
+import pymysql
+from sasha_database.config import DatabaseSettings, container_database_options
+from sasha_database.connection import DatabaseError
+from sasha_database.messages import IncomingMessage, incoming_message
+from sasha_database.storage import SashaStorage
+
+
+class MessageTests(unittest.TestCase):
+    def test_plain_text_and_envelopes_preserve_bodies(self):
+        self.assertEqual(incoming_message('Keep From: inside my body').body, 'Keep From: inside my body')
+        message = incoming_message('Channel: Email\nFrom: art@freshprints.com\nSubject: Ready\n\nProof ready')
+        self.assertEqual((message.body, message.sender_name, message.convo_type),
+                         ('Proof ready', 'art@freshprints.com', 'internal_mail'))
+
+    def test_sms_requires_sender_and_metadata_has_db_limits(self):
+        for changes in ({'message_type': 'SMS'}, {'subject': 'x'*501},
+                        {'external_message_id': 'x'*256}, {'external_thread_id': 'x'*256}):
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                IncomingMessage('Hello', **changes)
+
+    def test_timestamp_converts_to_utc(self):
+        message = IncomingMessage('Hello', message_timestamp='2026-10-14T10:00:00+05:30')
+        self.assertEqual(message.timestamp().isoformat(), '2026-10-14T04:30:00')
+
+    def test_message_body_limit_counts_utf8_bytes_before_any_write(self):
+        settings = DatabaseSettings({})
+        with patch('sasha_database.messages.MAX_MESSAGE_BYTES', 8):
+            self.assertEqual(IncomingMessage('😀😀').body, '😀😀')
+            with self.assertRaisesRegex(ValueError, 'MEDIUMTEXT'):
+                IncomingMessage('😀😀a')
+            with self.assertRaisesRegex(ValueError, 'MEDIUMTEXT'):
+                SashaStorage(settings).complete_run('42', 'run', '', '', '😀😀a', 'outreach')
+
+    def test_container_configuration_is_allowlisted_and_secrets_are_not_arguments(self):
+        settings = DatabaseSettings({
+            'NON_PROD_PASS': 'secret', 'NON_PROD_HOST': 'test',
+            'UNRELATED_SECRET': 'private',
+        })
+        options, environment = container_database_options(settings)
+        self.assertNotIn('secret', str(options))
+        self.assertNotIn('UNRELATED_SECRET', options)
+        self.assertIn('NON_PROD_PASS', options)
+        self.assertEqual(environment['NON_PROD_PASS'], 'secret')
+        self.assertNotIn('database.json', str(options))
+
+    def test_installed_skill_retains_its_shared_database_dependency(self):
+        import subprocess
+        import sys
+        import tempfile
+        import json
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as directory:
+            subprocess.run([sys.executable, str(root / 'deal_manager_agent/install_skills.py'),
+                            '--destination', directory], check=True, capture_output=True)
+            helper = Path(directory) / 'deal-manager-database/scripts/database.py'
+            result = subprocess.run([sys.executable, str(helper), 'schemas'], check=True,
+                                    capture_output=True, text=True, env={
+                'DEAL_MANAGER_MAIN_SCHEMA': 'test_main', 'DEAL_MANAGER_OPERATIONS_SCHEMA': 'test_operations',
+            })
+            self.assertEqual(json.loads(result.stdout), {'main': 'test_main', 'operations': 'test_operations'})
+
+    def test_neither_container_receives_the_crm_schema(self):
+        import tempfile
+        from deal_manager_agent.settings import DealManagerSettings
+        from deal_manager_agent.sandbox import DealManagerSandbox
+        from deal_manager_agent.models import LookupRequest
+        from openai_managed.sandbox import DockerSandbox, SandboxConfig
+        from openai_managed.task import SashaTask
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            database = DatabaseSettings({
+                'NON_PROD_HOST': 'test', 'NON_PROD_PORT': '3306', 'NON_PROD_USER': 'test',
+                'NON_PROD_PASS': 'synthetic-database-secret',
+                'DEAL_MANAGER_MAIN_SCHEMA': 'main', 'DEAL_MANAGER_OPERATIONS_SCHEMA': 'operations',
+                'DEAL_MANAGER_CRM_SCHEMA': 'crm',
+            })
+            dm = DealManagerSandbox(DealManagerSettings('model', 'medium', 'key', 'image',
+                                                        root / 'dm', database.values))
+            am = DockerSandbox(SandboxConfig('image', root / 'am'), 'key')
+            dm.prepare(LookupRequest(sender_email='client@example.com', body='Hello'))
+            am.prepare(SashaTask('42', 'task', 'https://example.com/deal?id=42'))
+            with patch('subprocess.run') as run, patch('openai_managed.sandbox.DatabaseSettings.from_environment', return_value=database):
+                dm.start_container()
+                am.start_container()
+            names = []
+            for call in run.call_args_list:
+                args = call.args[0]
+                names.append({args[i+1] for i, value in enumerate(args) if value == '--env'})
+                self.assertNotIn('synthetic-database-secret', str(args))
+                self.assertNotIn('/run/secrets', str(args))
+                self.assertEqual(call.kwargs['env']['NON_PROD_PASS'], 'synthetic-database-secret')
+            self.assertEqual(len(names), 2)
+            self.assertNotIn('DEAL_MANAGER_CRM_SCHEMA', names[1])
+            self.assertNotIn('NON_PROD_SSL_CA', names[1])
+            for call in run.call_args_list:
+                self.assertNotIn('rds-ca.pem', str(call.args))
+            self.assertEqual(names[0], names[1])
+
+    def test_default_database_configuration_does_not_require_or_load_crm(self):
+        from sasha_database.connection import connect_readonly
+        environment = {
+            'NON_PROD_HOST': 'test', 'NON_PROD_USER': 'test', 'NON_PROD_PASS': 'secret',
+            'DEAL_MANAGER_MAIN_SCHEMA': 'main', 'DEAL_MANAGER_OPERATIONS_SCHEMA': 'operations',
+        }
+        with patch.dict(os.environ, environment, clear=True), \
+                patch('sasha_database.config.bootstrap_deal_manager_env'):
+            settings = DatabaseSettings.from_environment()
+            self.assertNotIn('DEAL_MANAGER_CRM_SCHEMA', settings.values)
+            with patch.dict(os.environ, {'DEAL_MANAGER_CRM_SCHEMA': 'unused_crm'}):
+                self.assertEqual(DatabaseSettings.from_environment(), settings)
+                with self.assertRaisesRegex(ValueError, 'outside the configured scope'):
+                    connect_readonly('unused_crm')
+
+
+TABLES = [
+    '''CREATE TABLE IF NOT EXISTS sasha_deal_status (
+        id INT NOT NULL AUTO_INCREMENT PRIMARY KEY, deal_id INT NOT NULL UNIQUE,
+        status ENUM('active','paused','handoff_needed','opt_out','completed','rejected') NOT NULL DEFAULT 'active',
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        deleted_at DATETIME NULL) ENGINE=InnoDB''',
+    '''CREATE TABLE IF NOT EXISTS sasha_deal_notes (
+        id INT NOT NULL AUTO_INCREMENT PRIMARY KEY, deal_id INT NOT NULL UNIQUE, notes LONGTEXT NOT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        deleted_at DATETIME NULL) ENGINE=InnoDB''',
+    '''CREATE TABLE IF NOT EXISTS sasha_conversation_history (
+        id INT NOT NULL AUTO_INCREMENT PRIMARY KEY, deal_id INT NOT NULL, run_id VARCHAR(64),
+        convo_type ENUM('client_response','followup','internal_mail','outreach') NOT NULL,
+        direction ENUM('INBOUND','OUTBOUND') NOT NULL, sender_name VARCHAR(255) NOT NULL,
+        message_type ENUM('EMAIL','SMS','CHAT') NOT NULL, subject VARCHAR(500), body MEDIUMTEXT NOT NULL,
+        content_type ENUM('text','text/html') NOT NULL DEFAULT 'text',
+        delivery_status ENUM('generated','sent','failed'), attachments JSON,
+        external_message_id VARCHAR(255), external_thread_id VARCHAR(255), message_timestamp DATETIME,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, deleted_at DATETIME,
+        KEY (deal_id,message_timestamp), KEY (deal_id,convo_type), KEY (run_id),
+        KEY (external_message_id), KEY (external_thread_id)) ENGINE=InnoDB''',
+    'CREATE TABLE IF NOT EXISTS user (id INT PRIMARY KEY,email VARCHAR(255),deleted_at DATETIME)',
+    'CREATE TABLE IF NOT EXISTS deals (id INT PRIMARY KEY,client_id INT,deleted_at DATETIME)',
+]
+
+
+@unittest.skipUnless(os.environ.get('SASHA_TEST_MYSQL_PORT'), 'Requires disposable local MySQL')
+class MySQLStorageTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        # Host/schema are fixed to prevent accidentally running fixture writes on QA.
+        cls.admin = pymysql.connect(host='127.0.0.1', port=int(os.environ['SASHA_TEST_MYSQL_PORT']),
+                                    user='root', password='', database='sasha_test', autocommit=True,
+                                    cursorclass=pymysql.cursors.DictCursor)
+        with cls.admin.cursor() as cursor:
+            for statement in TABLES:
+                cursor.execute(statement)
+            cursor.execute('DROP TRIGGER IF EXISTS reject_test_draft')
+            cursor.execute("CREATE TRIGGER reject_test_draft BEFORE INSERT ON sasha_conversation_history "
+                           "FOR EACH ROW BEGIN IF NEW.body='reject this draft' THEN "
+                           "SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='synthetic failure'; END IF; END")
+        cls.settings = DatabaseSettings({
+            'NON_PROD_HOST': '127.0.0.1', 'NON_PROD_PORT': os.environ['SASHA_TEST_MYSQL_PORT'],
+            'NON_PROD_USER': 'root', 'NON_PROD_PASS': '',
+            'DEAL_MANAGER_MAIN_SCHEMA': 'sasha_test', 'DEAL_MANAGER_OPERATIONS_SCHEMA': 'sasha_test',
+        })
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.admin.close()
+
+    def setUp(self):
+        with self.admin.cursor() as cursor:
+            for table in ('sasha_conversation_history','sasha_deal_notes','sasha_deal_status','deals','user'):
+                cursor.execute(f'DELETE FROM {table}')
+            cursor.execute("INSERT INTO user (id,email) VALUES (7,'client@example.com')")
+            cursor.execute('INSERT INTO deals (id,client_id) VALUES (42,7)')
+        sender = patch.dict(os.environ, {'SASHA_SENDER_EMAIL': 'sasha@example.com'})
+        sender.start()
+        self.addCleanup(sender.stop)
+        self.storage = SashaStorage(self.settings)
+
+    def scalar(self, sql):
+        with self.admin.cursor() as cursor:
+            cursor.execute(sql)
+            return next(iter(cursor.fetchone().values()))
+
+    def test_active_status_is_unique_and_existing_status_is_preserved(self):
+        self.storage.prepare_run('42', 'one')
+        with self.admin.cursor() as cursor:
+            cursor.execute("UPDATE sasha_deal_status SET status='paused' WHERE deal_id=42")
+        self.storage.prepare_run('42', 'two')
+        self.assertEqual(self.scalar('SELECT COUNT(*) FROM sasha_deal_status'), 1)
+        self.assertEqual(self.scalar('SELECT status FROM sasha_deal_status'), 'paused')
+
+    def test_shared_connection_uses_no_tls(self):
+        from sasha_database.connection import transaction
+        with transaction(self.settings, readonly=True) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SHOW SESSION STATUS LIKE 'Ssl_cipher'")
+                self.assertEqual(cursor.fetchone()['Value'], '')
+
+    def test_missing_email_is_looked_up_and_inbound_survives_without_completion(self):
+        saved = self.storage.prepare_run('42', 'run', (IncomingMessage('Hello'),))
+        self.assertEqual(saved[0].sender_name, 'client@example.com')
+        notes, history = self.storage.load_context('42')
+        self.assertEqual(notes, '')
+        self.assertEqual(history[0]['content'], 'Hello')
+        self.assertIsNone(history[0]['delivery_status'])
+
+    def test_missing_client_email_rolls_back_status_and_input(self):
+        with self.assertRaises(ValueError):
+            self.storage.prepare_run('99', 'run', (IncomingMessage('Hello'),))
+        self.assertEqual(self.scalar('SELECT COUNT(*) FROM sasha_deal_status'), 0)
+
+    def test_provider_retries_and_row_ids_do_not_duplicate(self):
+        message = IncomingMessage('Hello', external_message_id='provider-1')
+        first = self.storage.prepare_run('42', 'one', (message,))[0]
+        second = self.storage.prepare_run('42', 'two', (message,))[0]
+        self.storage.prepare_run('42', 'one', (first,))
+        self.assertEqual(first.row_id, second.row_id)
+        self.assertEqual(self.scalar('SELECT COUNT(*) FROM sasha_conversation_history'), 1)
+        with self.assertRaises(ValueError):
+            self.storage.prepare_run('42', 'three', (replace(message, body='Different'),))
+
+    def test_concurrent_provider_retries_are_serialized(self):
+        message = IncomingMessage('Hello', 'client@example.com', external_message_id='same')
+        with ThreadPoolExecutor(max_workers=2) as workers:
+            results = list(workers.map(lambda i: self.storage.prepare_run('42', str(i), (message,)), range(2)))
+        self.assertEqual(results[0][0].row_id, results[1][0].row_id)
+        self.assertEqual(self.scalar('SELECT COUNT(*) FROM sasha_conversation_history'), 1)
+
+    def test_email_sms_internal_metadata_and_order(self):
+        messages = (
+            IncomingMessage('SMS', '+14155550100', 'SMS', message_timestamp='2026-10-14T10:00:00'),
+            IncomingMessage('Internal', 'art@freshprints.com', convo_type='internal_mail',
+                            subject='Proof', external_thread_id='thread', attachments=('https://example.com/art.svg',),
+                            message_timestamp='2026-10-13T10:00:00'),
+        )
+        self.storage.prepare_run('42', 'run', messages)
+        history = self.storage.load_context('42')[1]
+        self.assertEqual([row['content'] for row in history], ['Internal', 'SMS'])
+        self.assertEqual(history[0]['attachments'], ['https://example.com/art.svg'])
+        self.assertEqual(history[0]['convo_type'], 'internal_mail')
+        self.assertEqual(history[1]['message_type'], 'SMS')
+
+    def test_completion_commits_notes_and_generated_draft(self):
+        self.storage.prepare_run('42', 'run')
+        self.storage.complete_run('42', 'run', '', 'Notes', '<p>Hello</p>', 'outreach')
+        notes, history = self.storage.load_context('42')
+        self.assertEqual(notes, 'Notes')
+        self.assertEqual(history[0]['delivery_status'], 'generated')
+        self.assertEqual(history[0]['sender_name'], 'sasha@example.com')
+        self.storage.complete_run('42', 'run', '', 'Notes', '<p>Hello</p>', 'outreach')
+        self.assertEqual(self.scalar('SELECT COUNT(*) FROM sasha_conversation_history'), 1)
+
+    def test_outgoing_insert_failure_rolls_back_notes_but_keeps_inbound(self):
+        self.storage.prepare_run('42', 'run', (IncomingMessage('Hello'),))
+        with self.assertRaises(DatabaseError):
+            self.storage.complete_run('42', 'run', '', 'Must roll back', 'reject this draft', 'client_response')
+        notes, history = self.storage.load_context('42')
+        self.assertEqual(notes, '')
+        self.assertEqual([row['content'] for row in history], ['Hello'])
+
+    def test_no_reply_and_stale_notes(self):
+        self.storage.prepare_run('42', 'run')
+        self.storage.complete_run('42', 'run', '', 'Notes', '', None)
+        self.assertEqual(self.storage.load_context('42'), ('Notes', []))
+        with self.assertRaises(ValueError):
+            self.storage.complete_run('42', 'older', '', 'Stale', '<p>Draft</p>', 'followup')
+        self.assertEqual(self.storage.load_context('42'), ('Notes', []))
+
+    def test_deleted_rows_are_excluded_and_notes_can_be_replaced(self):
+        self.storage.prepare_run('42', 'run', (IncomingMessage('Old'),))
+        self.storage.complete_run('42', 'run', '', 'Old notes', '', None)
+        with self.admin.cursor() as cursor:
+            cursor.execute('UPDATE sasha_conversation_history SET deleted_at=NOW()')
+            cursor.execute('UPDATE sasha_deal_notes SET deleted_at=NOW()')
+        self.assertEqual(self.storage.load_context('42'), ('', []))
+        self.storage.complete_run('42', 'new', '', 'New', '', None)
+        self.assertEqual(self.storage.load_notes('42'), 'New')
+
+    def test_deal_manager_reads_provider_thread_and_sender_from_conversation_table(self):
+        import importlib.util
+        path = Path(__file__).resolve().parents[1] / 'deal_manager_agent/skills/deal-manager-resolve-deal/scripts/collect_evidence.py'
+        spec = importlib.util.spec_from_file_location('database_test_collector', path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        original = IncomingMessage('Email', 'client@example.com', external_message_id='parent',
+                                   external_thread_id='thread', message_timestamp='2026-10-12T10:00:00')
+        self.storage.prepare_run('42', 'email', (original,))
+        self.storage.prepare_run('43', 'sms', (replace(original, body='SMS', message_type='SMS', sender_name='+12025550123'),))
+        self.storage.prepare_run('44', 'future', (replace(original, message_timestamp='2026-10-14T10:00:00'),))
+        self.storage.prepare_run('45', 'deleted', (original,))
+        with self.admin.cursor() as cursor:
+            cursor.execute('UPDATE sasha_conversation_history SET deleted_at=NOW() WHERE deal_id=45')
+        with patch.object(module, 'configured_schemas', return_value={'main': 'sasha_test', 'operations': 'sasha_test'}):
+            email = module.EvidenceCollector(self.admin, {
+                'channel': 'EMAIL', 'received_at': '2026-10-13T10:00:00Z',
+                'sender_email': 'client@example.com', 'reply_to_message_id': 'parent', 'thread_id': 'thread',
+            })
+            email.collect_message_links()
+            email.collect_sender_history()
+            sms = module.EvidenceCollector(self.admin, {
+                'channel': 'SMS', 'received_at': '2026-10-13T10:00:00Z', 'sender_phone': '+12025550123',
+            })
+            sms.collect_sender_history()
+            provider = module.EvidenceCollector(self.admin, {
+                'channel': 'EMAIL', 'received_at': '2026-10-13T10:00:00Z', 'message_id': 'parent',
+            })
+            provider.collect_message_links()
+        self.assertEqual(email.candidate_ids, {42})
+        self.assertEqual(sms.candidate_ids, {43})
+        self.assertEqual(provider.candidate_ids, {42, 44})
+        for collector in (email, sms, provider):
+            self.assertFalse(any('error_type' in row for row in collector.observations))
+
+    def test_latest_outbound_uses_conversation_history_without_legacy_context(self):
+        from deal_manager_agent.deal_queries import DatabaseSession, latest_outbound_by_deal
+        from sasha_database.read import read_query
+        self.storage.prepare_run('42', 'run', (IncomingMessage('Incoming'),))
+        self.storage.complete_run('42', 'run', '', 'Notes', 'Draft', 'outreach')
+        database = DatabaseSession(lambda sql, parameters, limit=100: read_query(self.admin, sql, parameters, limit),
+                                   '`sasha_test`', '`sasha_test`')
+        self.assertEqual(set(latest_outbound_by_deal(database, [42, 43])), {42})
+        with self.admin.cursor() as cursor:
+            cursor.execute("UPDATE sasha_conversation_history SET deleted_at=NOW() WHERE direction='OUTBOUND'")
+        self.assertEqual(latest_outbound_by_deal(database, [42]), {})

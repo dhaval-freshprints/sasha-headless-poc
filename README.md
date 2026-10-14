@@ -2,7 +2,7 @@
 
 Account Manager handles one Fresh Prints sales turn through an OpenAI managed agent
 session, using Sasha as its client-facing persona. It chooses outreach, client response,
-or no reply from local conversation history and incoming client messages.
+or no reply from database conversation history and incoming client messages.
 
 The POC generates a client-facing HTML message. It does not send the message,
 purchase anything, or delete CRM records.
@@ -83,13 +83,10 @@ configuration before browser work. Application links must match the configured
 application origins, and a deal URL from another CRM origin is rejected.
 `runtime.json` records the resolved application destinations without login credentials.
 
-The environment name is appended to the runner, web jobs, and web deals directory
-settings. Notes and conversations for the same deal ID are therefore kept separate
-across environments. When upgrading an existing deployment, copy its old `notes/`
-and `conversations/` directories into `<OPENAI_MANAGED_RUNS_DIRECTORY>/<FP_ENVIRONMENT>/`.
-Copy old web job and deal JSON files into the environment subdirectory of their
-respective configured directories. Keep the original run artifact directories:
-historical jobs still reference them. Do not copy data between environments.
+The environment name is appended to run-artifact, web-job, and deal-registry directories.
+Notes and conversations use the configured operations database, not those directories.
+`FP_ENVIRONMENT` does not select a database: configure the matching schema and connection
+explicitly. Legacy notes/conversation files are ignored; do not import them during this rollout.
 
 Then build the disposable executor image:
 
@@ -99,7 +96,7 @@ docker build -t sasha-openai-managed:local .
 
 ## Run
 
-Run Account Manager (an empty local conversation produces initial outreach):
+Run Account Manager (an empty database conversation produces initial outreach):
 
 ```bash
 .venv/bin/python scripts/run_openai_managed_sasha.py DEAL_ID --verbose
@@ -221,30 +218,60 @@ outside that managed-turn limit.
 
 ## Output
 
-Run artifacts are stored under `runs/openai-managed/<environment>/`. Each completed turn also
-updates the deal conversation at:
+Run artifacts remain under `runs/openai-managed/<environment>/`. They may contain debug
+copies of prompts and results. They are never a fallback for deal notes or conversation history.
+Downloaded client artwork is removed after the turn.
 
-```text
-runs/openai-managed/<environment>/conversations/DEAL<deal_id>_conversation.json
+## Shared database storage
+
+The `sasha_database` package owns configuration, connections, bounded read queries, and
+Sasha persistence. DM and AM use the same configuration loader and container environment
+allowlist. DM, AM and host persistence use only the main and operations schemas.
+DM reads message evidence from `sasha_conversation_history`. The host loads `.env`; both containers receive `--env NAME` arguments with values
+supplied through the Docker subprocess environment. The shared package is mounted read-only. Database connections use no TLS
+and require a server/account that permits unencrypted connections. Neither container writes a private database configuration JSON file.
+
+Configure the existing `NON_PROD_HOST`, `NON_PROD_PORT`, `NON_PROD_USER`, `NON_PROD_PASS`,
+`DEAL_MANAGER_MAIN_SCHEMA`, and `DEAL_MANAGER_OPERATIONS_SCHEMA` settings, plus:
+
+```dotenv
+SASHA_SENDER_EMAIL=your-sasha-mailbox@example.com
 ```
 
-Downloaded client artwork is removed after the turn.
+The sender must be the actual outbound mailbox. Missing configuration prevents AM from
+starting. Existing CRM/V3 credential aliases and `NON_PROD_SASHA_DB` remain supported.
+The operations schema must already contain `sasha_deal_status`, `sasha_deal_notes`, and
+`sasha_conversation_history` (column `convo_type`). This change creates no deployment tables.
+The account needs SELECT on lookup schemas and SELECT/INSERT/UPDATE on these three Sasha
+tables. Agent tools still use read-only transactions; only host orchestration performs
+persistence writes. Read-only transactions are a tool guard, not separate DB credentials.
+
+Before AM starts, the host commits one `active` status row if absent and saves each incoming
+message. Existing status rows are preserved. Additional messages are saved before agent
+delivery. Incoming messages survive failed runs. Provider retries are checked under a
+per-deal row lock, and stored row IDs prevent reinsertion at completion. SMS batches have
+one provider event ID on the first message, with subsequent messages stored separately.
+
+Email sender addresses and SMS phone numbers populate `sender_name`. Manual email input
+without a sender uses the deal client's email, failing clearly if unavailable. Manual SMS
+requires a sender number. Generated email drafts use `SASHA_SENDER_EMAIL` and delivery
+status `generated`; this code does not send messages. Timestamps are stored in UTC.
+
+`POST /api/runs` accepts optional `incoming_message` metadata: `body`, `sender_name`,
+`message_type` (`EMAIL` or `SMS`), `subject`, `content_type`, `message_timestamp`,
+`external_message_id`, `external_thread_id`, and `attachments`. Legacy `client_message` envelopes and
+plain CLI `--message` inputs remain supported. Initial attachment URLs use `file_urls`.
+`POST /api/inbound` also accepts `attachments`, `content_type`, and `message_timestamp`.
+The additional-message endpoint accepts optional `incoming_message` with the same shape.
+Subjects are limited to 500 characters; provider and thread IDs to 255. Values are not truncated.
 
 ## Deal notes
 
-Each deal has one shared plain-English Markdown notebook:
-
-```text
-runs/openai-managed/<environment>/notes/deal_<deal_id>_notes.md
-```
-
-Existing notebooks with the old `SASHANOTES01_deal_<deal_id>_notes.md` name remain
-readable when no notebook with the new name exists. Successful updates write
-`deal_<deal_id>_notes.md`, which takes precedence over the old file. The temporary
-agent output is `notes_update.md`. Historical run artifacts keep their original names.
-
-The location is `<OPENAI_MANAGED_RUNS_DIRECTORY>/<FP_ENVIRONMENT>/notes/`. Each run
-receives the current notebook alongside the full conversation history. Sasha
+Each deal has one Markdown notebook in `sasha_deal_notes`. Every run fetches the notebook
+and ordered, non-deleted history from DB. The model returns the full notebook in `notes`
+and the final action in `convo_type`: `outreach`, `client_response`, `internal_mail`, or
+`followup`. A no-reply success uses empty `message_html` and null `convo_type`.
+There is no temporary notes-output file. Sasha
 updates explicitly stated client preferences, current choices and saved state,
 actual client requests that remain incomplete, and uncertainties relevant to the
 current request. Each bullet is one short factual statement, normally up to 20
@@ -273,22 +300,14 @@ Newly supplied files and restored files are labeled separately. Exact duplicate
 URLs are downloaded once per turn. Downloads are still removed after each turn.
 If a saved link expires or cannot be downloaded, the run continues with a warning;
 Sasha asks for a fresh link only when that artwork is needed. Original URLs,
-including signed query strings, remain intact in the local notebook.
+including signed query strings, remain intact in the database notebook.
 
-The runner validates Sasha's temporary revision and replaces the notebook only
-after a successful turn and conversation save. It removes the temporary output
-afterward. There are no dedicated notes snapshots or archived notebook versions.
-Existing task and session logs still record the inputs and tool activity as usual.
-
-Missing notes start empty. Unreadable existing notes are preserved and disable
-notes updates for that run. Missing, empty, invalid UTF-8, non-regular, or larger
-than 16 KiB revisions produce a progress warning and leave previous notes intact;
-they do not discard an otherwise successful sales draft. This checks file
-integrity, not whether every note is factually correct.
-
-The POC expects runs for the same deal to be sequential. It creates no lock files
-and does not reject overlapping runs. Notes and conversation files are still
-replaced atomically, but overlapping runs can overwrite each other's updates.
+The runner validates the structured notes revision (nonempty, no null bytes, at most
+16 KiB in UTF-8), preserves attachment links and follow-up tactics, and commits notes
+and the final outgoing draft in one transaction. A no-reply success commits only notes.
+Database read/write errors or invalid revisions fail the run. Incoming messages remain
+saved, but notes and the outgoing draft roll back together. If another run changed the
+notes after this run read them, completion fails rather than overwriting the newer notes.
 
 To check model behavior manually on a QA deal, run a conversation that introduces
 a navy preference and an estimated quantity, then changes the preference to black
@@ -366,11 +385,11 @@ message presence. `--workflow` and API `workflow` fields are rejected. For examp
 }
 ```
 
-For this version, only the supplied local conversation and incoming client messages
+For this version, only the supplied database conversation and incoming client messages
 establish conversation state. CRM activity supplies deal facts, not routing history.
-Database-backed conversations and automatic handoff from Deal Manager are not connected.
+Deal Manager handoffs and direct AM runs both use the shared DB persistence path.
 
-| Local conversation and incoming messages | Action |
+| Database conversation and incoming messages | Action |
 |---|---|
 | Empty history and no incoming message | Initial outreach |
 | First incoming client message, even with empty history | Client response |
@@ -383,9 +402,8 @@ Blank incoming messages are normalized to absent; the agent ignores blank histor
 entries. A saved nonblank Sasha draft counts as handled for this local simulation,
 but remains marked `generated`, never sent. Ordinary runs never start proactive follow-ups. Explicit follow-up checks are described below.
 A successful no-reply result has `status: "completed"` and `message_html: ""`;
-the console displays **No reply needed**. Client messages are still saved after a
-successful no-reply turn, without appending an empty Sasha entry. Failed runs retain
-the existing behavior: they do not append a completed conversation turn.
+the console displays **No reply needed**. Client messages are saved before AM starts, including when the run fails or returns no reply.
+No-reply turns do not append an empty Sasha entry.
 
 Every run copies all eight skills:
 
@@ -405,13 +423,13 @@ describes application pages and controls. Sasha remains the client-facing name.
 
 Restart the web app after deploying the Python and UI changes. Skill edits apply to
 newly prepared containers; active runs retain their copies. Historical jobs remain
-readable, including their old workflow labels. Existing conversation files, notes,
+readable, including their old workflow labels. Existing debug artifacts,
 attachments, environment directories, CLI script paths, and Docker image names are
 unchanged; no data migration is needed.
 
-For behavioral acceptance, use isolated local history directories and read-only
+For behavioral acceptance, use isolated test database fixtures and read-only
 requests to exercise every row above, including CRM history that differs from the
-local history. Mocked tests verify plumbing, not the model's routing decisions.
+database history. Mocked tests verify plumbing, not the model's routing decisions.
 Report real-agent checks separately.
 
 ## Explicit follow-up checks
@@ -443,15 +461,15 @@ continues to start ordinary Account Manager turns.
 
 | Explicit check state | Account Manager action |
 |---|---|
-| Empty local conversation | No reply |
-| Unanswered local client request | Client response |
+| Empty database conversation | No reply |
+| Unanswered client request in DB history | Client response |
 | Conversation exists, no unanswered request | Evaluate one supported unused tactic in the requested stage |
 | No supported unused tactic | No reply |
 | Client message arrives during follow-up work | Reconsider and handle it in the same session |
 
 Run metadata says **requested follow-up check**, since the final action may be a
 client response or no reply. Follow-up research is read-only. There is no second
-agent, scheduler, automatic sending, or database conversation integration.
+agent, scheduler, automatic sending, or automatic sending.
 
 The notebook retains every prior `Stage N follow-up generated: tactic_id` entry.
 Only a successful nonblank follow-up draft adds one entry. No-reply, failed,
@@ -508,20 +526,17 @@ Build its dedicated image once:
 docker build -f deal_manager_agent/Dockerfile -t deal-manager-agent:local .
 ```
 
-Set `NON_PROD_HOST`, `NON_PROD_PORT`, `NON_PROD_USER`, `NON_PROD_PASS`, and
-`NON_PROD_SSL_CA` in the private `.env`. The last setting is an absolute path to
-the [AWS RDS CA bundle](https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem).
-Set `DEAL_MANAGER_MAIN_SCHEMA`, `DEAL_MANAGER_OPERATIONS_SCHEMA`, and
-`DEAL_MANAGER_CRM_SCHEMA` to the actual database names for this deployment.
-All three are required; there are no built-in schema names. The configured login
-must read those schemas. Schema values are validated before use in SQL. The agent
+Set `NON_PROD_HOST`, `NON_PROD_PORT`, `NON_PROD_USER`, and `NON_PROD_PASS`
+in the private `.env`. No database certificate is required.
+Set `DEAL_MANAGER_MAIN_SCHEMA` and `DEAL_MANAGER_OPERATIONS_SCHEMA` to the actual
+database names for this deployment. Both are required; there are no built-in schema names. The configured login
+must read those schemas and write the three Sasha persistence tables. Schema values are validated before use in SQL. The agent
 receives a public schema-role map, and result validation checks the configured main
 schema. Table names and relationships remain application-specific; changing schema
-names does not adapt a different database model automatically. Use SELECT-only grants for
-deployment; the Python helper additionally uses read-only transactions and
-bounded queries. Database access must work from Docker. Credentials are passed
-over stdin into container tmpfs; they are not placed in the copied skills,
-task prompt, image, or saved job files. Stop removes the container and its secrets.
+names does not adapt a different database model automatically. The lookup helper uses
+read-only transactions and bounded queries. Database access must work from Docker.
+DM and AM receive the same explicit environment-variable allowlist; credential values
+are not placed in command arguments, copied skills, task prompts, or saved job files.
 
 `DEAL_MANAGER_IMAGE`, `DEAL_MANAGER_DIRECTORY`, and `DEAL_MANAGER_TIMEOUT_SECONDS`
 configure the resolver. Defaults are `deal-manager-agent:local`,
@@ -599,7 +614,7 @@ The URL is `{FP_HQ_BASE_URL}/design/{proof_id}?login={encoded user.password}`.
 When that customer has no stored login value, the URL has no login parameter.
 Missing records, an unrelated proof, or unavailable database access return an error
 without a URL. Required-link failures use `customer_link_unavailable` in the normal
-failed run result. Unrelated browser work does not require database access.
+failed run result. Every AM run requires database access for notes and conversation persistence.
 
 Both viewing and ordering use this URL. Before drafting an order invitation, AM checks
 proof completion, quantity, stock, and delivery in the browser. Pending proofs may
@@ -608,21 +623,32 @@ receive a status link, never a ready-to-order claim. The customer places the ord
 Set `FP_HQ_BASE_URL` explicitly for the deployment. It is not inferred from
 `FP_ENVIRONMENT` or the CRM hostname. Configure matching database values through
 `NON_PROD_HOST`, `NON_PROD_PORT`, `NON_PROD_USER`, `NON_PROD_PASS`,
-`NON_PROD_SSL_CA`, and the existing `DEAL_MANAGER_MAIN_SCHEMA`,
-`DEAL_MANAGER_OPERATIONS_SCHEMA`, and `DEAL_MANAGER_CRM_SCHEMA` variables.
+`DEAL_MANAGER_MAIN_SCHEMA`, and `DEAL_MANAGER_OPERATIONS_SCHEMA`.
+Neither DM nor AM requires or receives a separate CRM schema setting.
 Existing CRM/V3 credential and schema aliases remain supported. Despite their legacy
 names, these settings select the connection; `FP_ENVIRONMENT` does not select a database.
 HQ, CRM, and database settings must all refer to the same environment.
 
-The AM container receives only the required database environment variables through
+Both DM and AM containers receive only the required database environment variables through
 Docker's `--env NAME` options. Values are supplied through the Docker subprocess's
-environment, not command arguments. The TLS certificate is mounted read-only.
-AM does not create a database configuration JSON file or pass the entire `.env` file.
+environment, not command arguments. No database certificate is mounted.
+Neither creates a database configuration JSON file or passes the entire `.env` file.
 Credentials are not written into task prompts or persistent run configuration.
 The helper returns no separate customer login value. Authenticated URLs are present
 in generated drafts and may appear in normal run output; do not copy them into notes.
 
-After deploying, rebuild `sasha-openai-managed:local` and restart the web app.
+After deploying, configure the sender and DB grants, rebuild both executor images, and restart the web app.
 No database migration is needed. Validate HQ login with an approved test customer in
 a fresh browser session before rollout; creating a correctly formatted URL alone
 does not verify HQ authentication.
+
+### DB regression tests
+
+Run `python -m unittest discover -s tests`, `python -m unittest discover -s webapp/tests`,
+and `python -m unittest discover -s deal_manager_agent/tests`.
+The MySQL storage tests are opt-in and hardcode localhost plus schema `sasha_test` to avoid
+QA writes. Start a disposable MySQL 8 container with an empty root password and that schema,
+then set `SASHA_TEST_MYSQL_PORT` to its published localhost port. No CA file is needed.
+Run `python -m unittest tests.test_sasha_database -v`, then remove the container.
+These tests exercise actual commits, rollback, concurrent deduplication, metadata, and notes.
+Live agent/browser checks remain opt-in; mocked tests do not verify model output quality.

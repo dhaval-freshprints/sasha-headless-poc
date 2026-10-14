@@ -1,101 +1,19 @@
-"""Bounded, read-only access to the configured deal manager schemas."""
-
+"""Command-line access to the shared read-only database layer."""
 import argparse
 import getpass
-import json
 import os
+import json
 from pathlib import Path
-import re
-import ssl
-
-import pymysql
+import sys
 from dotenv import load_dotenv
 
-SCHEMA_VARIABLES = {
-    "main": "DEAL_MANAGER_MAIN_SCHEMA",
-    "operations": "DEAL_MANAGER_OPERATIONS_SCHEMA",
-    "crm": "DEAL_MANAGER_CRM_SCHEMA",
-}
-
-
-def load_private_configuration():
-    configuration_path = os.environ.get("DEAL_MANAGER_DATABASE_CONFIG")
-    if not configuration_path and Path("/run/secrets/database.json").is_file():
-        configuration_path = "/run/secrets/database.json"
-    if configuration_path:
-        configuration = json.loads(Path(configuration_path).read_text())
-        names = ("NON_PROD_HOST", "NON_PROD_PORT", "NON_PROD_USER", "NON_PROD_PASS",
-                 *SCHEMA_VARIABLES.values())
-        for name in names:
-            if name in configuration:
-                os.environ[name] = configuration[name]
-        if not os.environ.get("NON_PROD_SSL_CA") and Path("/opt/rds-ca.pem").is_file():
-            os.environ["NON_PROD_SSL_CA"] = "/opt/rds-ca.pem"
-
-
-def quote_schema(value):
-    if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", value):
-        raise ValueError("Schema names must contain 1–64 letters, digits, underscores or hyphens")
-    return f"`{value}`"
-
-
-def configured_schemas():
-    load_private_configuration()
-    schemas = {}
-    for role, variable in SCHEMA_VARIABLES.items():
-        value = os.environ.get(variable, "").strip()
-        if not value:
-            raise ValueError(f"Missing required environment variable: {variable}")
-        quote_schema(value)
-        schemas[role] = value
-    return schemas
-
-
-def connect(schema):
-    if schema not in configured_schemas().values():
-        raise ValueError("Schema is outside the configured scope")
-    password = os.environ.get("NON_PROD_PASS") or getpass.getpass("Database password: ")
-    context = ssl.create_default_context(cafile=os.environ.get("NON_PROD_SSL_CA"))
-    connection = pymysql.connect(
-        host=os.environ["NON_PROD_HOST"],
-        port=int(os.environ.get("NON_PROD_PORT", "3306")),
-        user=os.environ["NON_PROD_USER"],
-        password=password,
-        database=schema,
-        ssl=context,
-        charset="utf8mb4",
-        cursorclass=pymysql.cursors.DictCursor,
-        connect_timeout=10,
-        read_timeout=20,
-        write_timeout=10,
-        autocommit=False,
-        local_infile=False,
-    )
-    try:
-        with connection.cursor() as cursor:
-            cursor.execute("SET SESSION time_zone='+00:00'")
-            cursor.execute("SET SESSION MAX_EXECUTION_TIME=10000")
-            cursor.execute("START TRANSACTION READ ONLY")
-    except Exception:
-        connection.close()
-        raise
-    return connection
-
-
-def read_query(connection, sql, parameters=(), limit=100):
-    if not 1 <= limit <= 1000:
-        raise ValueError("Row limit must be between 1 and 1000")
-    if not re.match(r"^\s*SELECT\b", sql, re.IGNORECASE):
-        raise ValueError("Only SELECT queries are supported")
-    forbidden = r";|--|/\*|\b(INTO|OUTFILE|DUMPFILE|SLEEP|BENCHMARK|GET_LOCK|RELEASE_LOCK|LOAD_FILE)\b|\bFOR\s+(UPDATE|SHARE)\b"
-    if re.search(forbidden, sql, re.IGNORECASE):
-        raise ValueError("Unsupported SQL; use parameters for values")
-    with connection.cursor() as cursor:
-        bounded_sql = f"SELECT * FROM ({sql}) AS bounded_result LIMIT %s"
-        cursor.execute(bounded_sql, (*parameters, limit + 1))
-        rows = cursor.fetchmany(limit + 1)
-    return {"rows": rows[:limit], "truncated": len(rows) > limit, "row_limit": limit}
-
+# The installed skill can also be run directly from a source checkout.
+for parent in Path(__file__).resolve().parents:
+    if (parent / "sasha_database").is_dir():
+        sys.path.insert(0, str(parent))
+        break
+from sasha_database.config import SCHEMA_VARIABLES, configured_schemas, quote_schema, env_value
+from sasha_database.read import connect, read_query
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -132,6 +50,8 @@ def main():
             parameters = json.loads(args.params)
             if not isinstance(parameters, list):
                 raise ValueError("Parameters must be a JSON array")
+    if not env_value("NON_PROD_PASS", "NON_PROD_CRM_PASS", "NON_PROD_V3_PASS"):
+        os.environ["NON_PROD_PASS"] = getpass.getpass("Database password: ")
     connection = connect(schema)
     try:
         result = read_query(connection, sql, parameters, args.limit)

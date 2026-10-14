@@ -30,13 +30,13 @@ def fake_database(users=(), deals=(), outreach=(), truncated=False, fail=False):
             return {"rows": [{"id": item} for item in users], "truncated": False}
         if ".deals " in sql:
             return {"rows": list(deals), "truncated": truncated}
-        if "sasha_communication_history" in sql:
+        if "sasha_conversation_history" in sql:
             return {"rows": [{"deal_id": d, "last_outbound_at": t} for d, t in outreach],
                     "truncated": False}
         raise AssertionError(sql)
 
     database = SimpleNamespace(
-        configured_schemas=lambda: {"main": "m", "operations": "o", "crm": "c"},
+        configured_schemas=lambda: {"main": "m", "operations": "o"},
         quote_schema=lambda name: f"`{name}`",
         connect=lambda schema: connection,
         read_query=read_query,

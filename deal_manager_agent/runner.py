@@ -129,8 +129,6 @@ class DealManagerAgent:
             "names; main, operations and crm in the skill references are roles, not literal schemas. "
             "The database helper reads private configuration automatically; "
             "run scripts with /opt/lookup-python/bin/python, which has their dependencies. "
-            "Set DEAL_MANAGER_DATABASE_CONFIG=/run/secrets/database.json and "
-            "NON_PROD_SSL_CA=/opt/rds-ca.pem for helper commands if needed. "
             "do not read or print secrets. Save minimal query evidence under /workspace/evidence. "
             "Return only the required structured decision, including a verified deal title "
             "when matched. A completed investigation may return needs_review."

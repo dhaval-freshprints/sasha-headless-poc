@@ -1,3 +1,4 @@
+from tests.database_helpers import setup_database
 import json
 import os
 import tempfile
@@ -14,6 +15,7 @@ from webapp.tests.helpers import FakeRunner, wait_for_finish
 
 class JobManagerTests(unittest.TestCase):
     def setUp(self):
+        setup_database(self)
         self.temporary_directory = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary_directory.name)
         self.environment = patch.dict(

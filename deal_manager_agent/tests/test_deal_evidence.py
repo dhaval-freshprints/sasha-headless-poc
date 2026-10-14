@@ -17,7 +17,6 @@ from database import connect, read_query, configured_schemas
 SCHEMAS = {
     'DEAL_MANAGER_MAIN_SCHEMA': 'test-main',
     'DEAL_MANAGER_OPERATIONS_SCHEMA': 'test_operations',
-    'DEAL_MANAGER_CRM_SCHEMA': 'test_crm',
 }
 
 
@@ -39,7 +38,7 @@ class DatabaseTests(ConfiguredDatabaseTests):
                     configured_schemas()
 
     def test_unconfigured_schema_is_rejected_before_connecting(self):
-        with patch('database.pymysql.connect') as database:
+        with patch('sasha_database.connection.pymysql.connect') as database:
             with self.assertRaisesRegex(ValueError, "outside"):
                 connect('unconfigured_database')
         database.assert_not_called()
@@ -57,24 +56,25 @@ class DatabaseTests(ConfiguredDatabaseTests):
                 '--env-file', str(configuration), 'schemas',
             ], env=environment, capture_output=True, text=True, check=True)
         self.assertEqual(json.loads(result.stdout), {
-            'main': 'test-main', 'operations': 'test_operations', 'crm': 'test_crm',
+            'main': 'test-main', 'operations': 'test_operations',
         })
         self.assertNotIn('synthetic-private-password', result.stdout + result.stderr)
 
-    def test_managed_secrets_work_when_executor_omits_environment(self):
-        settings = json.dumps({"NON_PROD_HOST":"db.example","NON_PROD_USER":"reader","NON_PROD_PASS":"synthetic-secret", **SCHEMAS})
-        with patch.dict(os.environ, {}, clear=True), \
-             patch('database.Path.is_file', return_value=True), \
-             patch('database.Path.read_text', return_value=settings), \
-             patch('database.ssl.create_default_context') as tls, \
-             patch('database.pymysql.connect') as database, \
-             patch('database.getpass.getpass') as prompt:
+    def test_environment_configuration_drives_shared_connection(self):
+        from sasha_database.config import DatabaseSettings
+        settings = DatabaseSettings({
+            "NON_PROD_HOST": "db.example", "NON_PROD_PORT": "3306", "NON_PROD_USER": "reader",
+            "NON_PROD_PASS": "synthetic-secret", **SCHEMAS,
+        })
+        with patch('sasha_database.connection.DatabaseSettings.from_environment', return_value=settings), \
+                patch('sasha_database.connection.pymysql.connect') as database:
             connect('test-main')
             self.assertEqual(database.call_args.kwargs['host'], 'db.example')
             self.assertEqual(database.call_args.kwargs['password'], 'synthetic-secret')
-            tls.assert_called_once_with(cafile='/opt/rds-ca.pem')
-            prompt.assert_not_called()
-            self.assertEqual(database.call_args.kwargs['database'], 'test-main')
+            self.assertTrue(database.call_args.kwargs['ssl_disabled'])
+            self.assertNotIn('ssl', database.call_args.kwargs)
+            statements = [call.args[0] for call in database.return_value.cursor.return_value.__enter__.return_value.execute.call_args_list]
+            self.assertIn('START TRANSACTION READ ONLY', statements)
 
     def test_write_and_file_access_rejected_before_execution(self):
         connection = Mock()
@@ -123,21 +123,21 @@ class NormalizationTests(unittest.TestCase):
 
 
 class EvidenceTests(ConfiguredDatabaseTests):
-    def test_queries_follow_all_three_configured_schema_roles(self):
+    def test_queries_use_only_main_and_conversation_history(self):
         with patch.dict(os.environ, {
             'DEAL_MANAGER_MAIN_SCHEMA': 'alternate_main',
             'DEAL_MANAGER_OPERATIONS_SCHEMA': 'alternate_operations',
-            'DEAL_MANAGER_CRM_SCHEMA': 'alternate-crm',
         }):
             collector = self.collector(thread_id='synthetic-thread', proof_ids=[123])
         collector.query = Mock(return_value=[])
         collector.collect_message_links()
-        collector.collect_crm_messages()
+        collector.collect_sender_history()
         collector.collect_explicit_references()
         queries = '\n'.join(call.args[1] for call in collector.query.call_args_list)
         self.assertIn('`alternate_main`.proof_request', queries)
-        self.assertIn('`alternate_operations`.sasha_communication_history', queries)
-        self.assertIn('`alternate-crm`.message', queries)
+        self.assertIn('`alternate_operations`.sasha_conversation_history', queries)
+        self.assertNotIn('sasha_deal_context', queries)
+        self.assertNotIn('.message ', queries)
 
     def test_proof_item_fallback_retains_multiple_deals(self):
         collector = self.collector(proof_ids=[123])
@@ -186,11 +186,15 @@ class EvidenceTests(ConfiguredDatabaseTests):
         collector.collect_message_links()
         collector.query.assert_not_called()
 
-    def test_provider_id_is_not_treated_as_sasha_external_id(self):
+    def test_provider_id_reads_stored_conversation_association(self):
         collector = self.collector(message_id='synthetic-provider-id')
-        collector.query = Mock()
+        collector.query = Mock(return_value=[])
         collector.collect_message_links()
-        collector.query.assert_not_called()
+        _, sql, parameters = collector.query.call_args.args
+        self.assertIn('sasha_conversation_history', sql)
+        self.assertIn('external_message_id=%s', sql)
+        self.assertIn('deleted_at IS NULL', sql)
+        self.assertEqual(parameters, ['synthetic-provider-id', 'EMAIL'])
 
     def test_prior_history_excludes_future_rows_and_target(self):
         collector = self.collector(thread_id='synthetic-thread',sasha_external_message_id='synthetic-target')
@@ -198,7 +202,7 @@ class EvidenceTests(ConfiguredDatabaseTests):
         collector.query = Mock(return_value=[])
         collector.collect_message_links()
         _,sql,parameters = collector.query.call_args.args
-        self.assertIn('message_timestamp < %s',sql)
+        self.assertIn('COALESCE(message_timestamp,created_at) < %s',sql)
         self.assertIn('external_message_id<>%s',sql)
         self.assertIn('synthetic-target',parameters)
 
@@ -218,37 +222,50 @@ class EvidenceTests(ConfiguredDatabaseTests):
         self.assertEqual(collector.hydrate_candidates(),[])
         self.assertIn('not verified',collector.warnings[0])
 
-    def test_crm_phone_pair_includes_both_directions(self):
-        collector = self.collector(sender_phone='+12025550123',recipient_phone='+12025550456')
-        collector.read_crm_messages = Mock()
-        collector.collect_crm_sms_pair()
-        self.assertEqual(collector.read_crm_messages.call_count,2)
-        calls = collector.read_crm_messages.call_args_list
-        self.assertEqual(calls[0].kwargs['index_name'],'sender')
-        self.assertEqual(calls[1].kwargs['index_name'],'recipient')
-        for call in calls:
-            self.assertIn('2025550123',call.args[2])
-            self.assertIn('2025550456',call.args[2])
-            self.assertTrue(call.kwargs['prior'])
+    def test_sms_sender_history_uses_inbound_phone_and_flags_missing_recipient(self):
+        collector = self.collector(channel='SMS', sender_phone='+12025550123', recipient_phone='+12025550456')
+        collector.query = Mock(return_value=[])
+        collector.collect_message_links()
+        collector.collect_sender_history()
+        _, sql, parameters = collector.query.call_args.args
+        self.assertIn('sender_name IN', sql)
+        self.assertIn("direction='INBOUND'", sql)
+        self.assertIn('deleted_at IS NULL', sql)
+        self.assertIn('2025550123', parameters)
+        self.assertIn('SMS', parameters)
+        self.assertNotIn('recipient_number', sql)
+        self.assertTrue(any('no recipient line' in warning for warning in collector.warnings))
 
-    def test_crm_replay_skips_current_provider_message(self):
-        collector = self.collector(message_id='synthetic-current',reply_to_message_id='synthetic-parent')
+    def test_replay_uses_parent_but_excludes_current_provider_message(self):
+        collector = self.collector(message_id='synthetic-current', reply_to_message_id='synthetic-parent')
         collector.replay = True
-        collector.read_crm_messages = Mock()
-        collector.collect_crm_messages()
-        self.assertEqual(collector.read_crm_messages.call_count,1)
-        self.assertEqual(collector.read_crm_messages.call_args.args[2],['synthetic-parent'])
+        collector.query = Mock(return_value=[])
+        collector.collect_message_links()
+        self.assertEqual(collector.query.call_count, 1)
+        parameters = collector.query.call_args.args[2]
+        self.assertEqual(parameters[0], 'synthetic-parent')
+        self.assertIn('synthetic-current', parameters)
 
-    def test_crm_multiple_clients_are_preserved_and_flagged(self):
-        collector = self.collector()
-        collector.crm_message_ids.add(10)
-        collector.query = Mock(side_effect=[[
-            {'id':1,'crm_message_id':10,'client_id':101},
-            {'id':2,'crm_message_id':10,'client_id':202},
-        ],[]])
-        collector.link_crm_activities()
-        self.assertEqual(collector.client_ids,{101,202})
-        self.assertTrue(any('multiple clients' in warning for warning in collector.warnings))
+    def test_sender_history_preserves_multiple_candidate_deals(self):
+        collector = self.collector(sender_email='client@example.com')
+        with patch('collect_evidence.read_query', return_value={
+            'rows': [{'id': 1, 'deal_id': 101}, {'id': 2, 'deal_id': 202}], 'truncated': False,
+        }) as read:
+            collector.collect_sender_history()
+        self.assertEqual(collector.candidate_ids, {101, 202})
+        sql, parameters = read.call_args.args[1:3]
+        self.assertIn('sasha_conversation_history', sql)
+        self.assertIn('client@example.com', parameters)
+
+    def test_collector_never_reads_legacy_message_or_context_tables(self):
+        collector = self.collector(sender_email='client@example.com', message_id='current',
+                                   thread_id='thread', client_ids=[7], deal_ids=[42])
+        with patch('collect_evidence.read_query', return_value={'rows': [], 'truncated': False}) as read:
+            collector.collect()
+        queries = '\n'.join(call.args[1] for call in read.call_args_list)
+        self.assertIn('sasha_conversation_history', queries)
+        for removed in ('sasha_communication_history', 'sasha_deal_context', '.message ', '.activity '):
+            self.assertNotIn(removed, queries)
 
 
 if __name__ == '__main__':

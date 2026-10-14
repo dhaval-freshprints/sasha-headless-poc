@@ -1,3 +1,4 @@
+from tests.database_helpers import setup_database
 import os
 import tempfile
 import threading
@@ -9,13 +10,50 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-from webapp.app import create_app, _jobs_directory, _deals_directory, _notes_runs_directory
+from webapp.app import create_app, _jobs_directory, _deals_directory
 from webapp.deals import DealStore
 from webapp.jobs import JobManager
 from webapp.tests.helpers import FakeRunner, PassThroughResolver, wait_for_finish
 
 
 class WebAppTests(unittest.TestCase):
+    def test_structured_message_persists_metadata_before_run(self):
+        response = self.client.post("/api/runs", json={
+            "deal_id": "303839", "incoming_message": {
+                "body": "Proof ready", "sender_name": "art@freshprints.com",
+                "subject": "Ready", "external_message_id": "provider-1",
+                "external_thread_id": "thread-1", "message_timestamp": "2026-10-14T10:00:00Z",
+            },
+        })
+        self.assertEqual(response.status_code, 202)
+        run = wait_for_finish(self.manager, response.json()["run_id"])
+        message = run.incoming_messages[0]
+        self.assertEqual(message["convo_type"], "internal_mail")
+        self.assertEqual(message["external_message_id"], "provider-1")
+        self.assertEqual(message["subject"], "Ready")
+        self.assertEqual(run.deal_check["workflow"], "internal_email")
+        self.assertEqual(self.database.statuses["303839"], "active")
+
+    def test_input_db_failure_prevents_job_creation(self):
+        from sasha_database.connection import DatabaseError
+        with patch.object(self.database, "prepare_run", side_effect=DatabaseError("Unavailable")):
+            response = self.client.post("/api/runs", json={"deal_id": "303839", "client_message": "Hello"})
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(self.manager.list_all(), [])
+
+    def test_notes_db_error_does_not_look_like_empty_notes(self):
+        from sasha_database.connection import DatabaseError
+        with patch.object(self.database, "load_notes", side_effect=DatabaseError("Unavailable")):
+            response = self.client.get("/api/deals/303839/notes")
+        self.assertEqual(response.status_code, 503)
+
+    def test_oversized_metadata_is_rejected_before_a_run(self):
+        response = self.client.post("/api/runs", json={
+            "deal_id": "303839", "incoming_message": {"body": "Hello", "subject": "x" * 501},
+        })
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(self.manager.list_all(), [])
+
     def test_followup_validation_and_metadata(self):
         valid = {"deal_id": "303839", "turn_type": "follow_up", "follow_up_stage": 1,
                  "as_of_date": "2026-10-13", "days_since_client_reply": 99}
@@ -41,17 +79,14 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(run.days_since_client_reply, 99)
         self.assertEqual(self.manager._make_task(run).turn_type, "follow_up")
 
-    def test_notes_use_current_environment_and_assets_are_not_cached(self):
-        with patch.dict(os.environ, {"OPENAI_MANAGED_RUNS_DIRECTORY": str(self.root)}):
-            for environment in ("qa", "production"):
-                with patch.dict(os.environ, {"FP_ENVIRONMENT": environment}):
-                    directory = self.root / environment / "notes"
-                    directory.mkdir(parents=True)
-                    (directory / "deal_303839_notes.md").write_text(environment + " notes")
-                    self.assertEqual(_notes_runs_directory(), self.root / environment)
-                    self.assertEqual(self.client.get("/api/deals/303839/notes").json()["notes"], environment + " notes")
-            self.assertEqual(self.client.get("/api/deals/999999/notes").json()["notes"], "")
-            self.assertEqual(self.client.get("/api/deals/invalid/notes").status_code, 422)
+    def test_notes_use_database_and_ignore_legacy_files(self):
+        self.database.notes["303839"] = "Database notes"
+        directory = self.root / "notes"
+        directory.mkdir()
+        (directory / "deal_303839_notes.md").write_text("Dead legacy notes")
+        self.assertEqual(self.client.get("/api/deals/303839/notes").json()["notes"], "Database notes")
+        self.assertEqual(self.client.get("/api/deals/999999/notes").json()["notes"], "")
+        self.assertEqual(self.client.get("/api/deals/invalid/notes").status_code, 422)
         for path in ("/", "/static/app.js", "/static/styles.css"):
             self.assertEqual(self.client.get(path).headers["Cache-Control"], "no-store")
 
@@ -180,6 +215,7 @@ class WebAppTests(unittest.TestCase):
                 self.assertIsNone(run.workflow)
 
     def setUp(self):
+        setup_database(self)
         self.temporary_directory = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary_directory.name)
         self.environment = patch.dict(

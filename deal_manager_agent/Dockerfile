@@ -7,7 +7,5 @@ RUN apt-get update && apt-get install -y --no-install-recommends python3 python3
     && npm install --global @openai/codex@alpha
 
 ENV PATH="/opt/lookup-python/bin:${PATH}"
-ENV DEAL_MANAGER_DATABASE_CONFIG=/run/secrets/database.json
-ENV NON_PROD_SSL_CA=/opt/rds-ca.pem
 WORKDIR /workspace
 CMD ["sleep", "infinity"]

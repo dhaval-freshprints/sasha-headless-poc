@@ -25,6 +25,8 @@ from typing import Any, Callable
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from sasha_database.messages import IncomingMessage, incoming_message
+
 from deal_manager_agent.deal_lookup import ActiveDealFinder
 from deal_manager_agent.deal_resolution import DealResolver
 from deal_manager_agent.models import LookupRequest, normalize_phone
@@ -54,10 +56,13 @@ class InboundRequest(BaseModel):
 
     email: str | None = None
     phone: str | None = None
-    subject: str = Field(default="", max_length=1000)
+    subject: str = Field(default="", max_length=500)
     body: str | list[str]
-    thread_id: str | None = None
-    message_id: str | None = Field(default=None, max_length=500)
+    thread_id: str | None = Field(default=None, max_length=255)
+    message_id: str | None = Field(default=None, max_length=255)
+    attachments: list[str] = Field(default_factory=list)
+    content_type: str = "text"
+    message_timestamp: str | None = None
 
     @field_validator("email", "phone", "thread_id", "message_id", mode="before")
     @classmethod
@@ -72,6 +77,7 @@ class InboundRequest(BaseModel):
             raise ValueError("body must be an array of messages when phone is provided")
         if not self.phone and isinstance(self.body, list):
             raise ValueError("body must be a string for an email")
+        self.to_messages()
         self.to_lookup()  # Validate every derived field now so the webhook answers 422.
         return self
 
@@ -108,6 +114,18 @@ class InboundRequest(BaseModel):
             subject=self.subject, body=self.text,
         )
 
+    def to_messages(self, timestamp: str | None = None) -> tuple[IncomingMessage, ...]:
+        sender = self.to_lookup().sender_phone if self.phone else self.email
+        return tuple(IncomingMessage(
+            body=body, sender_name=sender, message_type="SMS" if self.phone else "EMAIL",
+            subject=self.subject or None, external_thread_id=self.thread_id,
+            # A batched SMS event has one provider ID, attached to its first message.
+            external_message_id=self.message_id if index == 0 else None,
+            attachments=tuple(self.attachments), content_type=self.content_type,
+            convo_type="internal_mail" if self.is_internal else "client_response",
+            message_timestamp=self.message_timestamp or timestamp or utc_now(),
+        ) for index, body in enumerate(self.messages))
+
     def client_message(self, later_messages=()) -> str:
         """The client message for Account Manager, in the Deals form's envelope format.
 
@@ -132,8 +150,8 @@ class InboundRequest(BaseModel):
             and bool(self.thread_id) and self.thread_id == other.thread_id
 
 
-StartRun = Callable[[str, str, dict], Any]  # (deal_id, client_message, deal_check) -> run
-SendMessage = Callable[[str, str, str], dict]  # (run_id, submission_id, text) -> run message
+StartRun = Callable[[str, str, dict, tuple[IncomingMessage, ...]], Any]
+SendMessage = Callable[..., dict]  # run_id, submission_id, text, optional structured message
 RunState = Callable[[str], dict]  # run_id -> the run as a dict (status, accepting_messages, messages)
 
 
@@ -172,7 +190,7 @@ class InboundJobs:
                 return self.get(existing)
             open_id = None if request.is_internal else self._open_conversation(request)
             if open_id:
-                self._add_message(open_id, request.text)
+                self._add_message(open_id, request.text, request.to_messages())
                 if request.message_id:
                     self.by_message_id[request.message_id] = open_id
                 return {**self.get(open_id), "attached": True}
@@ -217,13 +235,17 @@ class InboundJobs:
                 raise KeyError(inbound_id)
             return self._add_message(inbound_id, text.strip())
 
-    def _add_message(self, inbound_id: str, text: str) -> dict:
+    def _add_message(self, inbound_id: str, text: str, incoming=()) -> dict:
         record = self.records[inbound_id]
         if not self._is_open(record, self._run(record)):
             raise ValueError("This client response is finished. Send the message as a new client response.")
         # Before Account Manager starts, hold it and send it with the first message.
         status = "held" if record["status"] in IN_PROGRESS else "pending"
-        message = {"submission_id": uuid.uuid4().hex, "text": text, "status": status,
+        if not incoming:
+            original = InboundRequest.model_validate(record["input"]).to_messages()[0]
+            incoming = (incoming_message(text, default=original),)
+        message = {"incoming_messages": [item.to_dict() for item in incoming],
+                   "submission_id": uuid.uuid4().hex, "text": text, "status": status,
                    "error": "", "created_at": utc_now()}
         record["messages"].append(message)
         self._save(record)
@@ -271,7 +293,13 @@ class InboundJobs:
                     return
                 message, run_id = dict(pending[0]), record["run_id"]
             try:
-                self.send_message(run_id, message["submission_id"], message["text"])
+                incoming = [IncomingMessage(**item) for item in message.get("incoming_messages", [])]
+                if incoming:
+                    for index, item in enumerate(incoming):
+                        submission = message["submission_id"] if index == 0 else f"{message['submission_id']}-{index}"
+                        self.send_message(run_id, submission, item.body, item)
+                else:
+                    self.send_message(run_id, message["submission_id"], message["text"])
                 self._set_message(inbound_id, message["submission_id"], status="forwarded")
             except ValueError as error:
                 run = self._run(record)
@@ -353,9 +381,12 @@ class InboundJobs:
             with self.lock:  # Messages arriving now are either included here or forwarded.
                 record = self.records[inbound_id]
                 held = [item for item in record["messages"] if item["status"] == "held"]
+                messages = list(request.to_messages(record["created_at"]))
+                for item in held:
+                    messages.extend(IncomingMessage(**value) for value in item["incoming_messages"])
                 run = self.start_run(resolution.deal_id,
                                      request.client_message([item["text"] for item in held]),
-                                     resolution.to_dict())
+                                     resolution.to_dict(), tuple(messages))
                 for item in held:
                     item["status"] = "included"
                 self._update(inbound_id, status="run_started", deal_id=resolution.deal_id,
@@ -408,3 +439,7 @@ class InboundJobs:
             self.records[record["inbound_id"]] = record
             if record["input"].get("message_id"):
                 self.by_message_id[record["input"]["message_id"]] = record["inbound_id"]
+            for message in record["messages"]:
+                for incoming in message.get("incoming_messages", []):
+                    if incoming.get("external_message_id"):
+                        self.by_message_id[incoming["external_message_id"]] = record["inbound_id"]

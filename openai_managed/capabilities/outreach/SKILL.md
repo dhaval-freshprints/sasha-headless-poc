@@ -7,7 +7,7 @@ description: Carry out Account Manager’s initial outreach to inspect the compl
 
 This file owns what Sasha inspects and does during initial outreach. Reply wording belongs in the linked crafting guides.
 
-Use this skill when Account Manager determines that the local conversation and incoming messages are empty. Its routing and no-reply rules take precedence. Use `account-manager` for shared browser, evidence, verification, and output rules. Read the relevant sections of [Workplace](../account-manager/references/workplace.md) for browser navigation. This skill owns outreach inspection and sales decisions.
+Use this skill when Account Manager determines that the database conversation and incoming messages are empty. Its routing and no-reply rules take precedence. Use `account-manager` for shared browser, evidence, verification, and output rules. Read the relevant sections of [Workplace](../account-manager/references/workplace.md) for browser navigation. This skill owns outreach inspection and sales decisions.
 
 ## What to inspect and do
 

@@ -8,6 +8,8 @@ from pathlib import Path
 
 from openai_managed.sandbox import DockerSandbox, SandboxConfig, SandboxHandle
 
+from sasha_database.config import DatabaseSettings, container_database_options
+
 from .models import LookupRequest
 from .settings import DealManagerSettings
 
@@ -39,19 +41,12 @@ class DealManagerSandbox(DockerSandbox):
 
     def start_container(self) -> None:
         handle = self._require_handle()
+        options, environment = container_database_options(
+            DatabaseSettings(self.settings.database))
         subprocess.run([
             "docker", "run", "--detach", "--rm", "--name", handle.container_name,
             "--memory", "1g", "--cpus", "1",
-            "--tmpfs", "/run/secrets:rw,nosuid,nodev,noexec,size=1m,mode=0700",
             "--mount", f"type=bind,src={handle.workspace_directory},dst=/workspace",
-            "--mount", f"type=bind,src={self.settings.certificate},dst=/opt/rds-ca.pem,readonly",
+            *options,
             self.config.image, "sleep", "infinity",
-        ], check=True, capture_output=True, text=True)
-        # stdin keeps secrets out of command arguments and persistent run files.
-        subprocess.run([
-            "docker", "exec", "--interactive", handle.container_name, "python", "-c",
-            "import os,sys; os.umask(0o077); open('/run/secrets/database.json','w').write(sys.stdin.read())",
-        ], input=json.dumps({
-            **self.settings.database,
-            "NON_PROD_SSL_CA": "/opt/rds-ca.pem",
-        }), check=True, capture_output=True, text=True)
+        ], check=True, capture_output=True, text=True, env=environment)

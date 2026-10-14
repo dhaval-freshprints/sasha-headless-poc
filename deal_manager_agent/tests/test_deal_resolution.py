@@ -32,7 +32,7 @@ def fake_database(deals, proofs=None, outreach=None, fail=False):
     def read_query(conn, sql, parameters=(), limit=100):
         if fail:
             raise RuntimeError("secret-host unreachable")
-        if "sasha_communication_history" in sql:
+        if "sasha_conversation_history" in sql:
             return rows([{"deal_id": int(d), "last_outbound_at": outreach[int(d)]}
                          for d in parameters if int(d) in outreach])
         if "deal_proofs" in sql:
@@ -54,7 +54,7 @@ def fake_database(deals, proofs=None, outreach=None, fail=False):
         raise AssertionError(sql)
 
     database = SimpleNamespace(
-        configured_schemas=lambda: {"main": "m", "operations": "o", "crm": "c"},
+        configured_schemas=lambda: {"main": "m", "operations": "o"},
         quote_schema=lambda name: f"`{name}`",
         connect=lambda schema: connection,
         read_query=read_query,

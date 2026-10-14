@@ -9,10 +9,10 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from openai_managed.attachments import Attachment, AttachmentSet
-from openai_managed.conversation import ConversationStore
+from tests.database_helpers import MemoryStorage
 from tests.test_openai_managed_environment import APPLICATION_VALUES, application_environment
 from openai_managed.notes import (
-    NOTES_OUTPUT_NAME, NotesStore, saved_attachment_urls, with_attachment_links,
+    saved_attachment_urls, with_attachment_links,
 )
 from tests.test_attachments import FakeResponse
 from openai_managed.pricing import CostReporter
@@ -160,6 +160,8 @@ class FakeItemsAPI:
             "deal_id": self.deal_id,
             "status": "completed",
             "message_html": MESSAGE,
+            "notes": "## Current decisions\n- None recorded.",
+            "convo_type": "outreach",
             "failure_code": "",
             "failure_message": "",
         }
@@ -282,6 +284,7 @@ class ManagedRunnerTests(unittest.TestCase):
     def setUp(self):
         self.temporary_directory = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary_directory.name)
+        self.database = MemoryStorage()
 
     def tearDown(self):
         self.temporary_directory.cleanup()
@@ -340,7 +343,7 @@ class ManagedRunnerTests(unittest.TestCase):
         self.assertEqual(result.status, "failed")
         self.assertEqual(result.failure_code, "environment_error")
         self.assertEqual(sandboxes, [])
-        self.assertIsNone(runner.last_conversation_file)
+        self.assertIsNone(runner.storage)
 
     @patch("openai_managed.runner.fetch_to_directory")
     def test_supplied_artwork_is_staged_for_astra_then_removed(self, fetch):
@@ -414,7 +417,7 @@ class ManagedRunnerTests(unittest.TestCase):
         self.assertIn("Account Manager tool step 1 started", output)
         self.assertIn("Account Manager tool step 1: completed", output)
         self.assertIn("[7/7] Saving artifacts and cleaning up", output)
-        self.assertIn("[context] Conversation file:", output)
+        self.assertIn("[context] Loaded notes and conversation from database", output)
 
     def test_completed_turn_is_saved_and_loaded_by_the_next_turn(self):
         runner, _, sandboxes = self._make_runner([])
@@ -438,24 +441,17 @@ class ManagedRunnerTests(unittest.TestCase):
 
         self.assertEqual(first_result.status, "completed")
         self.assertEqual(second_result.status, "completed")
-        self.assertEqual(
-            runner.last_conversation_file,
-            self.root
-            / "runs"
-            / "conversations"
-            / "DEAL303839_conversation.json",
-        )
         second_task = sandboxes[1].task_message
         self.assertIn('"content": "Show me green polos."', second_task)
         self.assertIn(f'"content": "{MESSAGE}"', second_task)
         self.assertIn(
             "--- BEGIN CLIENT MESSAGE ---\n"
-            "I want the second one.\n"
+            "Channel: EMAIL\nFrom: client@example.com\n\nI want the second one.\n"
             "--- END CLIENT MESSAGE ---",
             second_task,
         )
 
-        saved = json.loads(runner.last_conversation_file.read_text())
+        saved = {"conversation_history": self.database.history["303839"]}
         self.assertEqual(
             [entry["role"] for entry in saved["conversation_history"]],
             ["client", "sasha", "client", "sasha"],
@@ -465,42 +461,6 @@ class ManagedRunnerTests(unittest.TestCase):
             "generated",
         )
 
-    def test_failed_turn_does_not_change_conversation(self):
-        store = ConversationStore(self.root / "runs", "303839")
-        store.append_completed_turn([], "Earlier question", "Earlier response")
-        original = store.path.read_text()
-        events = [
-            {"type": "agent.session.environment.connected"},
-            {"type": "agent.session.turn.failed"},
-        ]
-        runner, _, _ = self._make_runner([], event_values=events)
-
-        result = runner.run(
-            SashaTask(
-                "303839",
-                "task-2",
-                "https://qa.example/deal?id=303839",
-                "New question",
-            )
-        )
-
-        self.assertEqual(result.status, "failed")
-        self.assertEqual(store.path.read_text(), original)
-
-    def test_malformed_conversation_returns_clear_failure(self):
-        store = ConversationStore(self.root / "runs", "303839")
-        store.path.parent.mkdir(parents=True)
-        store.path.write_text("not json")
-        runner, _, sandboxes = self._make_runner([])
-
-        result = runner.run(
-            SashaTask("303839", "task-1", "https://qa.example/deal?id=303839")
-        )
-
-        self.assertEqual(result.status, "failed")
-        self.assertEqual(result.failure_code, "conversation_error")
-        self.assertIn("Could not read conversation file", result.failure_message)
-        self.assertEqual(sandboxes, [])
 
     @patch.dict("os.environ", ASTRA_PRICES)
     def test_collects_and_prints_pricing_when_requested(self):
@@ -626,7 +586,7 @@ class ManagedRunnerTests(unittest.TestCase):
         )
         message = OpenAIManagedRunner._build_task_message(task, application_environment())
         self.assertIn("Use the `account-manager` skill", message)
-        self.assertIn("client-response-orchestrator, and followup skills are available", message)
+        self.assertIn("client-response-orchestrator, internal-email, and followup skills are available", message)
         self.assertNotIn("Follow-up signals", message)
         self.assertIn("CRM activity supplies deal facts, not the routing conversation", message)
         self.assertNotIn("Selected workflow:", message)
@@ -1066,8 +1026,7 @@ class ManagedRunnerTests(unittest.TestCase):
 
         self.assertEqual(result.status, "completed")
         self.assertEqual(result.message_html, MESSAGE)
-        saved = json.loads(runner.last_conversation_file.read_text())
-        self.assertEqual(len(saved["conversation_history"]), 2)
+        self.assertEqual(len(self.database.history["303839"]), 2)
         self.assertIn(
             "[cleanup] WARNING: session deletion: delete rejected", progress_messages
         )
@@ -1077,295 +1036,15 @@ class ManagedRunnerTests(unittest.TestCase):
         saved_result = json.loads((workspace / "result.json").read_text())
         self.assertEqual(saved_result["status"], "completed")
 
-    @patch("openai_managed.attachments.urllib.request.urlopen")
-    def test_attachment_links_are_saved_and_reused_without_resubmission(self, urlopen):
-        url = "https://example.test/logo.svg?signature=abc%2Fdef"
-        urlopen.side_effect = [
-            FakeResponse(b"<svg>first</svg>", "image/svg+xml"),
-            FakeResponse(b"<svg>second</svg>", "image/svg+xml"),
-        ]
-        runner, _, sandboxes = self._make_runner([])
-        notes = NotesStore(self.root / "runs", "303839")
-        with self._notes_output(runner, "## Current decisions\n- White shirt."):
-            first = runner.run(SashaTask("303839", "task-1", TASK_URL, file_urls=(url, url)))
-        self.assertEqual(first.status, "completed")
-        self.assertEqual(saved_attachment_urls(notes.load()), [url])
-        with self._notes_output(runner, "## Current decisions\n- Black shirt."):
-            second = runner.run(SashaTask("303839", "task-2", TASK_URL, "Reuse the logo."))
-        self.assertEqual(second.status, "completed")
-        self.assertEqual(urlopen.call_count, 2)
-        self.assertEqual(urlopen.call_args.args[0].full_url, url)
-        self.assertIn("/workspace/client-files/file_1.svg (saved attachment)", sandboxes[1].task_message)
-        self.assertEqual(saved_attachment_urls(notes.load()), [url])
-        for sandbox in sandboxes:
-            self.assertFalse((sandbox.handle.workspace_directory / "client-files").exists())
-        self.assertEqual(list((self.root / "runs").rglob("deal_*_notes.md")), [notes.path])
-        self.assertFalse((self.root / "runs" / "locks").exists())
-        self.assertEqual(list((self.root / "runs").rglob("*.lock")), [])
 
-    @patch("openai_managed.attachments.urllib.request.urlopen")
-    def test_new_upload_is_not_downloaded_again_as_saved_attachment(self, urlopen):
-        url = "https://example.test/logo.svg"
-        notes = NotesStore(self.root / "runs", "303839")
-        notes.path.parent.mkdir(parents=True)
-        notes.path.write_text(with_attachment_links("Prior notes", [url]), encoding="utf-8")
-        urlopen.return_value = FakeResponse(b"svg", "image/svg+xml")
-        runner, _, sandboxes = self._make_runner([])
-        with self._notes_output(runner, "Updated notes"):
-            result = runner.run(SashaTask("303839", "task-1", TASK_URL, file_urls=(url,)))
-        self.assertEqual(result.status, "completed")
-        self.assertEqual(urlopen.call_count, 1)
-        self.assertIn("(new attachment)", sandboxes[0].task_message)
-
-    @patch("openai_managed.attachments.urllib.request.urlopen")
-    def test_expired_saved_link_warns_and_does_not_block_the_run(self, urlopen):
-        url = "https://example.test/logo.svg?signature=private"
-        notes = NotesStore(self.root / "runs", "303839")
-        notes.path.parent.mkdir(parents=True)
-        notes.path.write_text(with_attachment_links("Prior notes", [url]), encoding="utf-8")
-        urlopen.side_effect = OSError(url)
-        progress = []
-        runner, _, sandboxes = self._make_runner(progress)
-        with self._notes_output(runner, "Updated notes"):
-            result = runner.run(SashaTask("303839", "task-1", TASK_URL))
-        self.assertEqual(result.status, "completed")
-        self.assertIn("could not be downloaded this turn: logo.svg", sandboxes[0].task_message)
-        self.assertTrue(any("Saved attachment unavailable: logo.svg" in message for message in progress))
-        self.assertNotIn("signature=private", "\n".join(progress))
-        self.assertEqual(saved_attachment_urls(notes.load()), [url])
-
-    @patch("openai_managed.attachments.urllib.request.urlopen")
-    def test_other_deal_attachments_are_not_restored(self, urlopen):
-        notes = NotesStore(self.root / "runs", "999999")
-        notes.path.parent.mkdir(parents=True)
-        notes.path.write_text(
-            with_attachment_links("Other deal", ["https://example.test/other.svg"]),
-            encoding="utf-8",
-        )
-        runner, _, sandboxes = self._make_runner([])
-        with self._notes_output(runner, "Current deal"):
-            result = runner.run(SashaTask("303839", "task-1", TASK_URL))
-        self.assertEqual(result.status, "completed")
-        urlopen.assert_not_called()
-        self.assertNotIn("other.svg", sandboxes[0].task_message)
-
-    def test_outreach_saves_notes_without_followup_arguments_or_new_tactics(self):
-        runner, _, _ = self._make_runner([])
-        notes = NotesStore(self.root / "runs", "303839")
-        candidate = "## Current decisions\n- Quantity unconfirmed.\n- Follow-up generated: offer_art_team"
-        with self._notes_output(runner, candidate), \
-                patch.object(NotesStore, "publish", autospec=True, side_effect=NotesStore.publish) as publish:
-            result = runner.run(SashaTask("303839", "outreach", TASK_URL))
-        self.assertEqual(result.status, "completed")
-        self.assertEqual(result.message_html, MESSAGE)
-        self.assertIn("Quantity unconfirmed.", notes.load())
-        self.assertNotIn("Follow-up generated", notes.load())
-        self.assertEqual(publish.call_args.kwargs, {"attachment_urls": []})
-
-    def test_followup_draft_saves_notes_using_supported_boolean(self):
-        runner, _, _ = self._make_runner([])
-        notes = NotesStore(self.root / "runs", "303839")
-        candidate = "## Current decisions\n- Follow-up generated: offer_art_team"
-        task = SashaTask("303839", "follow-up", TASK_URL, turn_type="follow_up",
-                         follow_up_stage=1, as_of_date="2026-10-14")
-        with self._notes_output(runner, candidate), \
-                patch.object(NotesStore, "publish", autospec=True, side_effect=NotesStore.publish) as publish:
-            result = runner.run(task)
-        self.assertEqual(result.status, "completed")
-        self.assertIn("Follow-up generated: offer_art_team", notes.load())
-        self.assertEqual(publish.call_args.kwargs, {"attachment_urls": [], "follow_up": True})
-
-    def test_notes_are_reused_updated_and_only_one_notebook_remains(self):
-        runner, _, sandboxes = self._make_runner([])
-        notes = NotesStore(self.root / "runs", "303839")
-        first = "## Current decisions\n- Navy, quantity unconfirmed. Source: task-1."
-        second = "## Current decisions\n- Black, 75 confirmed. Source: task-2."
-        with self._notes_output(runner, first):
-            result = runner.run(SashaTask("303839", "task-1", TASK_URL, "Navy, about 60."))
-        self.assertEqual(result.status, "completed")
-        self.assertEqual(notes.load(), first)
-        with self._notes_output(runner, second):
-            result = runner.run(SashaTask("303839", "task-2", TASK_URL, "Black, exactly 75."))
-        self.assertEqual(result.status, "completed")
-        self.assertIn(first, sandboxes[1].task_message)
-        self.assertIn("Navy, about 60.", sandboxes[1].task_message)
-        self.assertIn("Originating task ID: task-2", sandboxes[1].task_message)
-        self.assertEqual(notes.load(), second)
-        self.assertEqual(list((self.root / "runs").rglob("deal_*_notes.md")), [notes.path])
-        self.assertFalse((self.root / "runs" / "locks").exists())
-        self.assertEqual(list((self.root / "runs").rglob("*.lock")), [])
-        saved = json.loads(runner.last_conversation_file.read_text())
-        self.assertEqual(saved["conversation_history"][1]["delivery_status"], "generated")
-
-    def test_notes_failure_preserves_successful_draft_and_previous_notes(self):
-        progress = []
-        runner, _, _ = self._make_runner(progress)
-        notes = NotesStore(self.root / "runs", "303839")
-        notes.path.parent.mkdir(parents=True)
-        notes.path.write_text("Original", encoding="utf-8")
-        for candidate in (None, b"", b"\xff", b"x" * 16385):
-            with self.subTest(candidate=candidate and candidate[:10]):
-                with self._notes_output(runner, candidate):
-                    result = runner.run(SashaTask("303839", "task-1", TASK_URL))
-                self.assertEqual(result.status, "completed")
-                self.assertEqual(result.message_html, MESSAGE)
-                self.assertEqual(notes.load(), "Original")
-                self.assertFalse((runner.last_run_directory / "workspace" / NOTES_OUTPUT_NAME).exists())
-        self.assertTrue(any("Could not update deal notes" in message for message in progress))
-
-    def test_notes_save_failure_warns_without_failing_the_sales_result(self):
-        progress = []
-        runner, _, _ = self._make_runner(progress)
-        with self._notes_output(runner, "New notes"):
-            with patch.object(NotesStore, "publish", side_effect=OSError("disk full")):
-                result = runner.run(SashaTask("303839", "task-1", TASK_URL))
-        self.assertEqual(result.status, "completed")
-        self.assertTrue(any("disk full" in message for message in progress))
-        self.assertFalse((runner.last_run_directory / "workspace" / NOTES_OUTPUT_NAME).exists())
-
-    def test_unreadable_notes_are_preserved_and_history_is_still_loaded(self):
-        progress = []
-        runner, _, sandboxes = self._make_runner(progress)
-        notes = NotesStore(self.root / "runs", "303839")
-        notes.path.parent.mkdir(parents=True)
-        notes.path.write_bytes(b"\xff")
-        conversation = ConversationStore(self.root / "runs", "303839")
-        conversation.append_completed_turn([], "Earlier client message", MESSAGE)
-        with self._notes_output(runner, "New notes"):
-            result = runner.run(SashaTask("303839", "task-1", TASK_URL))
-        self.assertEqual(result.status, "completed")
-        self.assertEqual(notes.path.read_bytes(), b"\xff")
-        self.assertIn("Earlier client message", sandboxes[0].task_message)
-        self.assertTrue(any("updates disabled" in message for message in progress))
-        self.assertFalse((runner.last_run_directory / "workspace" / NOTES_OUTPUT_NAME).exists())
-
-    def test_failed_and_cancelled_turns_discard_notes(self):
-        notes = NotesStore(self.root / "runs", "303839")
-        notes.path.parent.mkdir(parents=True)
-        notes.path.write_text("Original", encoding="utf-8")
-        runner, sessions, _ = self._make_runner([])
-        for terminal in ("failed", "cancelled"):
-            sessions.events.values = [
-                {"type": "agent.session.environment.connected"},
-                {"type": f"agent.session.turn.{terminal}"},
-            ]
-            with self._notes_output(runner, "Unfinished notes"):
-                result = runner.run(SashaTask("303839", "task-1", TASK_URL))
-            self.assertEqual(result.status, "failed")
-            self.assertEqual(notes.load(), "Original")
-            self.assertFalse((runner.last_run_directory / "workspace" / NOTES_OUTPUT_NAME).exists())
-
-    def test_conversation_save_failure_does_not_publish_notes(self):
-        runner, _, _ = self._make_runner([])
-        notes = NotesStore(self.root / "runs", "303839")
-        notes.path.parent.mkdir(parents=True)
-        notes.path.write_text("Original", encoding="utf-8")
-        with self._notes_output(runner, "New notes"):
-            with patch.object(ConversationStore, "append_completed_turn", side_effect=OSError("disk full")):
-                result = runner.run(SashaTask("303839", "task-1", TASK_URL))
-        self.assertEqual(result.failure_code, "conversation_error")
-        self.assertEqual(notes.load(), "Original")
-        self.assertFalse((runner.last_run_directory / "workspace" / NOTES_OUTPUT_NAME).exists())
-
-    def test_invalid_result_discards_temporary_notes(self):
-        runner, sessions, _ = self._make_runner([])
-        with self._notes_output(runner, "New notes"):
-            with patch.object(sessions.items, "list", return_value=[]):
-                result = runner.run(SashaTask("303839", "task-1", TASK_URL))
-        self.assertEqual(result.status, "failed")
-        self.assertFalse(NotesStore(self.root / "runs", "303839").path.exists())
-        self.assertFalse((runner.last_run_directory / "workspace" / NOTES_OUTPUT_NAME).exists())
-
-    def test_unexpected_error_removes_temporary_notes(self):
-        runner, _, _ = self._make_runner([])
-        with self._notes_output(runner, "Unfinished notes"):
-            with patch.object(runner, "_clean_up", side_effect=RuntimeError("unexpected error")):
-                with self.assertRaisesRegex(RuntimeError, "unexpected error"):
-                    runner.run(SashaTask("303839", "task-1", TASK_URL))
-        self.assertFalse((runner.last_run_directory / "workspace" / NOTES_OUTPUT_NAME).exists())
-        self.assertFalse(NotesStore(self.root / "runs", "303839").path.exists())
-
-    def test_followup_context_supplies_signals_instead_of_a_stage(self):
-        history = (
-            {"role": "sasha", "content": "<p>Hi</p>", "date": "2026-10-01"},
-            {"role": "client", "content": "Navy please", "date": "2026-10-03"},
-            {"role": "sasha", "content": "<p>Here is a proof</p>", "date": "2026-10-05"},
-        )
-        task = SashaTask("303839", "follow-up", TASK_URL, turn_type="follow_up",
-                         as_of_date="2026-10-13", conversation_history=history,
-                         deal_notes="## Current decisions\n- Stage 1 follow-up sent: curated_design_idea\n")
+    def test_followup_context_preserves_requested_stage_and_dates(self):
+        task = SashaTask("303839", "follow-up", TASK_URL, turn_type="follow_up", follow_up_stage=1,
+                         as_of_date="2026-10-13", days_since_client_reply=99)
         message = OpenAIManagedRunner._build_task_message(task, application_environment())
-        self.assertIn("Use the `account-manager` skill", message)
-        self.assertIn("Days since client reply: 10 day(s)", message)
-        self.assertIn("Days since Sasha last wrote: 8 day(s)", message)
-        self.assertIn("Conversation started: 2026-10-01 (12 day(s) ago)", message)
-        self.assertIn("1 Sasha message(s) since the client last wrote", message)
-        self.assertIn("used tactics: curated_design_idea", message)
-        self.assertIn("use the `followup` skill", message)
-        self.assertIn("Empty local history means no reply", message)
-        self.assertNotIn("stage", message.split("Follow-up signals")[1].split("Empty local")[0].lower())
-        supplied = OpenAIManagedRunner._build_task_message(
-            replace(task, days_since_client_reply=99), application_environment())
-        self.assertIn("Days since client reply: 99 day(s) (supplied for this run)", supplied)
-
-    def test_followup_history_survives_responses_and_only_generated_drafts_append(self):
-        notes = NotesStore(self.root / "runs", "303839")
-        notes.path.parent.mkdir(parents=True)
-        prior = "- Stage 1 follow-up sent: curated_design_idea"
-        entry = "- Follow-up generated: close_the_loop"
-        notes.path.write_text("## Current decisions\n" + prior + "\n")
-        runner, _, _ = self._make_runner([])
-        task = SashaTask("303839", "follow-up", TASK_URL, turn_type="follow_up",
-                         as_of_date="2026-10-13")
-        with self._notes_output(runner, "## Current decisions\n" + entry):
-            result = runner.run(task)
-        self.assertEqual(result.status, "completed")
-        self.assertIn(prior, notes.load())
-        self.assertIn(entry, notes.load())
-        with self._notes_output(runner, "## Current decisions\n- Quantity 40."):
-            runner.run(SashaTask("303839", "response", TASK_URL, "Quantity 40"))
-        self.assertIn(prior, notes.load())
-        self.assertIn(entry, notes.load())
-        history = ConversationStore(self.root / "runs", "303839").load()
-        self.assertTrue(all(item["delivery_status"] == "generated" for item in history if item["role"] == "sasha"))
-        self.assertEqual(history[0]["date"], "2026-10-13")  # The follow-up's business date.
-        self.assertRegex(history[-1]["date"], r"^\d{4}-\d{2}-\d{2}$")
-
-    def test_no_reply_and_failed_followups_do_not_consume_tactics(self):
-        runner, sessions, _ = self._make_runner([])
-        for status in ("completed", "failed"):
-            with self.subTest(status=status):
-                notes = NotesStore(self.root / "runs", "303839")
-                notes.path.parent.mkdir(parents=True, exist_ok=True)
-                original = "## Current decisions\n- Stage 1 follow-up sent: curated_design_idea\n"
-                notes.path.write_text(original)
-                final = sessions.items._final_item()
-                final["content"][0]["text"] = json.dumps({
-                    "deal_id": "303839", "status": status, "message_html": "",
-                    "failure_code": "blocked" if status == "failed" else "",
-                    "failure_message": "Blocked" if status == "failed" else "",
-                })
-                with patch.object(sessions.items, "_final_item", return_value=final):
-                    with self._notes_output(runner, "## Current decisions\n- Follow-up generated: offer_art_team"):
-                        result = runner.run(SashaTask("303839", "follow-up", TASK_URL,
-                            turn_type="follow_up", as_of_date="2026-10-13"))
-                self.assertEqual(result.status, status)
-                self.assertIn("curated_design_idea", notes.load())
-                self.assertNotIn("offer_art_team", notes.load())
-                if status == "failed":
-                    self.assertEqual(notes.load(), original)
-                self.assertEqual(ConversationStore(self.root / "runs", "303839").load(), [])
-
-    def _notes_output(self, runner, content):
-        original_wait = runner._wait_for_turn
-
-        def finish_turn(events):
-            if content is not None:
-                candidate = runner.last_run_directory / "workspace" / NOTES_OUTPUT_NAME
-                candidate.write_bytes(content.encode("utf-8") if isinstance(content, str) else content)
-            original_wait(events)
-
-        return patch.object(runner, "_wait_for_turn", side_effect=finish_turn)
+        self.assertIn("Manually selected follow_up_stage: 1", message)
+        self.assertIn("Business as_of_date: 2026-10-13", message)
+        self.assertIn("days_since_client_reply: 99", message)
+        self.assertIn("Empty database history means no reply", message)
 
     def _make_runner(
         self,
@@ -1426,6 +1105,7 @@ class ManagedRunnerTests(unittest.TestCase):
             create_sandbox,
             progress,
             cost_reporter=cost_reporter,
+            storage_factory=lambda: self.database,
         )
         return runner, sessions, sandboxes
 
