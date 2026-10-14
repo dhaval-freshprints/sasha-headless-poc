@@ -139,6 +139,9 @@ function step(title, state, detail, extra) {
 
 function lookupStep(record) {
   const search = record.deal_search;
+  if (record.source === "internal") {
+    return step("1. Find deal", "info", "Fresh Prints team mail: the sender is not the client, so Deal Manager reads the message.");
+  }
   if (!search) return step("1. Find deal", record.status === "failed" ? "stopped" : "active", "Looking up the sender…");
   if (search.outcome === "found") return step("1. Find deal", "done", `Found deal ${search.deal_id}. ${search.reason}.`);
   const names = search.candidates.map((deal) => `${deal.deal_id} (${deal.stage})`).join(", ");
@@ -309,7 +312,8 @@ function render(record) {
   const handoff = document.querySelector("#inbound-handoff");
   if (opening) {
     const from = record.input?.phone || record.input?.email || "client";
-    handoff.textContent = `Matched deal ${record.deal_id} for ${from}. Opening the normal Account Manager flow…`;
+    const kind = record.source === "internal" ? "team mail from" : "";
+    handoff.textContent = `Matched deal ${record.deal_id} for ${kind ? `${kind} ` : ""}${from}. Opening the normal Account Manager flow…`;
     handoff.classList.remove("hidden");
   } else {
     handoff.classList.add("hidden");
@@ -362,7 +366,7 @@ async function loadHistory() {
     if (!records.length) list.textContent = "No client responses yet.";
     for (const record of records) {
       const item = document.createElement("li");
-      const who = record.input.phone || record.input.email;
+      const who = `${record.input.phone || record.input.email}${record.source === "internal" ? " (team)" : ""}`;
       item.append(link(`/client-response/${record.inbound_id}`,
         `${new Date(record.created_at).toLocaleString()} · ${who} · ${STATUS_LABELS[record.status] || record.status}${record.deal_id ? ` · Deal ${record.deal_id}` : ""}`));
       list.append(item);
