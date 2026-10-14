@@ -11,10 +11,25 @@
   <body>
     <main class="shell">
       <header class="hero">
-        <a class="brand" href="/"><span class="brand-mark">S</span><span><span class="eyebrow">Fresh Prints</span><strong>Account Manager Console</strong></span></a>
+        <a class="brand" href="/">
+          <span class="brand-mark">S</span>
+          <span>
+            <span class="eyebrow">Fresh Prints</span>
+            <strong>Account Manager Console</strong>
+          </span>
+        </a>
+        <nav class="app-nav" aria-label="Primary">
+          <a href="/">Deals</a>
+          <a href="/client-response">New client message</a>
+        </nav>
       </header>
-      <a class="back-link" href="/">← Sales workspace</a>
-      <div class="page-heading"><div><p class="eyebrow">Message routing</p><h1>Deal Manager Agent</h1><p class="subtitle">Enter an email to find the existing deal it belongs to.</p></div></div>
+      <div class="page-heading">
+        <div>
+          <p class="eyebrow">Message routing</p>
+          <h1>Find a deal</h1>
+          <p class="subtitle">Advanced lookup only. For the normal path (find deal → open Account Manager), use <a href="/client-response">New client message</a>.</p>
+        </div>
+      </div>
       <section class="card">
         <form id="lookup-form">
           <label for="sender-email">Sender email</label>
@@ -34,7 +49,10 @@
         <div id="lookup-result" class="hidden">
           <h2 id="lookup-answer"></h2>
           <p id="lookup-reason"></p>
-          <button id="copy-deal" class="hidden" type="button">Copy Deal ID</button>
+          <div id="lookup-actions" class="lookup-actions hidden">
+            <a id="open-deal" class="button-link" href="#">Open deal</a>
+            <button id="copy-deal" type="button">Copy Deal ID</button>
+          </div>
           <p id="lookup-next"></p>
           <div id="lookup-candidates"></div>
           <details><summary>Evidence and structured result</summary><pre id="lookup-json"></pre></details>

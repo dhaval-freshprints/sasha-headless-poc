@@ -20,6 +20,7 @@ from deal_manager_agent.settings import DealManagerSettings
 from webapp.deal_manager_jobs import DealManagerJobs
 from webapp.deals import DealStore
 from webapp.jobs import JobManager
+from webapp.tests.helpers import PassThroughResolver
 
 
 # Importing the legacy app creates its default managers. Keep those out of live lookup storage.
@@ -205,7 +206,7 @@ class WebLookupTests(unittest.TestCase):
         self.lookups = DealManagerJobs(self.root / "lookups", lambda write: self.runner)
         self.sales = JobManager(self.root / "sales")
         self.deals = DealStore(self.root / "deals")
-        self.client = TestClient(create_app(self.sales, self.deals, self.lookups))
+        self.client = TestClient(create_app(self.sales, self.deals, self.lookups, deal_resolver=PassThroughResolver()))
         self.client.__enter__()
         self.addCleanup(self.client.__exit__, None, None, None)
 

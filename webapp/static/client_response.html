@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>New client message</title>
+    <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="/static/styles.css">
+    <script src="/static/client_response.js" defer></script>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="hero">
+        <a class="brand" href="/">
+          <span class="brand-mark">S</span>
+          <span>
+            <span class="eyebrow">Fresh Prints</span>
+            <strong>Account Manager Console</strong>
+          </span>
+        </a>
+        <nav class="app-nav" aria-label="Primary">
+          <a href="/">Deals</a>
+          <a href="/client-response" aria-current="page">New client message</a>
+        </nav>
+      </header>
+
+      <div class="page-heading">
+        <div>
+          <p class="eyebrow">Start here when you do not have a deal ID</p>
+          <h1>New client message</h1>
+          <p class="subtitle">Paste the email or SMS. We find the deal, then open the normal Account Manager run with that message.</p>
+        </div>
+      </div>
+
+      <section id="compose-card" class="card">
+        <ol class="flow-steps flow-steps-compact" aria-label="How it works">
+          <li><strong>1. Paste the message</strong><p class="step-detail">Email or SMS from the client.</p></li>
+          <li><strong>2. We find the deal</strong><p class="step-detail">By email/phone first; Deal Manager only if needed.</p></li>
+          <li><strong>3. Account Manager opens</strong><p class="step-detail">Same run page as Deals — with the message already attached.</p></li>
+        </ol>
+
+        <form id="inbound-form">
+          <label for="channel">Channel</label>
+          <select id="channel">
+            <option value="EMAIL">Email</option>
+            <option value="SMS">SMS</option>
+          </select>
+
+          <div id="email-fields">
+            <div class="field-row">
+              <div class="grow">
+                <label for="email">From <span>Client email</span></label>
+                <input id="email" type="email" maxlength="254" placeholder="client@example.com">
+              </div>
+              <div class="grow">
+                <label for="subject">Subject <span>Optional</span></label>
+                <input id="subject" maxlength="1000" placeholder="Re: Revision Request on Proof…">
+              </div>
+            </div>
+            <label for="email-body">Message</label>
+            <textarea id="email-body" rows="6" maxlength="20000" placeholder="Paste the email here"></textarea>
+          </div>
+
+          <div id="sms-fields" class="hidden">
+            <label for="phone">From <span>Client phone, e.g. +14155550100 or 4155550100</span></label>
+            <input id="phone" maxlength="32" placeholder="+14155550100">
+            <label>Messages <span>In the order received</span></label>
+            <div id="sms-messages" class="field-group"></div>
+            <button id="add-message" class="secondary" type="button">Add another message</button>
+          </div>
+
+          <details>
+            <summary>Advanced: thread and message IDs</summary>
+            <label for="thread-id">Thread ID <span>Optional</span></label>
+            <input id="thread-id" maxlength="500" placeholder="provider-thread-id">
+            <label for="message-id">Message ID <span>Optional. Reusing one returns the existing result instead of starting again.</span></label>
+            <input id="message-id" maxlength="500" placeholder="provider-message-id">
+            <p class="field-hint">Same payload as <code>POST /api/inbound</code>:</p>
+            <pre id="payload-preview"></pre>
+          </details>
+
+          <button id="inbound-submit" type="submit">Find deal and open Account Manager</button>
+        </form>
+        <p id="inbound-error" class="error hidden" role="alert"></p>
+      </section>
+
+      <section id="inbound-run" class="card hidden" aria-live="polite">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Finding the deal</p>
+            <h2 id="inbound-answer"></h2>
+          </div>
+          <span id="inbound-status" class="status"></span>
+        </div>
+        <p id="inbound-reason" class="subtitle"></p>
+        <p id="inbound-handoff" class="handoff-banner hidden" role="status"></p>
+        <ol id="inbound-steps" class="flow-steps"></ol>
+        <div id="inbound-actions" class="lookup-actions hidden"></div>
+
+        <section id="additional-message-section" class="hidden">
+          <h2>Additional messages</h2>
+          <ol id="additional-message-list" class="additional-message-list"></ol>
+          <form id="additional-message-form">
+            <label for="additional-message-text">Another message from the client</label>
+            <textarea id="additional-message-text" rows="3" maxlength="20000" required placeholder="Actually, black shirts and quantity 60."></textarea>
+            <p id="additional-message-state"></p>
+            <div id="additional-message-error" class="error hidden" role="alert"></div>
+            <button id="additional-message-button" type="submit" disabled>Send additional message</button>
+          </form>
+        </section>
+        <details><summary>Full record</summary><pre id="inbound-json"></pre></details>
+      </section>
+
+      <section class="card">
+        <h2>Recent messages</h2>
+        <ul id="inbound-history" class="artifact-list"></ul>
+      </section>
+    </main>
+  </body>
+</html>

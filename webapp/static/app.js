@@ -8,6 +8,7 @@ const addDealForm = document.querySelector("#add-deal-form");
 const addDealButton = document.querySelector("#add-deal-button");
 const addDealError = document.querySelector("#add-deal-error");
 const runForm = document.querySelector("#run-form");
+const channelSelect = document.querySelector("#cr-channel");
 const runFormCard = document.querySelector("#run-form-card");
 const submitButton = document.querySelector("#submit-button");
 const formError = document.querySelector("#form-error");
@@ -25,6 +26,7 @@ addDealForm.addEventListener("submit", addDeal);
 runForm.addEventListener("submit", startRun);
 document.querySelector("#additional-message-form").addEventListener("submit", sendAdditionalMessage);
 additionalMessageText.addEventListener("input", saveAdditionalMessageDraft);
+channelSelect.addEventListener("change", updateChannelFields);
 document.querySelector("#start-run-button").addEventListener("click", showRunForm);
 document.querySelector("#cancel-run-button").addEventListener("click", hideRunForm);
 document.addEventListener("click", handleAppLink);
@@ -59,24 +61,23 @@ async function addDeal(event) {
 async function startRun(event) {
   event.preventDefault();
   hideError(formError);
+
+  let payload;
+  try {
+    payload = buildRunPayload();
+  } catch (error) {
+    showError(formError, error.message);
+    return;
+  }
+
   submitButton.disabled = true;
   submitButton.textContent = "Starting…";
-
-  const message = document.querySelector("#client-message").value;
-  const fileUrls = document.querySelector("#file-urls").value
-    .split("\n")
-    .map((value) => value.trim())
-    .filter(Boolean);
 
   try {
     const response = await fetch("/api/runs", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({
-        deal_id: currentDealId,
-        client_message: message,
-        file_urls: fileUrls,
-      }),
+      body: JSON.stringify(payload),
     });
     const run = await readResponse(response);
     clearRunForm();
@@ -87,6 +88,41 @@ async function startRun(event) {
     submitButton.disabled = false;
     submitButton.textContent = "Run Account Manager";
   }
+}
+
+function buildRunPayload() {
+  // Account Manager chooses its work from the deal; a client message is optional context.
+  const body = document.querySelector("#cr-body").value.trim();
+  return {
+    deal_id: currentDealId,
+    client_message: body ? composeClientMessage() : null,
+    file_urls: splitLines(document.querySelector("#cr-file-urls").value),
+  };
+}
+
+function composeClientMessage() {
+  const channel = channelSelect.value;
+  const isEmail = channel === "email";
+  const envelope = [["Channel", channel === "sms" ? "SMS" : "Email"]];
+  envelope.push(["From", document.querySelector("#cr-from").value.trim()]);
+  envelope.push(["To", document.querySelector("#cr-to").value.trim()]);
+  if (isEmail) {
+    envelope.push(["Cc", document.querySelector("#cr-cc").value.trim()]);
+    envelope.push(["Subject", document.querySelector("#cr-subject").value.trim()]);
+  }
+  return joinEnvelope(envelope, document.querySelector("#cr-body").value.trim());
+}
+
+function joinEnvelope(fields, body) {
+  const header = fields
+    .filter(([, value]) => value)
+    .map(([label, value]) => `${label}: ${value}`)
+    .join("\n");
+  return header ? `${header}\n\n${body}` : body;
+}
+
+function splitLines(value) {
+  return value.split("\n").map((line) => line.trim()).filter(Boolean);
 }
 
 function loadPageFromUrl() {
@@ -237,6 +273,52 @@ function renderDealHistory(deal) {
   }
 }
 
+function renderDealCheck(check) {
+  const element = document.querySelector("#run-deal-check");
+  element.classList.toggle("hidden", !check);
+  if (!check) return;
+  const kind = check.workflow === "outreach" ? "Outreach" : "Client response";
+  const merged = check.consolidation?.merged_deal_ids || [];
+  const lost = check.duplicate_guard?.lost_deal_ids || [];
+  const changes = [
+    merged.length ? `Marked lost after merging: ${merged.join(", ")}.` : "",
+    lost.length ? `Duplicates marked lost: ${lost.join(", ")}.` : "",
+  ].filter(Boolean).join(" ");
+  element.textContent = `Deal check (${kind}): ${check.summary}${changes ? ` ${changes}` : ""}`;
+}
+
+function readHandoff(runId) {
+  const raw = sessionStorage.getItem(`am-handoff-${runId}`);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch (_) {
+    return null;
+  }
+}
+
+function renderHandoff(run) {
+  const banner = document.querySelector("#run-handoff");
+  const handoff = readHandoff(run.run_id);
+  if (!handoff) {
+    banner.classList.add("hidden");
+    return;
+  }
+  const from = handoff.from || "client";
+  const channel = handoff.channel || "Email";
+  const subject = handoff.subject ? ` · ${handoff.subject}` : "";
+  setText("#run-handoff-title", `Came from New client message · Deal ${handoff.deal_id || run.deal_id}`);
+  setText(
+    "#run-handoff-detail",
+    `${handoff.how || "Deal found"} for ${channel} from ${from}${subject}. Account Manager is handling this message on the normal run page.`,
+  );
+  const messageBox = document.querySelector("#run-handoff-message");
+  const preview = (run.client_message || "").trim();
+  messageBox.classList.toggle("hidden", !preview);
+  messageBox.textContent = preview ? `Client message:\n${preview}` : "";
+  banner.classList.remove("hidden");
+}
+
 function renderRun(run) {
   if (!currentRun || currentRun.run_id !== run.run_id) {
     const draft = readAdditionalMessageDraft(run.run_id);
@@ -249,6 +331,8 @@ function renderRun(run) {
   document.querySelector("#back-to-deal").href = `/deals/${run.deal_id}`;
   setText("#run-id", shortId(run.run_id));
   setText("#run-deal-id", run.deal_id);
+  renderHandoff(run);
+  renderDealCheck(run.deal_check);
   setText("#elapsed", formatDuration(currentElapsedSeconds(run)));
   setText("#started-at", formatDate(run.started_at));
   setText("#finished-at", formatDate(run.finished_at));
@@ -398,7 +482,15 @@ function renderArtifacts(run) {
 
 function showRunForm() {
   runFormCard.classList.remove("hidden");
-  document.querySelector("#client-message").focus();
+  updateChannelFields();
+  document.querySelector("#cr-body").focus();
+}
+
+function updateChannelFields() {
+  const emailOnly = channelSelect.value === "email";
+  document
+    .querySelectorAll("#client-response-fields .cr-email-only")
+    .forEach((element) => element.classList.toggle("hidden", !emailOnly));
 }
 
 function runTitle(run) {
@@ -406,10 +498,17 @@ function runTitle(run) {
     case "outreach":
       return "Initial outreach";
     case "client-response-orchestrator":
-      return truncate(run.client_message || "Client response", 72);
+      return truncate(displayClientMessage(run.client_message) || "Client response", 72);
     default:
-      return truncate(run.client_message || "Account Manager", 72);
+      if (!run.client_message) return "No client message";
+      return truncate(displayClientMessage(run.client_message), 72);
   }
+}
+
+function displayClientMessage(message) {
+  if (!message) return "";
+  const parts = message.split("\n\n");
+  return parts.length > 1 ? parts.slice(1).join("\n\n") : message;
 }
 
 function hideRunForm() {
@@ -419,6 +518,7 @@ function hideRunForm() {
 
 function clearRunForm() {
   runForm.reset();
+  updateChannelFields();
   hideRunForm();
 }
 

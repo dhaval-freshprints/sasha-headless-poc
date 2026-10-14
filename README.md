@@ -150,6 +150,58 @@ list. If the web server restarts, completed jobs remain viewable. A job that was
 queued or running when the server stopped is marked failed because its original
 background worker no longer exists.
 
+### Two sections
+
+- **Deals** (`/`): start Account Manager on a deal you already know. The deal is checked
+  first, like step 3 below. A run with a client message uses the client-response rules; a
+  run without one uses Sasha v3's outreach rules: its duplicate guard (other active deals
+  for the client with the same title and proof set are Zap duplicates; the one Sasha wrote
+  to last survives, else the oldest created within `DUPLICATE_DEAL_RECENCY_DAYS`, default
+  45, else this deal, and the rest are marked lost), then consolidation, and outreach is
+  skipped if the kept deal already had Sasha outreach. If the check stops or skips the run,
+  the form says why and nothing starts; otherwise the run page shows the check, and the run
+  may be on the kept deal rather than the one you opened.
+- **Client response without deal ID** (`/client-response`): paste a client email or SMS.
+  The same flow runs for the webhook `POST /api/inbound`, which another service calls
+  for every inbound message.
+
+Client response without deal ID, in order:
+
+1. **Find deal by email or phone** (`deal_manager_agent/deal_lookup.py`, no LLM). The
+   sender's user record -> its deals that are not deleted, not `won`/`lost` and managed
+   by Sasha (`SASHA_USER_ID`, default 297140). One deal -> use it.
+   Several -> the one Sasha last wrote to.
+2. **Deal Manager** runs only when step 1 finds no single deal, and reads the message to
+   find the deal. Only a `matched` decision continues.
+3. **Validate and consolidate** (`deal_manager_agent/deal_resolution.py`), ported from Sasha
+   v3 `deal_resolution` for CLIENT_RESPONSE. The deal must be active for its client; a
+   `won` deal still proceeds; anything else stops for a person. If the client has several
+   active deals, the kept deal is the one Sasha last wrote to (else the found deal); the
+   other deals' proofs are linked onto it and the other deals are **marked lost in the
+   CRM** through the v3 edit-deal API, then Account Manager runs on the kept deal.
+   These CRM writes need `V3_API_BASE_URL`, `JWT_AUTH_KEY` and `SASHA_ADMIN_USER` (the
+   same values Sasha v3 uses). Without them a client with several active deals stops with
+   `crm_writes_not_configured` and nothing is written. Not ported: v3's Sasha-database
+   side effects of marking a deal lost (stopping its follow-up schedule and updating its
+   deal context) and its Slack alerts.
+4. **Account Manager** runs on the deal with the message as the client message.
+
+**More messages while it runs.** Like additional messages on a run, a client can send
+more while the flow is open: `POST /api/inbound/{inbound_id}/messages` with `{"text": "..."}`,
+or **Send additional message** on the page. Until Account Manager starts, messages are
+held and sent with the first message. After it starts, each one goes to the running
+Account Manager as an additional message, retried until the run accepts messages. Once the
+flow is handed off or the run has finished, new messages are refused (409); send them as a
+new client response. The webhook does this by itself: an SMS from the same phone, or an
+email on the same thread, joins the open conversation (`"attached": true`) instead of
+starting a second flow.
+
+Webhook payload: `email`, `subject` and `body` (a string) for email; `phone` and `body`
+(an array of messages in order) for SMS. `thread_id` and `message_id` are optional; a
+repeated `message_id` returns the existing record. Poll `GET /api/inbound/{inbound_id}`.
+Database settings may use the `NON_PROD_CRM_*` / `NON_PROD_SASHA_DB` names; the host
+maps them for the lookup, and the agent container receives resolved values.
+
 ## Time limit
 
 Sasha may work for up to 20 minutes per managed turn. Change

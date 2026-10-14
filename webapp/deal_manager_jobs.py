@@ -22,15 +22,19 @@ class DealManagerJobs:
         self.lock = threading.RLock()
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="deal-manager-agent")
         self.jobs = {}
+        self.callbacks = {}
         self.load_saved()
 
-    def submit(self, request: LookupRequest):
+    def submit(self, request: LookupRequest, on_finished=None):
+        """Queue a lookup. on_finished(job) runs once it completes or fails (not after a restart)."""
         lookup_id = uuid.uuid4().hex
         job = {"lookup_id": lookup_id, "input": request.model_dump(), "status": "queued",
                "created_at": now(), "finished_at": None, "progress": [],
                "result": None, "error": None, "usage": None}
         with self.lock:
             self.jobs[lookup_id] = job
+            if on_finished:
+                self.callbacks[lookup_id] = on_finished
             self.save(job)
         self.executor.submit(self.execute, lookup_id)
         return self.get(lookup_id)
@@ -58,6 +62,13 @@ class DealManagerJobs:
                         finished_at=now(), usage=getattr(runner, "usage", None))
         except Exception as error:
             self.update(lookup_id, status="failed", error=str(error), finished_at=now())
+        with self.lock:
+            on_finished = self.callbacks.pop(lookup_id, None)
+        if on_finished:
+            try:
+                on_finished(self.get(lookup_id))
+            except Exception:
+                pass  # A caller's hand-off failure must not change the saved lookup.
 
     def add_progress(self, lookup_id, message):
         with self.lock:

@@ -46,13 +46,51 @@ textarea {
 .run-heading,
 .section-heading {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 24px;
+  gap: 16px 24px;
 }
 
 .hero {
-  margin-bottom: 54px;
+  margin-bottom: 36px;
+}
+
+.app-nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.app-nav a {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 8px 14px;
+  color: var(--muted);
+  font-weight: 650;
+  text-decoration: none;
+}
+
+.app-nav a:hover {
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.app-nav a[aria-current="page"] {
+  color: var(--green-dark);
+  border-color: rgba(20, 108, 67, 0.22);
+  background: var(--green-soft);
+}
+
+.lookup-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin: 16px 0;
 }
 
 .brand {
@@ -331,6 +369,26 @@ textarea {
   resize: vertical;
 }
 
+.field-group {
+  display: grid;
+  gap: 12px;
+}
+
+.field-hint {
+  margin: 4px 0 0;
+  font-weight: 500;
+  color: var(--muted, #52635a);
+}
+
+.field-row {
+  display: flex;
+  gap: 12px;
+}
+
+.field-row .grow {
+  min-width: 0;
+}
+
 button,
 .button-link {
   display: inline-flex;
@@ -538,4 +596,80 @@ pre {
     display: block;
     margin: 4px 0 0;
   }
+}
+
+.flow-steps {
+  display: grid;
+  gap: 10px;
+  margin: 18px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.flow-steps li {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 12px 14px;
+  background: #fff;
+}
+
+.flow-steps .step-detail {
+  margin: 4px 0 0;
+  color: var(--muted);
+}
+
+.flow-steps li a {
+  display: inline-block;
+  margin-top: 6px;
+}
+
+.flow-steps li[data-state="done"] {
+  border-color: rgba(20, 108, 67, 0.25);
+  background: var(--green-soft);
+}
+
+.flow-steps li[data-state="active"] {
+  background: var(--amber-soft);
+}
+
+.flow-steps li[data-state="stopped"] {
+  background: var(--red-soft);
+}
+
+.flow-steps li[data-state="skipped"],
+.flow-steps li[data-state="pending"] {
+  opacity: 0.6;
+}
+
+.handoff-banner {
+  margin: 0 0 18px;
+  border: 1px solid rgba(20, 108, 67, 0.22);
+  border-radius: 14px;
+  padding: 14px 16px;
+  color: var(--green-dark);
+  background: var(--green-soft);
+}
+
+.handoff-banner strong {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.handoff-banner .step-detail {
+  margin: 0;
+  color: var(--ink);
+}
+
+.handoff-message {
+  margin: 10px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  font-size: 0.95rem;
+  line-height: 1.45;
+}
+
+.flow-steps-compact {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  margin-top: 0;
 }

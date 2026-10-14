@@ -19,6 +19,9 @@ from openai_managed.task import normalize_client_message
 from .deals import Deal, DealStore
 from .jobs import JobManager, WebRun
 from .deal_manager_jobs import DealManagerJobs
+from .inbound import InboundJobs, InboundRequest
+from deal_manager_agent.deal_lookup import ActiveDealFinder
+from deal_manager_agent.deal_resolution import DealResolver
 from deal_manager_agent.models import LookupRequest
 from deal_manager_agent.settings import storage_directory
 
@@ -60,6 +63,10 @@ class RunRequest(BaseModel):
         return cleaned
 
 
+class InboundMessageRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=20_000)
+
+
 class DealRequest(BaseModel):
     deal_id: str = Field(pattern=r"^[0-9]+$", min_length=1, max_length=20)
 
@@ -80,6 +87,8 @@ def create_app(
     job_manager: JobManager | None = None,
     deal_store: DealStore | None = None,
     lookup_manager: DealManagerJobs | None = None,
+    inbound_manager: InboundJobs | None = None,
+    deal_resolver: DealResolver | None = None,
 ) -> FastAPI:
     load_dotenv(ROOT / ".env")
     manager = job_manager or JobManager(_jobs_directory())
@@ -87,16 +96,30 @@ def create_app(
     lookups = lookup_manager or DealManagerJobs(storage_directory() / "jobs")
     _backfill_deals(deals, manager.list_all())
 
+    resolver = deal_resolver or DealResolver()
+
+    def start_account_manager(deal_id: str, client_message: str, deal_check: dict | None = None) -> dict:
+        deals.touch(deal_id)
+        return manager.submit(deal_id, client_message, [], deal_check=deal_check).to_dict()
+
+    inbound = inbound_manager or InboundJobs(
+        storage_directory() / "inbound", ActiveDealFinder(), lookups, start_account_manager, resolver,
+        send_message=manager.submit_message,
+        run_state=lambda run_id: manager.get(run_id).to_dict(),
+    )
+
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         yield
         manager.shutdown()
         lookups.shutdown()
+        inbound.shutdown()
 
     app = FastAPI(title="Account Manager", lifespan=lifespan)
     app.state.job_manager = manager
     app.state.deal_store = deals
     app.state.lookup_manager = lookups
+    app.state.inbound_manager = inbound
     app.mount("/static", StaticFiles(directory=STATIC_DIRECTORY), name="static")
 
     @app.get("/", response_class=FileResponse)
@@ -122,6 +145,38 @@ def create_app(
             return lookups.get(lookup_id)
         except KeyError as error:
             raise HTTPException(status_code=404, detail="Lookup not found") from error
+
+    @app.get("/client-response", response_class=FileResponse)
+    @app.get("/client-response/{inbound_id}", response_class=FileResponse)
+    def client_response_page() -> Path:
+        return STATIC_DIRECTORY / "client_response.html"
+
+    @app.post("/api/inbound", status_code=202)
+    def receive_inbound(request: InboundRequest) -> dict:
+        """Webhook: a client email or SMS without a deal ID."""
+        return inbound.submit(request)
+
+    @app.get("/api/inbound")
+    def list_inbound() -> list[dict]:
+        return inbound.list_all()
+
+    @app.get("/api/inbound/{inbound_id}")
+    def get_inbound(inbound_id: str) -> dict:
+        try:
+            return inbound.get(inbound_id)
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail="Inbound message not found") from error
+
+    @app.post("/api/inbound/{inbound_id}/messages", status_code=202)
+    def add_inbound_message(inbound_id: str, request: InboundMessageRequest) -> dict:
+        """Another client message while the flow runs: held until Account Manager starts,
+        then sent to the running Account Manager as an additional message."""
+        try:
+            return inbound.add_message(inbound_id, request.text)
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail="Inbound message not found") from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
 
     @app.get("/runs/{run_id}", response_class=FileResponse)
     def run_page(run_id: str) -> Path:
@@ -153,11 +208,19 @@ def create_app(
 
     @app.post("/api/runs", status_code=202)
     def create_run(request: RunRequest) -> dict:
-        deals.touch(request.deal_id)
+        # Every run is checked first, as in Sasha v3: with a client message it is a client
+        # response, without one an outreach. Account Manager may run on a merged deal.
+        workflow = "client_response" if request.client_message else "outreach"
+        check = resolver.resolve(request.deal_id, workflow)
+        if check.status != "proceed":
+            verb = "skipped" if check.status == "skipped" else "not started"
+            raise HTTPException(status_code=409, detail=f"Account Manager {verb}: {check.summary}")
+        deals.touch(check.deal_id)
         run = manager.submit(
-            request.deal_id,
+            check.deal_id,
             request.client_message,
             request.file_urls,
+            deal_check=check.to_dict(),
         )
         return run.to_dict()
 

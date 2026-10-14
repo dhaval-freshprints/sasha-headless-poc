@@ -42,12 +42,14 @@ async function main() {
     await page.goto('http://account-manager.test/deals/900001');
     await page.getByRole('button', { name: 'Start new run', exact: true }).click();
     assert.equal(await page.locator('#workflow').count(), 0);
-    assert.equal(await page.locator('#client-message').getAttribute('required'), null);
+    assert.equal(await page.locator('#run-type').count(), 0);
+    assert.equal(await page.locator('#client-response-fields').isVisible(), true);
     await page.getByRole('button', { name: 'Run Account Manager', exact: true }).click();
     await page.locator('#additional-message-button:not([disabled])').waitFor();
     assert.equal(submitted.deal_id, '900001');
     assert.equal('workflow' in submitted, false);
-    assert.equal(submitted.client_message, '');
+    assert.equal(submitted.client_message, null);
+    assert.deepEqual(submitted.file_urls, []);
     await page.locator('#additional-message-text').fill('Are samples free?');
     await page.getByRole('button', { name: 'Send Additional Message', exact: true }).click();
     await page.getByText('Are samples free?\nAccepted', { exact: true }).waitFor();
@@ -67,7 +69,7 @@ async function main() {
     await page.reload();
     await page.getByText('Fixture browser failure', { exact: true }).waitFor();
     assert.equal(await page.locator('#no-reply-needed').isVisible(), false);
-    console.log('PASS: optional input, removed selector, additional messages, no reply, draft preview, and failure rendering');
+    console.log('PASS: no run type, optional message, no workflow, additional messages, no reply, draft preview, and failure rendering');
   } finally {
     await browser.close();
   }

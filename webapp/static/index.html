@@ -17,9 +17,11 @@
             <strong>Account Manager Console</strong>
           </span>
         </a>
+        <nav class="app-nav" aria-label="Primary">
+          <a href="/" data-app-link aria-current="page">Deals</a>
+          <a href="/client-response">New client message</a>
+        </nav>
       </header>
-
-      <nav aria-label="Sections"><a href="/deal-manager">Deal Manager Agent →</a></nav>
 
       <section id="dashboard-view" class="view hidden">
         <div class="page-heading">
@@ -65,11 +67,41 @@
             <button id="cancel-run-button" class="text-button" type="button">Cancel</button>
           </div>
           <form id="run-form">
-            <label for="client-message">Client message <span>Optional</span></label>
-            <textarea id="client-message" name="client_message" rows="6" placeholder="What's the price for 40?"></textarea>
+            <p class="field-hint">
+              Account Manager reads this deal's history and decides what to do. Add a client
+              message only if the client just wrote in.
+            </p>
 
-            <label for="file-urls">Artwork URLs <span>Optional—one direct URL per line</span></label>
-            <textarea id="file-urls" name="file_urls" rows="4" placeholder="https://example.com/logo.png"></textarea>
+            <div id="client-response-fields" class="field-group">
+              <label for="cr-channel">Channel</label>
+              <select id="cr-channel">
+                <option value="email" selected>Email</option>
+                <option value="sms">SMS</option>
+              </select>
+
+              <div class="field-row">
+                <div class="grow">
+                  <label for="cr-from">From <span>Client</span></label>
+                  <input id="cr-from" type="text" placeholder="client@example.com or +1 555 123 4567">
+                </div>
+                <div class="grow">
+                  <label for="cr-to">To <span>Sasha inbox</span></label>
+                  <input id="cr-to" type="text" placeholder="sales@freshprints.com">
+                </div>
+              </div>
+
+              <label for="cr-cc" class="cr-email-only">Cc <span>Optional</span></label>
+              <input id="cr-cc" type="text" class="cr-email-only" placeholder="teammate@freshprints.com">
+
+              <label for="cr-subject" class="cr-email-only">Subject <span>Email only</span></label>
+              <input id="cr-subject" type="text" class="cr-email-only" placeholder="Re: Your proof">
+
+              <label for="cr-body">Client message <span>Optional</span></label>
+              <textarea id="cr-body" rows="6" placeholder="What's the price for 40?"></textarea>
+
+              <label for="cr-file-urls">Artwork URLs <span>Optional—one direct URL per line</span></label>
+              <textarea id="cr-file-urls" rows="3" placeholder="https://example.com/logo.png"></textarea>
+            </div>
 
             <div id="form-error" class="error hidden" role="alert"></div>
             <button id="submit-button" type="submit">Run Account Manager</button>
@@ -96,6 +128,14 @@
             </div>
             <span id="status-badge" class="status">Queued</span>
           </div>
+
+          <aside id="run-handoff" class="handoff-banner hidden" aria-live="polite">
+            <strong id="run-handoff-title"></strong>
+            <p id="run-handoff-detail" class="step-detail"></p>
+            <p id="run-handoff-message" class="handoff-message hidden"></p>
+          </aside>
+
+          <p id="run-deal-check" class="field-hint hidden"></p>
 
           <dl class="metrics">
             <div><dt>Elapsed</dt><dd id="elapsed">—</dd></div>
