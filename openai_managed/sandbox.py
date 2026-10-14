@@ -14,6 +14,7 @@ from typing import IO
 from urllib.parse import urlparse
 
 from .task import SashaTask
+from .customer_link_database import load_customer_link_database
 
 
 SAFE_NAME = re.compile(r"[^a-zA-Z0-9_.-]+")
@@ -21,6 +22,8 @@ CAPABILITIES_DIRECTORY = Path(__file__).with_name("capabilities")
 AUTHENTICATION_SCRIPT = Path(__file__).with_name("setup_auth.js")
 BROWSER_KEEPER_SCRIPT = Path(__file__).with_name("browser_keeper.js")
 START_BROWSER_SCRIPT = Path(__file__).with_name("start_browser.js")
+CUSTOMER_LINK_SCRIPT = Path(__file__).with_name("customer_links.py")
+DATABASE_SCRIPT = Path(__file__).resolve().parents[1] / "deal_manager_agent/skills/deal-manager-database/scripts/database.py"
 BROWSER_READY_STATUSES = {"started", "running"}
 
 
@@ -28,6 +31,7 @@ BROWSER_READY_STATUSES = {"started", "running"}
 class SandboxConfig:
     image: str
     runs_directory: Path
+    hq_base_url: str = ""
 
 
 @dataclass(frozen=True)
@@ -92,6 +96,10 @@ class DockerSandbox:
             run_directory=run_directory,
             workspace_directory=workspace_directory,
         )
+        (run_directory / "customer_link_context.json").write_text(
+            json.dumps({"deal_id": task.deal_id, "hq_base_url": self.config.hq_base_url}),
+            encoding="utf-8",
+        )
         return self.handle
 
     def save_task_message(self, task_message: str) -> None:
@@ -108,6 +116,15 @@ class DockerSandbox:
 
     def start_container(self) -> None:
         handle = self._require_handle()
+        database = self._load_customer_link_database() if self.config.hq_base_url else None
+        database_options = []
+        process_environment = dict(os.environ)
+        if database is not None:
+            database_options = ["--mount", f"type=bind,src={database.certificate},dst=/opt/rds-ca.pem,readonly"]
+            database_values = {**database.values, "NON_PROD_SSL_CA": "/opt/rds-ca.pem"}
+            process_environment.update(database_values)
+            for name in database_values:
+                database_options.extend(["--env", name])
         subprocess.run(
             [
                 "docker",
@@ -125,6 +142,13 @@ class DockerSandbox:
                 "--tmpfs",
                 "/browser-profile:rw,nosuid,nodev,noexec,size=512m",
                 "--mount",
+                f"type=bind,src={CUSTOMER_LINK_SCRIPT},dst=/opt/sasha/customer_links.py,readonly",
+                "--mount",
+                f"type=bind,src={DATABASE_SCRIPT},dst=/opt/sasha/database.py,readonly",
+                "--mount",
+                f"type=bind,src={handle.run_directory / 'customer_link_context.json'},dst=/opt/sasha/customer_link_context.json,readonly",
+                *database_options,
+                "--mount",
                 f"type=bind,src={handle.workspace_directory},dst=/workspace",
                 "--mount",
                 f"type=bind,src={AUTHENTICATION_SCRIPT},dst=/opt/sasha/setup_auth.js,readonly",
@@ -139,7 +163,12 @@ class DockerSandbox:
             check=True,
             capture_output=True,
             text=True,
+            env=process_environment,
         )
+
+    @staticmethod
+    def _load_customer_link_database():
+        return load_customer_link_database()
 
     def authenticate(
         self,

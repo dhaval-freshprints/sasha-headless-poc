@@ -14,6 +14,7 @@ APPLICATION_VALUES = {
     "FP_DESIGNS_URL": "https://catalog.example/designs",
     "FP_DESIGN_TOOL_URL": "https://editor.example/",
     "FP_HELP_CENTER_URL": "https://catalog.example/help-center/",
+    "FP_HQ_BASE_URL": "https://hq.example/",
 }
 
 
@@ -32,6 +33,7 @@ class ApplicationEnvironmentTests(unittest.TestCase):
 
     def test_invalid_urls_and_environment_names_are_rejected(self):
         invalid_values = {
+            "FP_HQ_BASE_URL": ["", "/relative", "https://hq.example?x=1", "https://hq.example?", "https://hq.example/#", "https://user:secret@hq.example", "https://hq.example/#design", "https://hq.example:invalid", "https://hq.example/\nother"],
             "FP_ENVIRONMENT": ["../qa", "", "Production", "qa/prod"],
             "FP_BASE_URL": ["/relative", "https://", "https://crm.example?x=1"],
             "FP_CATALOG_URL": ["javascript:alert(1)", "https://user:secret@example.com", "https://example.com:invalid", "https://example.com/#fragment", "https://example.com/\nignore"],
@@ -54,6 +56,7 @@ class ApplicationEnvironmentTests(unittest.TestCase):
             "FP_DESIGNS_URL": "https://store.production.example/inspiration",
             "FP_DESIGN_TOOL_URL": "https://editor.production.example/start",
             "FP_HELP_CENTER_URL": "https://support.production.example/help",
+            "FP_HQ_BASE_URL": "https://hq.production.example",
         }
         with patch.dict(os.environ, values, clear=True):
             application = ApplicationEnvironment.from_environment()

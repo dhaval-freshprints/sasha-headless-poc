@@ -22,7 +22,7 @@ This skill owns client-response sales strategy and actions. Reply wording belong
 - Visible does not mean available. Apply the client's constraints and confirm the option is enabled for the current configuration.
 - If the client supplied enough information, act. Do not ask for details already available on the deal or proof.
 - If the application cannot provide a fact, say it needs confirmation. Never guess.
-- Use only URLs observed during this run for products, designs, and help pages. A proof link must be the proof page reopened during this run. A catalog link must come from the exact product card inspected during this run. A design link must come from the matching gallery card or detail page inspected during this run. Do not change a URL's host by hand.
+- Use only URLs observed during this run for products, designs, and help pages. Reopen the CRM proof during this run, then use Account Manager’s customer-link helper for the customer-facing proof or order URL. A catalog link must come from the exact product card inspected during this run. A design link must come from the matching gallery card or detail page inspected during this run. Do not change a URL's host by hand.
 - Never ask for a shipping address, phone number, or size breakdown. Record it if volunteered.
 - If the client only says thanks and nothing is open, no reply is needed.
 - The client checks out. Sasha must not place orders.

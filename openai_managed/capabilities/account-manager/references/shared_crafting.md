@@ -20,3 +20,10 @@ Read this guide before drafting in the agent-selected workflow. Account Manager 
 - Keep browser mechanics, tool names, internal status, and technical errors out of the client-facing message.
 - Never name Fresh Prints staff, team mailboxes, or internal systems and records such as HQ, tickets, or the word “deal.” Say “your design,” “your proof,” or “your order.”
 - Never quote or forward internal team messages, deal notes, or CRM activity. Pass on only the confirmed facts in your own words.
+
+## Customer proof and order links
+
+- In client responses, follow-ups, and internal-update notifications, use the exact URL returned by Account Manager's customer-link helper after its browser checks. Do not use the CRM proof page as the customer link. Outreach does not use this capability.
+- Embed the URL in `<a href="URL">your design</a>` or a short natural label. Say “order here” only after browser checks confirm checkout readiness; the customer enters quantities by size and places the order.
+- Use one link per proof, with the relevant garment described in plain text. Pending proof links are for status only; explain that the design is still in progress.
+- Preserve the full encoded login parameter. Do not discuss login hashes, databases, HQ, or helper errors in customer copy. Do not promise automatic login when `login_included` is false.

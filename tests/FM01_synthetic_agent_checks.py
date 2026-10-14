@@ -26,7 +26,7 @@ configuration = dotenv_values(ROOT / '.env')
 DIRECTORY = ROOT / 'runs' / 'FM01_synthetic_followup_checks'
 DIRECTORY.mkdir(parents=True, exist_ok=True)
 BASE = 'http://127.0.0.1:8765'
-application = ApplicationEnvironment('synthetic', BASE, BASE + '/login', BASE + '/catalog', BASE + '/designs', BASE + '/design-tool', BASE + '/help')
+application = ApplicationEnvironment('synthetic', BASE, BASE + '/login', BASE + '/catalog', BASE + '/designs', BASE + '/design-tool', BASE + '/help', BASE + '/hq')
 settings = ManagedRunnerSettings(
     model=configuration.get('OPENAI_AGENT_MODEL', 'gpt-6-astra'),
     reasoning_effort=configuration.get('OPENAI_AGENT_REASONING_EFFORT', 'medium'),
@@ -48,6 +48,10 @@ FIXTURE = """<!doctype html><html><head><title>Synthetic CRM</title></head><body
 </body></html>"""
 
 class FixtureSandbox(DockerSandbox):
+    @staticmethod
+    def _load_customer_link_database():
+        return None
+
     def prepare(self, task):
         handle = super().prepare(task)
         (handle.workspace_directory / 'FM01_fixture.html').write_text(FIXTURE.replace("SAMPLE_EVIDENCE", sample_evidence))
