@@ -5,6 +5,11 @@
 3. The deal is validated and the client's active deals consolidated, as Sasha v3 does
    (`deal_manager_agent.deal_resolution`).
 4. Account Manager runs on the resulting deal. Any other outcome is saved for a person.
+
+Internal team mail (an email from INTERNAL_SENDER_DOMAINS, default freshprints.com) skips
+step 1, because a staff address never maps to a client: the Deal Manager agent finds the
+deal from the message. Validation never merges deals for it, it never joins an open
+conversation, and Account Manager handles it with its internal-email skill.
 """
 
 from __future__ import annotations
@@ -23,6 +28,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from deal_manager_agent.deal_lookup import ActiveDealFinder
 from deal_manager_agent.deal_resolution import DealResolver
 from deal_manager_agent.models import LookupRequest, normalize_phone
+from deal_manager_agent.settings import env_value
 
 IN_PROGRESS = {"queued", "resolving", "agent_running", "validating"}
 FINAL_STATUSES = {"run_started", "needs_review", "no_match", "failed"}
@@ -33,6 +39,11 @@ MAX_BODY = 20_000
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def internal_sender_domains() -> set[str]:
+    configured = env_value("INTERNAL_SENDER_DOMAINS") or "freshprints.com"
+    return {domain.strip().lower().lstrip("@") for domain in configured.split(",") if domain.strip()}
 
 
 class InboundRequest(BaseModel):
@@ -72,6 +83,17 @@ class InboundRequest(BaseModel):
     @property
     def text(self) -> str:
         return "\n".join(self.messages)
+
+    @property
+    def is_internal(self) -> bool:
+        """An email from a Fresh Prints team or system address. SMS is always from a client."""
+        if self.phone or not self.email:
+            return False
+        return self.email.rsplit("@", 1)[-1].strip().lower() in internal_sender_domains()
+
+    @property
+    def source(self) -> str:
+        return "internal" if self.is_internal else "client"
 
     def to_lookup(self) -> LookupRequest:
         if not self.text:
@@ -140,14 +162,15 @@ class InboundJobs:
     def submit(self, request: InboundRequest) -> dict:
         """Queue a message. A repeated message_id returns the record already created.
 
-        A message that continues an open conversation (same phone, or same email thread)
-        joins it as an additional message instead of starting a second flow.
+        A client message that continues an open conversation (same phone, or same email
+        thread) joins it as an additional message instead of starting a second flow.
+        Internal team mail always starts its own flow.
         """
         with self.lock:
             existing = self.by_message_id.get(request.message_id or "")
             if existing:
                 return self.get(existing)
-            open_id = self._open_conversation(request)
+            open_id = None if request.is_internal else self._open_conversation(request)
             if open_id:
                 self._add_message(open_id, request.text)
                 if request.message_id:
@@ -156,6 +179,7 @@ class InboundJobs:
             inbound_id = uuid.uuid4().hex
             record = {
                 "inbound_id": inbound_id, "status": "queued", "created_at": utc_now(),
+                "source": request.source,
                 "finished_at": None, "input": request.model_dump(), "deal_id": None,
                 "found_deal_id": None, "resolved_by": None, "deal_search": None,
                 "lookup_id": None, "resolution": None, "run_id": None, "reason": None,
@@ -224,7 +248,7 @@ class InboundJobs:
     def _open_conversation(self, request: InboundRequest) -> str | None:
         for record in sorted(self.records.values(), key=lambda item: item["created_at"], reverse=True):
             earlier = InboundRequest.model_validate(record["input"])
-            if request.continues(earlier) and self._is_open(record, self._run(record)):
+            if not earlier.is_internal and request.continues(earlier) and self._is_open(record, self._run(record)):
                 return record["inbound_id"]
         return None
 
@@ -280,11 +304,12 @@ class InboundJobs:
         try:
             request = InboundRequest.model_validate(self.get(inbound_id)["input"])
             self._update(inbound_id, status="resolving")
-            search = self.finder.find(request.to_lookup())
-            self._update(inbound_id, deal_search=search.to_dict())
-            if search.outcome == "found":
-                self._validate_and_run(inbound_id, request, search.deal_id, "code")
-                return
+            if not request.is_internal:  # A staff address never maps to a client's deal.
+                search = self.finder.find(request.to_lookup())
+                self._update(inbound_id, deal_search=search.to_dict())
+                if search.outcome == "found":
+                    self._validate_and_run(inbound_id, request, search.deal_id, "code")
+                    return
             self._update(inbound_id, status="agent_running")
             self.lookups.submit(
                 request.to_lookup(),
@@ -317,7 +342,8 @@ class InboundJobs:
         try:
             self._update(inbound_id, status="validating", found_deal_id=deal_id,
                          resolved_by=resolved_by)
-            resolution = self.resolver.resolve(deal_id)
+            resolution = self.resolver.resolve(
+                deal_id, "internal_email" if request.is_internal else "client_response")
             self._update(inbound_id, resolution=resolution.to_dict())
             if resolution.status != "proceed":
                 self._update(inbound_id, status="needs_review", finished_at=utc_now(),
@@ -371,6 +397,7 @@ class InboundJobs:
             except (ValueError, KeyError, TypeError, OSError):
                 continue
             record.setdefault("messages", [])
+            record.setdefault("source", InboundRequest.model_validate(record["input"]).source)
             if record["status"] not in FINAL_STATUSES:
                 record.update(status="failed", finished_at=utc_now(),
                               error="The server stopped before this message was routed.")

@@ -4,6 +4,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
+import unittest.mock
 from unittest.mock import Mock
 
 from fastapi.testclient import TestClient
@@ -44,6 +45,8 @@ def wait_for(read, timeout=3):
 EMAIL = {"email": "Client@Example.com", "subject": "Proof", "body": "Where is my proof?",
          "thread_id": "t-1"}
 SMS = {"phone": "+14155550100", "body": ["Hi", "Is my order ready?"], "thread_id": "t-2"}
+INTERNAL = {"email": "art@FreshPrints.com", "subject": "Design Done for Alpha Phi Formal",
+            "body": "Proof #81234 is ready to relay to the client.", "thread_id": "t-art"}
 
 
 class InboundRequestTests(unittest.TestCase):
@@ -82,7 +85,7 @@ class InboundWorkflowTests(unittest.TestCase):
         self.sales = JobManager(root / "sales", lambda write: FakeRunner(write, root, self.release))
         self.deals = DealStore(root / "deals")
         self.resolver = Mock()
-        self.resolver.resolve.side_effect = lambda deal_id: Resolution("proceed", "single_active_deal", deal_id)
+        self.resolver.resolve.side_effect = lambda deal_id, workflow: Resolution("proceed", "single_active_deal", deal_id)
         self.inbound = InboundJobs(
             root / "inbound", self.finder, self.lookups,
             self.start_run, self.resolver,
@@ -118,7 +121,7 @@ class InboundWorkflowTests(unittest.TestCase):
         self.assertEqual(self.runs[0][0], "300")
         run = self.sales.get(record["run_id"])
         self.assertTrue(run.client_message.startswith("Channel: Email\n"))
-        self.resolver.resolve.assert_called_once_with("300")
+        self.resolver.resolve.assert_called_once_with("300", "client_response")
         self.assertIn("Where is my proof?", run.client_message)
         self.assertEqual(self.finder.find.call_args.args[0].sender_email, "client@example.com")
 
@@ -185,7 +188,7 @@ class InboundWorkflowTests(unittest.TestCase):
                 self.assertIn('href="/"', text)
 
     def test_validation_handoff_needs_review_and_starts_nothing(self):
-        self.resolver.resolve.side_effect = lambda deal_id: Resolution("handoff", "incoming_deal_not_active")
+        self.resolver.resolve.side_effect = lambda deal_id, workflow: Resolution("handoff", "incoming_deal_not_active")
         record = self.finished(self.post(EMAIL))
         self.assertEqual((record["status"], record["found_deal_id"], record["deal_id"], record["run_id"]),
                          ("needs_review", "300", None, None))
@@ -194,7 +197,7 @@ class InboundWorkflowTests(unittest.TestCase):
 
     def test_consolidation_runs_account_manager_on_the_kept_deal(self):
         plan = {"canonical_deal_id": 301, "merged_deal_ids": [300], "proof_ids_to_link": [], "actions": []}
-        self.resolver.resolve.side_effect = lambda deal_id: Resolution(
+        self.resolver.resolve.side_effect = lambda deal_id, workflow: Resolution(
             "proceed", "consolidated_for_client_response", "301", plan)
         record = self.finished(self.post(EMAIL))
         self.assertEqual((record["found_deal_id"], record["deal_id"]), ("300", "301"))
@@ -204,7 +207,7 @@ class InboundWorkflowTests(unittest.TestCase):
     def test_agent_match_is_validated_before_account_manager(self):
         self.finder.find.return_value = DealSearch("none", "x")
         record = self.finished(self.post(EMAIL))
-        self.resolver.resolve.assert_called_once_with("500")
+        self.resolver.resolve.assert_called_once_with("500", "client_response")
         self.assertEqual((record["resolved_by"], record["deal_id"]), ("agent", "500"))
 
     def test_invalid_payload_is_422_and_unknown_record_is_404(self):
@@ -222,7 +225,6 @@ class InboundWorkflowTests(unittest.TestCase):
         self.assertEqual(reloaded.get(record["inbound_id"])["status"], "failed")
         self.assertEqual(reloaded.submit(InboundRequest.model_validate({**EMAIL, "message_id": "keep"}))
                          ["inbound_id"], record["inbound_id"])
-
 
 
 class FollowUpMessageTests(unittest.TestCase):
@@ -291,7 +293,7 @@ class FollowUpMessageTests(unittest.TestCase):
                          ["Actually black, quantity 60"])
 
     def test_handed_off_flow_refuses_more_messages(self):
-        self.resolver.resolve.side_effect = lambda deal_id: Resolution("handoff", "incoming_deal_not_active")
+        self.resolver.resolve.side_effect = lambda deal_id, workflow: Resolution("handoff", "incoming_deal_not_active")
         record = self.finished(self.post(EMAIL))
         self.assertFalse(record["accepting_messages"])
         self.assertEqual(self.message(record["inbound_id"], "Hello?").status_code, 409)
@@ -325,6 +327,64 @@ class FollowUpMessageTests(unittest.TestCase):
         gate.set()
         for record in (first, other_thread, no_thread):
             wait_for(lambda: self.record(record["inbound_id"]))
+
+
+class InternalMailTests(unittest.TestCase):
+    """Fresh Prints team mail: the Deal Manager agent finds the deal, validation never merges."""
+
+    start_run = InboundWorkflowTests.start_run
+    post = InboundWorkflowTests.post
+    finished = InboundWorkflowTests.finished
+    wait_for_background_work = FollowUpMessageTests.wait_for_background_work
+    wait_until = FollowUpMessageTests.wait_until
+
+    def setUp(self):
+        InboundWorkflowTests.setUp(self)
+        self.addCleanup(self.wait_for_background_work)
+
+    def test_only_email_from_an_internal_domain_is_internal(self):
+        self.assertTrue(InboundRequest.model_validate(INTERNAL).is_internal)
+        self.assertFalse(InboundRequest.model_validate(EMAIL).is_internal)
+        self.assertFalse(InboundRequest.model_validate(SMS).is_internal)
+        self.assertFalse(InboundRequest.model_validate({**INTERNAL, "email": "art@freshprints.com.evil.co"})
+                         .is_internal)
+
+    def test_internal_domains_are_configurable(self):
+        with unittest.mock.patch.dict("os.environ", {"INTERNAL_SENDER_DOMAINS": "fp.test, @Other.co"}):
+            self.assertTrue(InboundRequest.model_validate({**INTERNAL, "email": "ops@other.co"}).is_internal)
+            self.assertFalse(InboundRequest.model_validate(INTERNAL).is_internal)
+
+    def test_internal_mail_skips_sender_lookup_and_uses_the_deal_manager_agent(self):
+        record = self.finished(self.post(INTERNAL))
+        self.assertEqual((record["status"], record["source"], record["resolved_by"], record["deal_id"]),
+                         ("run_started", "internal", "agent", "500"))
+        self.finder.find.assert_not_called()
+        self.assertIsNone(record["deal_search"])
+        self.resolver.resolve.assert_called_once_with("500", "internal_email")
+        self.assertEqual(self.runs[0], ("500", "Channel: Email\nFrom: art@FreshPrints.com\n"
+                                        "Subject: Design Done for Alpha Phi Formal\n\n"
+                                        "Proof #81234 is ready to relay to the client."))
+
+    def test_client_mail_is_recorded_as_client_source(self):
+        self.assertEqual(self.finished(self.post(EMAIL))["source"], "client")
+
+    def test_unmatched_internal_mail_needs_review_and_starts_nothing(self):
+        self.agent.run.return_value = agent_result(status="needs_review", deal_id=None, deal_title=None,
+                                                   confidence="low")
+        record = self.finished(self.post(INTERNAL))
+        self.assertEqual((record["status"], record["run_id"]), ("needs_review", None))
+        self.assertEqual(self.runs, [])
+
+    def test_internal_mail_never_joins_an_open_flow(self):
+        self.release.clear()  # Keep the first run open, so a client message would join it.
+        first = self.finished(self.post(INTERNAL))
+        second = self.post({**INTERNAL, "body": "Revision uploaded too."}).json()
+        self.assertNotEqual(second["inbound_id"], first["inbound_id"])
+        self.assertNotIn("attached", second)
+        self.release.set()
+        self.assertEqual(wait_for(lambda: self.client.get(f"/api/inbound/{second['inbound_id']}").json())
+                         ["status"], "run_started")
+        self.assertEqual(len(self.runs), 2)
 
 
 if __name__ == "__main__":

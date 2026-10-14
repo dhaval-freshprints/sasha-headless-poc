@@ -112,6 +112,22 @@ class ValidationTests(unittest.TestCase):
         self.assertEqual((result.status, result.deal_id, result.reason),
                          ("proceed", "10", "incoming_deal_won_client_response"))
 
+    def test_internal_email_proceeds_on_an_active_or_won_deal_without_merging(self):
+        deals = {10: {"client_id": 7, "stage": "leads"}, 11: {"client_id": 7, "stage": "leads"},
+                 12: {"client_id": 7, "stage": "won"}}
+        crm = FakeCrm()
+        active, _ = resolve("10", deals, crm, "internal_email", outreach={11: "2026-10-01"})
+        won, _ = resolve("12", deals, crm, "internal_email")
+        self.assertEqual((active.status, active.deal_id, active.reason, active.consolidation),
+                         ("proceed", "10", "internal_email_active_deal", None))
+        self.assertEqual((won.status, won.deal_id, won.reason),
+                         ("proceed", "12", "incoming_deal_won_internal_email"))
+        self.assertEqual(crm.calls, [])
+
+    def test_internal_email_on_a_lost_deal_is_handed_off(self):
+        result, _ = resolve("10", {10: {"client_id": 7, "stage": "lost"}}, FakeCrm(), "internal_email")
+        self.assertEqual((result.status, result.reason), ("handoff", "incoming_deal_not_active"))
+
     def test_lost_or_other_managers_deal_is_handed_off(self):
         for deal in ({"client_id": 7, "stage": "lost"}, {"client_id": 7, "stage": "leads", "manager_id": 99}):
             with self.subTest(deal=deal):

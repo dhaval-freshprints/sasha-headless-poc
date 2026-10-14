@@ -58,7 +58,9 @@ class DockerSandbox:
         workspace_directory.mkdir(parents=True, exist_ok=False)
         try:
             (workspace_directory / "artifacts").mkdir()
-            for skill_name in ("account-manager", "outreach", "client-response-orchestrator"):
+            for skill_name in (
+                "account-manager", "outreach", "client-response-orchestrator", "internal-email",
+            ):
                 shutil.copytree(
                     CAPABILITIES_DIRECTORY / skill_name,
                     capabilities_directory / skill_name,

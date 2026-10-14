@@ -15,6 +15,9 @@ after an order). With several active deals, the kept deal is the one Sasha last 
 else the incoming deal; the others' proofs are linked onto it and they are marked lost.
 Outreach is skipped when the kept deal already had Sasha outreach.
 
+Internal team mail (INTERNAL_EMAIL) only checks the deal is active or won for Sasha; it never
+merges deals or marks them lost.
+
 CRM writes go through the v3 edit-deal API (`v3_api.V3Api`). Not ported: v3's Sasha-DB side
 effects of marking a deal lost (stopping its follow-up schedule, updating its deal context)
 and its Slack alerts; those belong to Sasha v3.
@@ -33,7 +36,7 @@ from .deal_queries import (
     pick_canonical_deal_id, positive_int, proof_ids_for_deal, sasha_user_id,
 )
 
-Workflow = Literal["client_response", "outreach"]
+Workflow = Literal["client_response", "outreach", "internal_email"]
 LOST_REASON = "Merged multi-deal client — proofs consolidated to deal {canonical}"
 DUPLICATE_LOST_REASON = "Duplicate deal — Zap created multiple deals for same proof"
 DEFAULT_DUPLICATE_RECENCY_DAYS = 45  # v3 DUPLICATE_DEAL_RECENCY_DAYS default
@@ -44,6 +47,8 @@ REASON_LABELS = {
     "consolidated_canonical_already_outreached":
         "Merged the client's active deals; the kept deal already had Sasha outreach, so outreach is skipped.",
     "incoming_deal_won_client_response": "Won deal: replies after an order are allowed.",
+    "internal_email_active_deal": "Active deal for Sasha; internal mail does not merge deals.",
+    "incoming_deal_won_internal_email": "Won deal: internal updates after an order are allowed.",
     "incoming_deal_not_active": "The deal is not active for Sasha (won, lost, deleted, or managed by someone else).",
     "incoming_deal_not_found": "The deal was not found or is deleted.",
     "deal_has_no_client": "The deal has no client.",
@@ -219,6 +224,8 @@ class DealResolver:
                 active = [int(row["deal_id"]) for row in active_deals(db, [client_id], self._manager)["rows"]]
                 if incoming not in active:
                     return _not_active(incoming, deal, workflow)
+                if workflow == "internal_email":  # Team mail never merges deals or writes to the CRM.
+                    return Resolution("proceed", "internal_email_active_deal", str(incoming))
                 if len(active) == 1:
                     return Resolution("proceed", "single_active_deal", str(incoming))
                 latest = latest_outbound_by_deal(db, active)
@@ -273,8 +280,8 @@ class DealResolver:
 
 
 def _not_active(incoming: int, deal: dict, workflow: Workflow) -> Resolution:
-    if workflow == "client_response" and str(deal["stage"] or "").strip().lower() == "won":
-        return Resolution("proceed", "incoming_deal_won_client_response", str(incoming))
+    if workflow != "outreach" and str(deal["stage"] or "").strip().lower() == "won":
+        return Resolution("proceed", f"incoming_deal_won_{workflow}", str(incoming))
     return Resolution("handoff", "incoming_deal_not_active")
 
 
