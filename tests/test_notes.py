@@ -13,6 +13,7 @@ from openai_managed.notes import (
     with_attachment_links,
     preserve_follow_up_history,
     follow_up_entries,
+    used_follow_up_tactics,
 )
 
 
@@ -29,27 +30,30 @@ class NotesStoreTests(unittest.TestCase):
         self.directory.cleanup()
 
     def test_preserves_all_historical_tactics_without_accepting_new_ordinary_entries(self):
-        previous = "## Current decisions\n- Stage 1 follow-up sent: product_suggestion (navy tee)\n- Stage 2 follow-up generated: stock_warning\n"
-        candidate = "## Current decisions\n- Stage 3 follow-up generated: check_on_price\n"
-        result = preserve_follow_up_history(previous, candidate, None)
+        previous = ("## Current decisions\n- Stage 1 follow-up sent: product_suggestion (navy tee)\n"
+                    "- Stage 2 follow-up generated: stock_warning\n- Follow-up generated: check_on_product\n")
+        candidate = "## Current decisions\n- Follow-up generated: check_on_price\n"
+        result = preserve_follow_up_history(previous, candidate, False)
         self.assertEqual(follow_up_entries(result), follow_up_entries(previous))
+        self.assertEqual(used_follow_up_tactics(previous),
+                         ["product_suggestion", "stock_warning", "check_on_product"])
 
-    def test_rejects_reuse_wrong_stage_sent_claims_and_multiple_new_tactics(self):
+    def test_rejects_reused_tactics_stage_format_sent_claims_and_multiple_new_tactics(self):
         previous = "## Current decisions\n- Stage 1 follow-up sent: product_suggestion\n"
         for entries in [
-            "- Stage 1 follow-up generated: product_suggestion",
-            "- Stage 2 follow-up generated: stock_warning",
-            "- Stage 1 follow-up sent: offer_art_team",
-            "- Stage 1 follow-up generated: offer_art_team\n- Stage 1 follow-up generated: expertise_value_add",
+            "- Follow-up generated: product_suggestion",  # Used under a stage: still used.
+            "- Stage 2 follow-up generated: stock_warning",  # Old format is not accepted for new entries.
+            "- Follow-up sent: offer_art_team",
+            "- Follow-up generated: offer_art_team\n- Follow-up generated: expertise_value_add",
         ]:
             with self.subTest(entries=entries):
-                result = preserve_follow_up_history(previous, "## Current decisions\n" + entries, 1)
+                result = preserve_follow_up_history(previous, "## Current decisions\n" + entries, True)
                 self.assertEqual(follow_up_entries(result), follow_up_entries(previous))
 
     def test_accepts_one_generated_tactic_and_preserves_history_if_section_is_missing(self):
         previous = "## Current decisions\n- Stage 1 follow-up sent: product_suggestion\n"
-        entry = "- Stage 1 follow-up generated: offer_art_team"
-        result = preserve_follow_up_history(previous, "## Client preferences\n- Navy.\n" + entry, 1)
+        entry = "- Follow-up generated: offer_art_team"
+        result = preserve_follow_up_history(previous, "## Client preferences\n- Navy.\n" + entry, True)
         self.assertEqual(follow_up_entries(result), follow_up_entries(previous) + [entry])
         self.assertIn("## Current decisions", result)
 

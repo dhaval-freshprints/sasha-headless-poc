@@ -1,3 +1,4 @@
+from dataclasses import replace
 import json
 import tempfile
 import threading
@@ -625,7 +626,8 @@ class ManagedRunnerTests(unittest.TestCase):
         )
         message = OpenAIManagedRunner._build_task_message(task, application_environment())
         self.assertIn("Use the `account-manager` skill", message)
-        self.assertIn("followup-stage-1 through followup-stage-5 skills are available", message)
+        self.assertIn("client-response-orchestrator, and followup skills are available", message)
+        self.assertNotIn("Follow-up signals", message)
         self.assertIn("CRM activity supplies deal facts, not the routing conversation", message)
         self.assertNotIn("Selected workflow:", message)
         self.assertIn("Do you offer samples?", message)
@@ -1257,25 +1259,38 @@ class ManagedRunnerTests(unittest.TestCase):
         self.assertFalse((runner.last_run_directory / "workspace" / NOTES_OUTPUT_NAME).exists())
         self.assertFalse(NotesStore(self.root / "runs", "303839").path.exists())
 
-    def test_followup_context_keeps_manual_stage_despite_elapsed_days(self):
+    def test_followup_context_supplies_signals_instead_of_a_stage(self):
+        history = (
+            {"role": "sasha", "content": "<p>Hi</p>", "date": "2026-10-01"},
+            {"role": "client", "content": "Navy please", "date": "2026-10-03"},
+            {"role": "sasha", "content": "<p>Here is a proof</p>", "date": "2026-10-05"},
+        )
         task = SashaTask("303839", "follow-up", TASK_URL, turn_type="follow_up",
-                         follow_up_stage=1, as_of_date="2026-10-13", days_since_client_reply=99)
+                         as_of_date="2026-10-13", conversation_history=history,
+                         deal_notes="## Current decisions\n- Stage 1 follow-up sent: curated_design_idea\n")
         message = OpenAIManagedRunner._build_task_message(task, application_environment())
         self.assertIn("Use the `account-manager` skill", message)
-        self.assertIn("follow_up_stage: 1 (authoritative)", message)
-        self.assertIn("99 (context only)", message)
+        self.assertIn("Days since client reply: 10 day(s)", message)
+        self.assertIn("Days since Sasha last wrote: 8 day(s)", message)
+        self.assertIn("Conversation started: 2026-10-01 (12 day(s) ago)", message)
+        self.assertIn("1 Sasha message(s) since the client last wrote", message)
+        self.assertIn("used tactics: curated_design_idea", message)
+        self.assertIn("use the `followup` skill", message)
         self.assertIn("Empty local history means no reply", message)
-        self.assertNotIn("Use the `followup-stage-1` skill", message)
+        self.assertNotIn("stage", message.split("Follow-up signals")[1].split("Empty local")[0].lower())
+        supplied = OpenAIManagedRunner._build_task_message(
+            replace(task, days_since_client_reply=99), application_environment())
+        self.assertIn("Days since client reply: 99 day(s) (supplied for this run)", supplied)
 
     def test_followup_history_survives_responses_and_only_generated_drafts_append(self):
         notes = NotesStore(self.root / "runs", "303839")
         notes.path.parent.mkdir(parents=True)
         prior = "- Stage 1 follow-up sent: curated_design_idea"
-        entry = "- Stage 4 follow-up generated: close_the_loop"
+        entry = "- Follow-up generated: close_the_loop"
         notes.path.write_text("## Current decisions\n" + prior + "\n")
         runner, _, _ = self._make_runner([])
         task = SashaTask("303839", "follow-up", TASK_URL, turn_type="follow_up",
-                         follow_up_stage=4, as_of_date="2026-10-13")
+                         as_of_date="2026-10-13")
         with self._notes_output(runner, "## Current decisions\n" + entry):
             result = runner.run(task)
         self.assertEqual(result.status, "completed")
@@ -1287,6 +1302,8 @@ class ManagedRunnerTests(unittest.TestCase):
         self.assertIn(entry, notes.load())
         history = ConversationStore(self.root / "runs", "303839").load()
         self.assertTrue(all(item["delivery_status"] == "generated" for item in history if item["role"] == "sasha"))
+        self.assertEqual(history[0]["date"], "2026-10-13")  # The follow-up's business date.
+        self.assertRegex(history[-1]["date"], r"^\d{4}-\d{2}-\d{2}$")
 
     def test_no_reply_and_failed_followups_do_not_consume_tactics(self):
         runner, sessions, _ = self._make_runner([])
@@ -1303,9 +1320,9 @@ class ManagedRunnerTests(unittest.TestCase):
                     "failure_message": "Blocked" if status == "failed" else "",
                 })
                 with patch.object(sessions.items, "_final_item", return_value=final):
-                    with self._notes_output(runner, "## Current decisions\n- Stage 1 follow-up generated: offer_art_team"):
+                    with self._notes_output(runner, "## Current decisions\n- Follow-up generated: offer_art_team"):
                         result = runner.run(SashaTask("303839", "follow-up", TASK_URL,
-                            turn_type="follow_up", follow_up_stage=1, as_of_date="2026-10-13"))
+                            turn_type="follow_up", as_of_date="2026-10-13"))
                 self.assertEqual(result.status, status)
                 self.assertIn("curated_design_idea", notes.load())
                 self.assertNotIn("offer_art_team", notes.load())

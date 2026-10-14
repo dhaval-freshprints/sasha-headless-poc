@@ -13,7 +13,9 @@ from .attachments import file_name
 
 MAX_NOTES_BYTES = 16 * 1024
 NOTES_OUTPUT_NAME = "notes_update.md"
-FOLLOW_UP_ENTRY = re.compile(r"^- Stage ([1-5]) follow-up (generated|sent): `?([a-z_]+)\b`?.*$", re.IGNORECASE)
+# `- Follow-up generated: tactic_id`; older notes also have `- Stage N follow-up sent: tactic_id`.
+FOLLOW_UP_ENTRY = re.compile(
+    r"^- (Stage [1-5] )?follow-up (generated|sent): `?([a-z_]+)\b`?.*$", re.IGNORECASE)
 ATTACHMENTS_HEADING = "## Attachments"
 ATTACHMENT_LINE = re.compile(r"^- [A-Za-z0-9._-]+: <(https?://\S+)>$")
 
@@ -34,10 +36,10 @@ class NotesStore:
 
     def publish(
         self, workspace: Path, attachment_urls: list[str] | None = None,
-        follow_up_stage: int | None = None,
+        follow_up: bool = False,
     ) -> None:
         notes = read_notes(workspace / NOTES_OUTPUT_NAME)
-        notes = preserve_follow_up_history(self.load(), notes, follow_up_stage)
+        notes = preserve_follow_up_history(self.load(), notes, follow_up)
         _validate_notes(notes)
         if attachment_urls is not None:
             notes = with_attachment_links(notes, attachment_urls)
@@ -55,22 +57,31 @@ def follow_up_entries(notes: str) -> list[str]:
     return [line for line in notes.splitlines() if FOLLOW_UP_ENTRY.fullmatch(line)]
 
 
-def preserve_follow_up_history(previous: str, candidate: str, stage: int | None) -> str:
+def used_follow_up_tactics(notes: str) -> list[str]:
+    """Every tactic already used on this deal, in order, whatever stage it was recorded under."""
+    tactics = []
+    for line in follow_up_entries(notes):
+        tactic = FOLLOW_UP_ENTRY.fullmatch(line)[3].lower()
+        if tactic not in tactics:
+            tactics.append(tactic)
+    return tactics
+
+
+def preserve_follow_up_history(previous: str, candidate: str, follow_up: bool) -> str:
+    """Keep the previous follow-up history; add at most one new, unused generated tactic,
+    and only when this turn produced a follow-up draft."""
     history = follow_up_entries(previous)
     proposed = follow_up_entries(candidate)
     if not history and not proposed:
         return candidate
-    used = set()
-    for line in history:
-        match = FOLLOW_UP_ENTRY.fullmatch(line)
-        used.add((int(match[1]), match[3].lower()))
+    used = set(used_follow_up_tactics(previous))
     new_entries = []
     for line in proposed:
         match = FOLLOW_UP_ENTRY.fullmatch(line)
-        key = (int(match[1]), match[3].lower())
-        if key not in used and key[0] == stage and match[2].lower() == "generated":
+        tactic = match[3].lower()
+        if follow_up and not match[1] and match[2].lower() == "generated" and tactic not in used:
             new_entries.append(line)
-            used.add(key)
+            used.add(tactic)
     # Multiple proposed tactics are ambiguous; never mark them all as used.
     if len(new_entries) == 1:
         history.extend(new_entries)
