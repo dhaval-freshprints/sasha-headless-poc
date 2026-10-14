@@ -2,8 +2,11 @@ const form = document.querySelector("#lookup-form");
 const submit = document.querySelector("#lookup-submit");
 const errorBox = document.querySelector("#lookup-error");
 const copyButton = document.querySelector("#copy-deal");
+const openDealLink = document.querySelector("#open-deal");
+const lookupActions = document.querySelector("#lookup-actions");
 let selectedDeal = null;
 let timer = null;
+let chaining = false;
 
 form.addEventListener("submit", startLookup);
 copyButton.addEventListener("click", async () => {
@@ -35,6 +38,36 @@ function setText(id, value) {
   document.getElementById(id).textContent = value || "";
 }
 
+function chainKey(lookupId) {
+  return `chain-am-${lookupId}`;
+}
+
+function markForAccountManagerChain(lookupId) {
+  sessionStorage.setItem(chainKey(lookupId), "1");
+}
+
+function shouldChainAccountManager(lookupId) {
+  return sessionStorage.getItem(chainKey(lookupId)) === "1";
+}
+
+function clearAccountManagerChain(lookupId) {
+  sessionStorage.removeItem(chainKey(lookupId));
+}
+
+function composeClientMessage(input) {
+  const envelope = [
+    ["Channel", "Email"],
+    ["From", (input.sender_email || "").trim()],
+    ["Subject", (input.subject || "").trim()],
+  ];
+  const header = envelope
+    .filter(([, value]) => value)
+    .map(([label, value]) => `${label}: ${value}`)
+    .join("\n");
+  const body = (input.body || "").trim();
+  return header ? `${header}\n\n${body}` : body;
+}
+
 async function startLookup(event) {
   event.preventDefault();
   clearTimeout(timer);
@@ -47,6 +80,7 @@ async function startLookup(event) {
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify(Object.fromEntries(new FormData(form))),
     });
+    markForAccountManagerChain(job.lookup_id);
     history.replaceState({}, "", `/deal-manager/lookups/${job.lookup_id}`);
     render(job);
     poll(job);
@@ -64,8 +98,10 @@ function render(job) {
   setText("lookup-status", job.status);
   const pending = job.status === "queued" || job.status === "running";
   document.querySelector("#lookup-progress-details").open = pending;
-  submit.disabled = pending;
-  submit.textContent = pending ? "Finding deal…" : "Find Deal ID";
+  if (!chaining) {
+    submit.disabled = pending;
+    submit.textContent = pending ? "Finding deal…" : "Find Deal ID";
+  }
   const progress = document.querySelector("#lookup-progress");
   progress.replaceChildren();
   for (const message of job.progress) {
@@ -86,16 +122,29 @@ function renderResult(result) {
     ? `Deal ${result.deal_id}${result.deal_title ? ` · ${result.deal_title}` : ""}`
     : labels[result.status]);
   setText("lookup-reason", result.reason);
-  setText("lookup-next", result.next_check ? `Next step: ${result.next_check}` : "");
+  if (!chaining) {
+    setText("lookup-next", result.next_check ? `Next step: ${result.next_check}` : "");
+  }
   setText("lookup-json", JSON.stringify(result, null, 2));
-  copyButton.classList.toggle("hidden", !selectedDeal);
+  lookupActions.classList.toggle("hidden", !selectedDeal);
   copyButton.textContent = "Copy Deal ID";
+  if (selectedDeal) {
+    openDealLink.href = `/deals/${selectedDeal}`;
+  }
   const candidates = document.querySelector("#lookup-candidates");
   candidates.replaceChildren();
   if (!selectedDeal) {
     for (const candidate of result.candidate_deals) {
       const item = document.createElement("p");
-      item.textContent = `Candidate ${candidate.deal_id}: ${candidate.supports.join(" ")} ${candidate.conflicts.join(" ")}`;
+      const link = document.createElement("a");
+      link.href = `/deals/${candidate.deal_id}`;
+      link.textContent = `Deal ${candidate.deal_id}`;
+      item.append(
+        link,
+        document.createTextNode(
+          `: ${candidate.supports.join(" ")} ${candidate.conflicts.join(" ")}`.trimEnd()
+        ),
+      );
       candidates.append(item);
     }
   }
@@ -104,6 +153,7 @@ function renderResult(result) {
 function poll(job) {
   if (job.status !== "queued" && job.status !== "running") {
     loadHistory();
+    maybeStartAccountManager(job);
     return;
   }
   timer = setTimeout(async () => {
@@ -116,6 +166,48 @@ function poll(job) {
       poll(job);
     }
   }, 2000);
+}
+
+async function maybeStartAccountManager(job) {
+  if (chaining) return;
+  if (job.status !== "completed" || job.result?.status !== "matched" || !job.result.deal_id) {
+    clearAccountManagerChain(job.lookup_id);
+    return;
+  }
+  if (!shouldChainAccountManager(job.lookup_id)) return;
+
+  chaining = true;
+  submit.disabled = true;
+  submit.textContent = "Starting Account Manager…";
+  setText("lookup-next", "Matched. Starting Account Manager with this email…");
+  try {
+    const input = job.input || Object.fromEntries(new FormData(form));
+    const clientMessage = composeClientMessage(input);
+    const run = await request("/api/runs", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        deal_id: job.result.deal_id,
+        client_message: clientMessage,
+        file_urls: [],
+      }),
+    });
+    sessionStorage.setItem(`am-handoff-${run.run_id}`, JSON.stringify({
+      deal_id: job.result.deal_id,
+      from: input.sender_email || "",
+      subject: input.subject || "",
+      how: "Found by Deal Manager lookup",
+      channel: "Email",
+    }));
+    clearAccountManagerChain(job.lookup_id);
+    window.location.href = `/runs/${run.run_id}`;
+  } catch (error) {
+    chaining = false;
+    showError(`Deal found, but Account Manager could not start: ${error.message}`);
+    setText("lookup-next", "Open the deal below to start Account Manager manually.");
+    submit.disabled = false;
+    submit.textContent = "Find Deal ID";
+  }
 }
 
 async function loadHistory() {
@@ -142,7 +234,9 @@ async function restoreLookup() {
   if (!match) return;
   try {
     const job = await request(`/api/deal-manager/lookups/${match[1]}`);
-    for (const [name, value] of Object.entries(job.input)) form.elements[name].value = value;
+    for (const [name, value] of Object.entries(job.input)) {
+      if (form.elements[name] && value != null) form.elements[name].value = value;
+    }
     render(job);
     poll(job);
   } catch (error) {

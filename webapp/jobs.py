@@ -46,6 +46,7 @@ class WebRun:
     pricing: dict[str, Any] | None = None
     messages: list[dict[str, Any]] = field(default_factory=list)
     accepting_messages: bool = False
+    deal_check: dict[str, Any] | None = None  # Validation/consolidation before this run.
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -78,6 +79,7 @@ class JobManager:
         deal_id: str,
         client_message: str | None,
         file_urls: list[str],
+        deal_check: dict[str, Any] | None = None,
     ) -> WebRun:
         if not deal_id.isdigit():
             raise ValueError("deal_id must contain only digits")
@@ -87,6 +89,7 @@ class JobManager:
             deal_id=deal_id,
             client_message=normalize_client_message(client_message),
             file_urls=list(file_urls),
+            deal_check=deal_check,
         )
         with self.lock:
             self.jobs[run.run_id] = run

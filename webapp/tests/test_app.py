@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 from webapp.app import create_app, _jobs_directory, _deals_directory
 from webapp.deals import DealStore
 from webapp.jobs import JobManager
-from webapp.tests.helpers import FakeRunner, wait_for_finish
+from webapp.tests.helpers import FakeRunner, PassThroughResolver, wait_for_finish
 
 
 class WebAppTests(unittest.TestCase):
@@ -78,6 +78,42 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(self.manager.list_all(), [])
         self.assertEqual(self.deals.list_all(), [])
 
+    def test_every_run_is_checked_with_the_workflow_from_the_message(self):
+        runs = [self.client.post("/api/runs", json={"deal_id": "303839"}).json(),
+                self.client.post("/api/runs", json={"deal_id": "303839", "client_message": "Price for 40?"}).json()]
+        self.assertEqual(self.resolver.calls, [("303839", "outreach"), ("303839", "client_response")])
+        for run in runs:
+            wait_for_finish(self.manager, run["run_id"])
+
+    def test_run_starts_on_the_kept_deal_and_saves_the_check(self):
+        from deal_manager_agent.deal_resolution import Resolution
+        self.resolver.resolve = lambda deal_id, workflow: Resolution(
+            "proceed", "consolidated_for_client_response", "303840", {"canonical_deal_id": 303840})
+        run = self.client.post("/api/runs", json={"deal_id": "303839", "client_message": "Hi"}).json()
+        self.assertEqual(run["deal_id"], "303840")
+        self.assertEqual(run["deal_check"]["reason"], "consolidated_for_client_response")
+        self.assertIn("Merged", run["deal_check"]["summary"])
+        wait_for_finish(self.manager, run["run_id"])
+
+    def test_handed_off_or_skipped_check_starts_nothing(self):
+        from deal_manager_agent.deal_resolution import Resolution
+        for status, reason in (("handoff", "incoming_deal_not_active"),
+                               ("skipped", "consolidated_canonical_already_outreached")):
+            with self.subTest(status=status):
+                self.resolver.resolve = lambda deal_id, workflow: Resolution(status, reason, None)
+                response = self.client.post("/api/runs", json={"deal_id": "303839"})
+                self.assertEqual(response.status_code, 409)
+                self.assertIn("Account Manager", response.json()["detail"])
+        self.assertEqual(self.manager.list_all(), [])
+
+    def test_outreach_run_without_client_message_succeeds(self):
+        response = self.client.post("/api/runs", json={"deal_id": "303839"})
+        self.assertEqual(response.status_code, 202)
+        run = wait_for_finish(self.manager, response.json()["run_id"])
+        self.assertIsNone(run.client_message)
+        self.assertIsNone(run.workflow)
+        self.assertIsNone(self.manager._make_task(run).client_message)
+
     def test_optional_client_message_is_normalized_and_passed_to_task(self):
         for message in (None, "", "  ", "Context"):
             with self.subTest(message=message):
@@ -100,7 +136,8 @@ class WebAppTests(unittest.TestCase):
             lambda write: FakeRunner(write, self.root),
         )
         self.deals = DealStore(self.root / "deals")
-        self.client_context = TestClient(create_app(self.manager, self.deals))
+        self.resolver = PassThroughResolver()
+        self.client_context = TestClient(create_app(self.manager, self.deals, deal_resolver=self.resolver))
         self.client = self.client_context.__enter__()
 
     def tearDown(self):

@@ -29,7 +29,8 @@ class DealManagerSandbox(DockerSandbox):
             shutil.copytree(PACKAGE / "skills" / name, workspace / "capabilities" / name,
                             ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
         (workspace / "message.json").write_text(json.dumps({
-            "channel": "EMAIL", **request.model_dump(), "received_at": None,
+            **request.model_dump(exclude_none=True), "channel": request.channel,
+            "received_at": None,
         }, indent=2), encoding="utf-8")
         (workspace / "database_schemas.json").write_text(
             json.dumps(self.settings.schemas, indent=2), encoding="utf-8",
@@ -50,4 +51,7 @@ class DealManagerSandbox(DockerSandbox):
         subprocess.run([
             "docker", "exec", "--interactive", handle.container_name, "python", "-c",
             "import os,sys; os.umask(0o077); open('/run/secrets/database.json','w').write(sys.stdin.read())",
-        ], input=json.dumps(self.settings.database), check=True, capture_output=True, text=True)
+        ], input=json.dumps({
+            **self.settings.database,
+            "NON_PROD_SSL_CA": "/opt/rds-ca.pem",
+        }), check=True, capture_output=True, text=True)

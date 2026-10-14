@@ -53,3 +53,16 @@ def wait_for_finish(manager, run_id, timeout=2):
             return run
         time.sleep(0.01)
     raise AssertionError("Run did not finish before the test timeout")
+
+
+class PassThroughResolver:
+    """Deal check that lets every deal through unchanged (no database or CRM)."""
+
+    def __init__(self):
+        self.calls = []
+
+    def resolve(self, deal_id, workflow="client_response"):
+        from deal_manager_agent.deal_resolution import Resolution
+
+        self.calls.append((deal_id, workflow))
+        return Resolution("proceed", "single_active_deal", deal_id, workflow=workflow)
