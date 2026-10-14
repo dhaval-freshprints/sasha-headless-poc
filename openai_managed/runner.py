@@ -364,12 +364,12 @@ class OpenAIManagedRunner:
             if url not in urls:
                 urls.append(url)
         try:
-            stage = None
             has_additional_message = self.additional_messages and self.additional_messages.accepted()
             if task.turn_type == "follow_up" and result.message_html.strip() and not has_additional_message:
-                stage = task.follow_up_stage
-            notes.publish(self.last_run_directory / "workspace", attachment_urls=urls,
-                          follow_up_stage=stage)
+                notes.publish(self.last_run_directory / "workspace", attachment_urls=urls,
+                              follow_up=True)
+            else:
+                notes.publish(self.last_run_directory / "workspace", attachment_urls=urls)
             self.progress.report(f"[notes] Updated deal notes: {notes.path}")
         except (OSError, ValueError) as error:
             self.progress.report(
@@ -722,6 +722,7 @@ class OpenAIManagedRunner:
             SandboxConfig(
                 image=self.settings.sandbox_image,
                 runs_directory=self.settings.runs_directory,
+                hq_base_url=self.settings.application.hq_base_url,
             ),
             self.settings.executor_api_key,
         )

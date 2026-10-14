@@ -42,6 +42,7 @@ class ApplicationEnvironment:
     designs_url: str
     design_tool_url: str
     help_center_url: str
+    hq_base_url: str
 
     @classmethod
     def from_environment(cls) -> "ApplicationEnvironment":
@@ -51,6 +52,9 @@ class ApplicationEnvironment:
         crm_base_url = required_url("FP_BASE_URL").rstrip("/")
         if urlsplit(crm_base_url).query:
             raise ValueError("FP_BASE_URL must not contain a query")
+        hq_base_url = required_url("FP_HQ_BASE_URL").rstrip("/")
+        if "?" in hq_base_url or "#" in hq_base_url:
+            raise ValueError("FP_HQ_BASE_URL must not contain a query or fragment")
         return cls(
             name=name,
             crm_base_url=crm_base_url,
@@ -59,6 +63,7 @@ class ApplicationEnvironment:
             designs_url=required_url("FP_DESIGNS_URL"),
             design_tool_url=required_url("FP_DESIGN_TOOL_URL"),
             help_center_url=required_url("FP_HELP_CENTER_URL"),
+            hq_base_url=hq_base_url,
         )
 
     def deal_url(self, deal_id: str) -> str:
@@ -79,6 +84,7 @@ class ApplicationEnvironment:
             f"Designs gallery URL: {self.designs_url}",
             f"Design Tool URL: {self.design_tool_url}",
             f"Help center URL: {self.help_center_url}",
+            f"Customer HQ base URL: {self.hq_base_url}",
         ])
 
     def to_dict(self) -> dict[str, str]:

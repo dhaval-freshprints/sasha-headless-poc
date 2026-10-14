@@ -74,6 +74,7 @@ work across environments without editing Markdown.
 | `FP_DESIGNS_URL` | Full designs gallery entry URL |
 | `FP_DESIGN_TOOL_URL` | Full Design Tool entry URL |
 | `FP_HELP_CENTER_URL` | Full help center entry URL |
+| `FP_HQ_BASE_URL` | Customer HQ base URL, without query parameters or fragments |
 | `FP_USER`, `FP_PASSWORD` | Credentials for this environment |
 
 Supply actual deployment URLs; Sasha does not derive hostnames from the environment
@@ -583,3 +584,45 @@ the managed Docker image. They are skipped unless `SASHA_LIVE_QA=1`:
 ```bash
 SASHA_LIVE_QA=1 .venv/bin/python -m unittest tests.test_openai_managed_browser -v
 ```
+
+## Account Manager customer links
+
+Account Manager can share a customer-facing HQ link in client responses, follow-ups,
+and internal-update notifications. Outreach does not use this capability. Deal Manager
+has no new link command or skill. AM reuses its existing read-only database connector.
+
+AM first verifies the proof on the deal in the browser, then runs
+`python /opt/sasha/customer_links.py PROOF_ID`. The helper checks the current deal's
+non-deleted proof association and customer record, then returns `proof_id`, `url`, and
+`login_included`. It reads fresh data on each invocation, including after proof creation.
+The URL is `{FP_HQ_BASE_URL}/design/{proof_id}?login={encoded user.password}`.
+When that customer has no stored login value, the URL has no login parameter.
+Missing records, an unrelated proof, or unavailable database access return an error
+without a URL. Required-link failures use `customer_link_unavailable` in the normal
+failed run result. Unrelated browser work does not require database access.
+
+Both viewing and ordering use this URL. Before drafting an order invitation, AM checks
+proof completion, quantity, stock, and delivery in the browser. Pending proofs may
+receive a status link, never a ready-to-order claim. The customer places the order.
+
+Set `FP_HQ_BASE_URL` explicitly for the deployment. It is not inferred from
+`FP_ENVIRONMENT` or the CRM hostname. Configure matching database values through
+`NON_PROD_HOST`, `NON_PROD_PORT`, `NON_PROD_USER`, `NON_PROD_PASS`,
+`NON_PROD_SSL_CA`, and the existing `DEAL_MANAGER_MAIN_SCHEMA`,
+`DEAL_MANAGER_OPERATIONS_SCHEMA`, and `DEAL_MANAGER_CRM_SCHEMA` variables.
+Existing CRM/V3 credential and schema aliases remain supported. Despite their legacy
+names, these settings select the connection; `FP_ENVIRONMENT` does not select a database.
+HQ, CRM, and database settings must all refer to the same environment.
+
+The AM container receives only the required database environment variables through
+Docker's `--env NAME` options. Values are supplied through the Docker subprocess's
+environment, not command arguments. The TLS certificate is mounted read-only.
+AM does not create a database configuration JSON file or pass the entire `.env` file.
+Credentials are not written into task prompts or persistent run configuration.
+The helper returns no separate customer login value. Authenticated URLs are present
+in generated drafts and may appear in normal run output; do not copy them into notes.
+
+After deploying, rebuild `sasha-openai-managed:local` and restart the web app.
+No database migration is needed. Validate HQ login with an approved test customer in
+a fresh browser session before rollout; creating a correctly formatted URL alone
+does not verify HQ authentication.

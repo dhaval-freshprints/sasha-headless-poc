@@ -57,7 +57,7 @@ If no tactic meets all four, return no reply. Do not stretch a tactic to fit.
 
 ## 4. Gather facts and draft
 
-Gather the facts the tactic needs in the browser: catalog, quoter, stock checker, designs gallery or proof. Follow-up research is read-only; do not change deals, proofs or orders. Then read [shared crafting](../account-manager/references/shared_crafting.md) and draft one message with one clear next step.
+Gather the facts the tactic needs in the browser: catalog, quoter, stock checker, designs gallery or proof. Follow-up research is read-only; do not change deals, proofs or orders. When the tactic needs a customer proof or order link, follow Account Manager’s customer-link helper and browser-readiness rules. Then read [shared crafting](../account-manager/references/shared_crafting.md) and draft one message with one clear next step.
 
 - Never mention automation, sequences, phases, tactics, or that this is a follow-up.
 - Never invent urgency, scarcity, peer orders, deadlines, prices, reviews or art-team progress.

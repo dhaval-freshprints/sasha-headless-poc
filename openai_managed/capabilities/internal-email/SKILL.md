@@ -25,7 +25,7 @@ These are the usual updates and what they usually need. Use judgement from the d
 
 | Update | Typical sender | Usually |
 |---|---|---|
-| Art proof reply: an artist finished or revised a proof | art@ | Tell the client their design is ready, with the proof link reopened during this run. |
+| Art proof reply: an artist finished or revised a proof | art@ | Tell the client their design is ready, with the customer HQ link from Account Manager’s helper after reopening the CRM proof during this run. |
 | Proof ready alert: "Design Done for …", design-tool notice | hi@, sales@ | Same as an art proof reply, once the reopened proof shows it. |
 | Proof item FYI: ribbed or see-through garment notes after a proof is submitted | hi@, art@ | No reply unless it changes what the client chose. |
 | Client design activity: "Design Saved by …", "Design Requested by …" | sales@ | No reply; the client did this themselves. |
@@ -44,6 +44,6 @@ These are the usual updates and what they usually need. Use judgement from the d
 
 - Look before acting. A team message names what to check; it does not replace checking it.
 - Do not repeat news the client already has from the conversation.
-- Use only facts and links observed during this run. Never pass on internal names, internal statuses, ticket numbers or the team's own wording.
+- Use only facts and links observed during this run, including customer links returned by Account Manager’s fixed helper after browser verification. Never pass on internal names, internal statuses, ticket numbers or the team's own wording.
 - Do not change deal, proof or order records because a team message suggests it. Only a client's request authorizes changes, under the client-response rules.
 - If an additional team message arrives during the turn, reconsider the decision with both messages.

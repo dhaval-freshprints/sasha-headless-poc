@@ -1149,6 +1149,32 @@ class ManagedRunnerTests(unittest.TestCase):
         urlopen.assert_not_called()
         self.assertNotIn("other.svg", sandboxes[0].task_message)
 
+    def test_outreach_saves_notes_without_followup_arguments_or_new_tactics(self):
+        runner, _, _ = self._make_runner([])
+        notes = NotesStore(self.root / "runs", "303839")
+        candidate = "## Current decisions\n- Quantity unconfirmed.\n- Follow-up generated: offer_art_team"
+        with self._notes_output(runner, candidate), \
+                patch.object(NotesStore, "publish", autospec=True, side_effect=NotesStore.publish) as publish:
+            result = runner.run(SashaTask("303839", "outreach", TASK_URL))
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.message_html, MESSAGE)
+        self.assertIn("Quantity unconfirmed.", notes.load())
+        self.assertNotIn("Follow-up generated", notes.load())
+        self.assertEqual(publish.call_args.kwargs, {"attachment_urls": []})
+
+    def test_followup_draft_saves_notes_using_supported_boolean(self):
+        runner, _, _ = self._make_runner([])
+        notes = NotesStore(self.root / "runs", "303839")
+        candidate = "## Current decisions\n- Follow-up generated: offer_art_team"
+        task = SashaTask("303839", "follow-up", TASK_URL, turn_type="follow_up",
+                         follow_up_stage=1, as_of_date="2026-10-14")
+        with self._notes_output(runner, candidate), \
+                patch.object(NotesStore, "publish", autospec=True, side_effect=NotesStore.publish) as publish:
+            result = runner.run(task)
+        self.assertEqual(result.status, "completed")
+        self.assertIn("Follow-up generated: offer_art_team", notes.load())
+        self.assertEqual(publish.call_args.kwargs, {"attachment_urls": [], "follow_up": True})
+
     def test_notes_are_reused_updated_and_only_one_notebook_remains(self):
         runner, _, sandboxes = self._make_runner([])
         notes = NotesStore(self.root / "runs", "303839")
