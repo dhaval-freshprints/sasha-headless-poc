@@ -13,6 +13,7 @@ from .attachments import file_name
 
 MAX_NOTES_BYTES = 16 * 1024
 NOTES_OUTPUT_NAME = "notes_update.md"
+FOLLOW_UP_ENTRY = re.compile(r"^- Stage ([1-5]) follow-up (generated|sent): `?([a-z_]+)\b`?.*$", re.IGNORECASE)
 ATTACHMENTS_HEADING = "## Attachments"
 ATTACHMENT_LINE = re.compile(r"^- [A-Za-z0-9._-]+: <(https?://\S+)>$")
 
@@ -31,8 +32,13 @@ class NotesStore:
                 continue
         return ""
 
-    def publish(self, workspace: Path, attachment_urls: list[str] | None = None) -> None:
+    def publish(
+        self, workspace: Path, attachment_urls: list[str] | None = None,
+        follow_up_stage: int | None = None,
+    ) -> None:
         notes = read_notes(workspace / NOTES_OUTPUT_NAME)
+        notes = preserve_follow_up_history(self.load(), notes, follow_up_stage)
+        _validate_notes(notes)
         if attachment_urls is not None:
             notes = with_attachment_links(notes, attachment_urls)
             _validate_notes(notes)
@@ -43,6 +49,38 @@ class NotesStore:
             temporary_path.replace(self.path)
         finally:
             temporary_path.unlink(missing_ok=True)
+
+
+def follow_up_entries(notes: str) -> list[str]:
+    return [line for line in notes.splitlines() if FOLLOW_UP_ENTRY.fullmatch(line)]
+
+
+def preserve_follow_up_history(previous: str, candidate: str, stage: int | None) -> str:
+    history = follow_up_entries(previous)
+    proposed = follow_up_entries(candidate)
+    if not history and not proposed:
+        return candidate
+    used = set()
+    for line in history:
+        match = FOLLOW_UP_ENTRY.fullmatch(line)
+        used.add((int(match[1]), match[3].lower()))
+    new_entries = []
+    for line in proposed:
+        match = FOLLOW_UP_ENTRY.fullmatch(line)
+        key = (int(match[1]), match[3].lower())
+        if key not in used and key[0] == stage and match[2].lower() == "generated":
+            new_entries.append(line)
+            used.add(key)
+    # Multiple proposed tactics are ambiguous; never mark them all as used.
+    if len(new_entries) == 1:
+        history.extend(new_entries)
+    lines = [line for line in candidate.splitlines() if not FOLLOW_UP_ENTRY.fullmatch(line)]
+    if history:
+        if "## Current decisions" not in lines:
+            lines.extend(["", "## Current decisions"])
+        index = lines.index("## Current decisions") + 1
+        lines[index:index] = history
+    return "\n".join(lines) + "\n"
 
 
 def read_notes(path: Path) -> str:

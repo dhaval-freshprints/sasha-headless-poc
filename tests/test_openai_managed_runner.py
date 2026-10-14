@@ -625,7 +625,7 @@ class ManagedRunnerTests(unittest.TestCase):
         )
         message = OpenAIManagedRunner._build_task_message(task, application_environment())
         self.assertIn("Use the `account-manager` skill", message)
-        self.assertIn("Both `outreach` and `client-response-orchestrator` skills are available", message)
+        self.assertIn("followup-stage-1 through followup-stage-5 skills are available", message)
         self.assertIn("CRM activity supplies deal facts, not the routing conversation", message)
         self.assertNotIn("Selected workflow:", message)
         self.assertIn("Do you offer samples?", message)
@@ -1256,6 +1256,62 @@ class ManagedRunnerTests(unittest.TestCase):
                     runner.run(SashaTask("303839", "task-1", TASK_URL))
         self.assertFalse((runner.last_run_directory / "workspace" / NOTES_OUTPUT_NAME).exists())
         self.assertFalse(NotesStore(self.root / "runs", "303839").path.exists())
+
+    def test_followup_context_keeps_manual_stage_despite_elapsed_days(self):
+        task = SashaTask("303839", "follow-up", TASK_URL, turn_type="follow_up",
+                         follow_up_stage=1, as_of_date="2026-10-13", days_since_client_reply=99)
+        message = OpenAIManagedRunner._build_task_message(task, application_environment())
+        self.assertIn("Use the `account-manager` skill", message)
+        self.assertIn("follow_up_stage: 1 (authoritative)", message)
+        self.assertIn("99 (context only)", message)
+        self.assertIn("Empty local history means no reply", message)
+        self.assertNotIn("Use the `followup-stage-1` skill", message)
+
+    def test_followup_history_survives_responses_and_only_generated_drafts_append(self):
+        notes = NotesStore(self.root / "runs", "303839")
+        notes.path.parent.mkdir(parents=True)
+        prior = "- Stage 1 follow-up sent: curated_design_idea"
+        entry = "- Stage 4 follow-up generated: close_the_loop"
+        notes.path.write_text("## Current decisions\n" + prior + "\n")
+        runner, _, _ = self._make_runner([])
+        task = SashaTask("303839", "follow-up", TASK_URL, turn_type="follow_up",
+                         follow_up_stage=4, as_of_date="2026-10-13")
+        with self._notes_output(runner, "## Current decisions\n" + entry):
+            result = runner.run(task)
+        self.assertEqual(result.status, "completed")
+        self.assertIn(prior, notes.load())
+        self.assertIn(entry, notes.load())
+        with self._notes_output(runner, "## Current decisions\n- Quantity 40."):
+            runner.run(SashaTask("303839", "response", TASK_URL, "Quantity 40"))
+        self.assertIn(prior, notes.load())
+        self.assertIn(entry, notes.load())
+        history = ConversationStore(self.root / "runs", "303839").load()
+        self.assertTrue(all(item["delivery_status"] == "generated" for item in history if item["role"] == "sasha"))
+
+    def test_no_reply_and_failed_followups_do_not_consume_tactics(self):
+        runner, sessions, _ = self._make_runner([])
+        for status in ("completed", "failed"):
+            with self.subTest(status=status):
+                notes = NotesStore(self.root / "runs", "303839")
+                notes.path.parent.mkdir(parents=True, exist_ok=True)
+                original = "## Current decisions\n- Stage 1 follow-up sent: curated_design_idea\n"
+                notes.path.write_text(original)
+                final = sessions.items._final_item()
+                final["content"][0]["text"] = json.dumps({
+                    "deal_id": "303839", "status": status, "message_html": "",
+                    "failure_code": "blocked" if status == "failed" else "",
+                    "failure_message": "Blocked" if status == "failed" else "",
+                })
+                with patch.object(sessions.items, "_final_item", return_value=final):
+                    with self._notes_output(runner, "## Current decisions\n- Stage 1 follow-up generated: offer_art_team"):
+                        result = runner.run(SashaTask("303839", "follow-up", TASK_URL,
+                            turn_type="follow_up", follow_up_stage=1, as_of_date="2026-10-13"))
+                self.assertEqual(result.status, status)
+                self.assertIn("curated_design_idea", notes.load())
+                self.assertNotIn("offer_art_team", notes.load())
+                if status == "failed":
+                    self.assertEqual(notes.load(), original)
+                self.assertEqual(ConversationStore(self.root / "runs", "303839").load(), [])
 
     def _notes_output(self, runner, content):
         original_wait = runner._wait_for_turn

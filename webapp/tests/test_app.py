@@ -9,13 +9,69 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-from webapp.app import create_app, _jobs_directory, _deals_directory
+from webapp.app import create_app, _jobs_directory, _deals_directory, _notes_runs_directory
 from webapp.deals import DealStore
 from webapp.jobs import JobManager
 from webapp.tests.helpers import FakeRunner, PassThroughResolver, wait_for_finish
 
 
 class WebAppTests(unittest.TestCase):
+    def test_followup_validation_and_metadata(self):
+        valid = {"deal_id": "303839", "turn_type": "follow_up", "follow_up_stage": 1,
+                 "as_of_date": "2026-10-13", "days_since_client_reply": 99}
+        invalid = [
+            {"turn_type": "outreach"}, {"turn_type": "response"}, {"turn_type": None},
+            {"follow_up_stage": None}, {"follow_up_stage": 0}, {"follow_up_stage": 6},
+            {"follow_up_stage": True}, {"follow_up_stage": 1.5}, {"follow_up_stage": "1"},
+            {"as_of_date": None}, {"as_of_date": "2026-02-30"}, {"as_of_date": "20261013"},
+            {"days_since_client_reply": -1}, {"days_since_client_reply": True},
+            {"client_message": "Hello"}, {"file_urls": ["https://example.com/art.png"]},
+            {"workflow": "outreach"},
+        ]
+        for changed in invalid:
+            with self.subTest(changed=changed):
+                response = self.client.post("/api/runs", json={**valid, **changed})
+                self.assertEqual(response.status_code, 422)
+        self.assertEqual(self.manager.list_all(), [])
+        self.assertEqual(self.deals.list_all(), [])
+        response = self.client.post("/api/runs", json={**valid, "client_message": "  "})
+        self.assertEqual(response.status_code, 202)
+        run = wait_for_finish(self.manager, response.json()["run_id"])
+        self.assertEqual(run.follow_up_stage, 1)
+        self.assertEqual(run.days_since_client_reply, 99)
+        self.assertEqual(self.manager._make_task(run).turn_type, "follow_up")
+
+    def test_notes_use_current_environment_and_assets_are_not_cached(self):
+        with patch.dict(os.environ, {"OPENAI_MANAGED_RUNS_DIRECTORY": str(self.root)}):
+            for environment in ("qa", "production"):
+                with patch.dict(os.environ, {"FP_ENVIRONMENT": environment}):
+                    directory = self.root / environment / "notes"
+                    directory.mkdir(parents=True)
+                    (directory / "deal_303839_notes.md").write_text(environment + " notes")
+                    self.assertEqual(_notes_runs_directory(), self.root / environment)
+                    self.assertEqual(self.client.get("/api/deals/303839/notes").json()["notes"], environment + " notes")
+            self.assertEqual(self.client.get("/api/deals/999999/notes").json()["notes"], "")
+            self.assertEqual(self.client.get("/api/deals/invalid/notes").status_code, 422)
+        for path in ("/", "/static/app.js", "/static/styles.css"):
+            self.assertEqual(self.client.get(path).headers["Cache-Control"], "no-store")
+
+    def test_followup_active_messages_remain_available(self):
+        release = threading.Event()
+        self.addCleanup(release.set)
+        self.manager.runner_factory = lambda write: FakeRunner(write, self.root, release)
+        run = self.client.post("/api/runs", json={"deal_id": "303839", "turn_type": "follow_up",
+            "follow_up_stage": 4, "as_of_date": "2026-10-13"}).json()
+        deadline = time.monotonic() + 1
+        while not self.manager.get(run["run_id"]).accepting_messages:
+            self.assertLess(time.monotonic(), deadline)
+            time.sleep(0.01)
+        response = self.client.post(f"/api/runs/{run['run_id']}/messages",
+                                   json={"submission_id": "inbound", "text": "Are samples free?"})
+        self.assertEqual(response.status_code, 202)
+        release.set()
+        completed = wait_for_finish(self.manager, run["run_id"])
+        self.assertEqual(completed.messages[0]["status"], "accepted")
+
     def test_additional_message_endpoint_routes_to_active_runner_and_deduplicates(self):
         release = threading.Event()
         self.addCleanup(release.set)

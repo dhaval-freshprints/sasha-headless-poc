@@ -344,7 +344,7 @@ class OpenAIManagedRunner:
         try:
             result = self._run_turn(task, conversation, history)
             if result.status == "completed" and notes_writable:
-                self._publish_notes(notes, task)
+                self._publish_notes(notes, task, result)
             return result
         finally:
             self._remove_notes_output()
@@ -358,13 +358,18 @@ class OpenAIManagedRunner:
             )
             return "", False
 
-    def _publish_notes(self, notes: NotesStore, task: SashaTask) -> None:
+    def _publish_notes(self, notes: NotesStore, task: SashaTask, result: SashaResult) -> None:
         urls = saved_attachment_urls(task.deal_notes)
         for url in task.file_urls:
             if url not in urls:
                 urls.append(url)
         try:
-            notes.publish(self.last_run_directory / "workspace", attachment_urls=urls)
+            stage = None
+            has_additional_message = self.additional_messages and self.additional_messages.accepted()
+            if task.turn_type == "follow_up" and result.message_html.strip() and not has_additional_message:
+                stage = task.follow_up_stage
+            notes.publish(self.last_run_directory / "workspace", attachment_urls=urls,
+                          follow_up_stage=stage)
             self.progress.report(f"[notes] Updated deal notes: {notes.path}")
         except (OSError, ValueError) as error:
             self.progress.report(
@@ -746,6 +751,18 @@ class OpenAIManagedRunner:
                 "--- END CLIENT MESSAGE ---"
             )
 
+        follow_up_context = ""
+        if task.turn_type == "follow_up":
+            follow_up_context = (
+                "Requested check: explicit follow-up. Account Manager still selects the final action.\n"
+                f"Manually selected follow_up_stage: {task.follow_up_stage} (authoritative).\n"
+                f"Business as_of_date: {task.as_of_date}.\n"
+                f"days_since_client_reply: {task.days_since_client_reply} (context only).\n"
+                "Empty local history means no reply only while no incoming client message exists. "
+                "An incoming message or unanswered local client request takes priority. "
+                "Otherwise evaluate one supported unused tactic from the requested stage.\n\n"
+            )
+
         file_data = ""
         if files:
             file_lines = "\n".join(
@@ -779,7 +796,8 @@ class OpenAIManagedRunner:
             f"Runtime version: {RUNNER_VERSION}.\n"
             "Use the `account-manager` skill to decide what work is needed from the "
             "local conversation history and incoming client messages. "
-            "Both `outreach` and `client-response-orchestrator` skills are available. "
+            "The outreach, client-response-orchestrator, and followup-stage-1 through "
+            "followup-stage-5 skills are available. "
             "CRM activity supplies deal facts, not the routing conversation for this version.\n\n"
             f"Deal ID: {task.deal_id}\n"
             f"Originating task ID: {task.task_id}\n"
@@ -796,6 +814,7 @@ class OpenAIManagedRunner:
             "--- BEGIN PREVIOUS CONVERSATION JSON ---\n"
             f"{previous_conversation}\n"
             "--- END PREVIOUS CONVERSATION JSON ---\n\n"
+            f"{follow_up_context}"
             f"{message_data}\n\n"
             f"{file_data}"
             "A signed-in headless Chrome is already running for this turn. In every "
@@ -886,7 +905,10 @@ class OpenAIManagedRunner:
     def _deliver_additional_message(self, message: dict) -> bool:
         self.additional_messages.update(message, "sending")
         try:
-            self._send_task(self.session_id, additional_message_prompt(message), message["submission_id"])
+            submission_key = message["submission_id"]
+            if message.get("completion_continuation"):
+                submission_key = "completion-continuation:" + submission_key
+            self._send_task(self.session_id, additional_message_prompt(message), submission_key)
         except Exception as error:
             if getattr(error, "code", None) == "active_turn_not_steerable":
                 self.additional_messages.defer(message)
@@ -894,6 +916,8 @@ class OpenAIManagedRunner:
             status_code = getattr(error, "status_code", None)
             if status_code is not None and 400 <= status_code < 500 and status_code != 408:
                 self.additional_messages.update(message, "failed", str(error))
+                if message.get("completion_continuation"):
+                    raise RuntimeError("The accepted client message could not be continued after completion.") from error
                 return True
             self.additional_messages.update(message, "uncertain", "Delivery could not be confirmed. " + str(error))
             raise RuntimeError("Additional message delivery is uncertain; inspect the saved session records before retrying.") from error
@@ -919,10 +943,24 @@ class OpenAIManagedRunner:
         status = _read_value(turn, "status")
         if status not in {"completed", "failed", "cancelled"}:
             return False
+        if status == "completed" and not _has_answer_after_message(
+            items, additional_message_prompt(messages[-1]), turn_id
+        ):
+            self._continue_after_completion(messages[-1])
+            return False
         self.final_turn_id = turn_id
         events.terminal_type = f"agent.session.turn.{status}"
         events.failure_detail = str(_read_value(_read_value(turn, "error"), "message") or "")
         return True
+
+    def _continue_after_completion(self, message: dict) -> None:
+        # The API can accept a message after an answer yet attach it to that
+        # completed turn. Continue once in the same session before selecting output.
+        if message.get("completion_continuation"):
+            raise RuntimeError("The accepted client message still has no answer after continuation.")
+        message["completion_continuation"] = True
+        self.additional_messages.defer(message, "Continuing after the previous answer completed.")
+        self.progress.report("[message] Continuing the accepted client message after a completion race.")
 
     def _list_items(self, session_id: str) -> list[dict[str, Any]]:
         page = self.client.beta.agents.sessions.items.list(
@@ -971,6 +1009,18 @@ def _find_additional_message_turn(items: list[dict], prompt: str) -> str:
             if part.get("text") == prompt:
                 return str(item.get("turn_id") or "")
     return ""
+
+
+def _has_answer_after_message(items: list[dict], prompt: str, turn_id: str) -> bool:
+    answer_seen = False
+    for item in reversed(items):
+        if item.get("role") == "assistant" and item.get("phase") == "final_answer":
+            if item.get("turn_id") == turn_id:
+                answer_seen = True
+        if item.get("role") == "user":
+            if any(part.get("text") == prompt for part in item.get("content", [])):
+                return answer_seen
+    return False
 
 
 def _required_environment_value(name: str) -> str:

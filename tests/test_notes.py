@@ -11,6 +11,8 @@ from openai_managed.notes import (
     remove_notes_output,
     saved_attachment_urls,
     with_attachment_links,
+    preserve_follow_up_history,
+    follow_up_entries,
 )
 
 
@@ -25,6 +27,31 @@ class NotesStoreTests(unittest.TestCase):
 
     def tearDown(self):
         self.directory.cleanup()
+
+    def test_preserves_all_historical_tactics_without_accepting_new_ordinary_entries(self):
+        previous = "## Current decisions\n- Stage 1 follow-up sent: product_suggestion (navy tee)\n- Stage 2 follow-up generated: stock_warning\n"
+        candidate = "## Current decisions\n- Stage 3 follow-up generated: check_on_price\n"
+        result = preserve_follow_up_history(previous, candidate, None)
+        self.assertEqual(follow_up_entries(result), follow_up_entries(previous))
+
+    def test_rejects_reuse_wrong_stage_sent_claims_and_multiple_new_tactics(self):
+        previous = "## Current decisions\n- Stage 1 follow-up sent: product_suggestion\n"
+        for entries in [
+            "- Stage 1 follow-up generated: product_suggestion",
+            "- Stage 2 follow-up generated: stock_warning",
+            "- Stage 1 follow-up sent: offer_art_team",
+            "- Stage 1 follow-up generated: offer_art_team\n- Stage 1 follow-up generated: expertise_value_add",
+        ]:
+            with self.subTest(entries=entries):
+                result = preserve_follow_up_history(previous, "## Current decisions\n" + entries, 1)
+                self.assertEqual(follow_up_entries(result), follow_up_entries(previous))
+
+    def test_accepts_one_generated_tactic_and_preserves_history_if_section_is_missing(self):
+        previous = "## Current decisions\n- Stage 1 follow-up sent: product_suggestion\n"
+        entry = "- Stage 1 follow-up generated: offer_art_team"
+        result = preserve_follow_up_history(previous, "## Client preferences\n- Navy.\n" + entry, 1)
+        self.assertEqual(follow_up_entries(result), follow_up_entries(previous) + [entry])
+        self.assertIn("## Current decisions", result)
 
     def test_missing_notes_do_not_create_a_notebook(self):
         self.assertEqual(self.store.load(), "")

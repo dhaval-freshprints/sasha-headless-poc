@@ -16,7 +16,7 @@ from openai_managed.pricing import CostReporter
 from openai_managed.progress import ProgressReporter
 from openai_managed.runner import OpenAIManagedRunner
 from openai_managed.environment import ApplicationEnvironment
-from openai_managed.task import SashaResult, SashaTask, normalize_client_message
+from openai_managed.task import SashaResult, SashaTask, normalize_client_message, validate_follow_up
 
 
 FINAL_STATUSES = {"completed", "failed"}
@@ -32,6 +32,10 @@ class WebRun:
     deal_id: str
     client_message: str | None
     file_urls: list[str]
+    turn_type: str | None = None
+    follow_up_stage: int | None = None
+    as_of_date: str | None = None
+    days_since_client_reply: int | None = None
     workflow: str | None = None  # Historical runs retain their caller-selected label.
     status: str = "queued"
     created_at: str = field(default_factory=utc_now)
@@ -80,16 +84,27 @@ class JobManager:
         client_message: str | None,
         file_urls: list[str],
         deal_check: dict[str, Any] | None = None,
+        *,
+        turn_type: str | None = None,
+        follow_up_stage: int | None = None,
+        as_of_date: str | None = None,
+        days_since_client_reply: int | None = None,
     ) -> WebRun:
         if not deal_id.isdigit():
             raise ValueError("deal_id must contain only digits")
 
+        validate_follow_up(turn_type, follow_up_stage, as_of_date,
+                           days_since_client_reply, client_message, file_urls)
         run = WebRun(
             run_id=uuid.uuid4().hex,
             deal_id=deal_id,
             client_message=normalize_client_message(client_message),
             file_urls=list(file_urls),
             deal_check=deal_check,
+            turn_type=turn_type,
+            follow_up_stage=follow_up_stage,
+            as_of_date=as_of_date,
+            days_since_client_reply=days_since_client_reply,
         )
         with self.lock:
             self.jobs[run.run_id] = run
@@ -192,6 +207,10 @@ class JobManager:
             deal_url=application.deal_url(run.deal_id),
             client_message=run.client_message,
             file_urls=tuple(run.file_urls),
+            turn_type=run.turn_type if run.turn_type == "follow_up" else None,
+            follow_up_stage=run.follow_up_stage,
+            as_of_date=run.as_of_date,
+            days_since_client_reply=run.days_since_client_reply,
         )
 
     def _start(self, run_id: str) -> None:

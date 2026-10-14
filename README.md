@@ -313,9 +313,11 @@ additional request and send it. This first version accepts text only.
 The web backend keeps an in-memory mapping from run IDs to active runners. The
 runner sends each additional message to the existing OpenAI session; the same container
 and browser stay connected. An active turn receives steering. If it was preparing
-outreach, Account Manager reconsiders its action and handles the new client request. A message arriving
+outreach or a follow-up, Account Manager reconsiders its action and handles the new client request. A message arriving
 as that turn ends can start another turn in that same session. Completion checks
-use saved user-message items and their turn IDs before selecting the final answer.
+use saved user-message items, their turn IDs, and item order before selecting the final answer.
+If an accepted message was attached after an answer on the same completed turn,
+the runner continues it once in that session and waits for an answer after that message.
 
 The message list shows pending, sending, accepted, failed, or uncertain delivery.
 **Accepted** confirms API acceptance, not that Sasha interpreted the correction
@@ -369,19 +371,22 @@ Database-backed conversations and automatic handoff from Deal Manager are not co
 
 Blank incoming messages are normalized to absent; the agent ignores blank historical
 entries. A saved nonblank Sasha draft counts as handled for this local simulation,
-but remains marked `generated`, never sent. No proactive follow-up is introduced.
+but remains marked `generated`, never sent. Ordinary runs never start proactive follow-ups. Explicit follow-up checks are described below.
 A successful no-reply result has `status: "completed"` and `message_html: ""`;
 the console displays **No reply needed**. Client messages are still saved after a
 successful no-reply turn, without appending an empty Sasha entry. Failed runs retain
 the existing behavior: they do not append a completed conversation turn.
 
-Every run copies all three skills:
+Every run copies all eight skills:
 
 - [Account Manager](openai_managed/capabilities/account-manager/SKILL.md) owns action selection, no-reply rules, and shared browser/evidence boundaries.
 - [Outreach](openai_managed/capabilities/outreach/SKILL.md) owns read-only initial outreach inspection.
 - [Client response](openai_managed/capabilities/client-response-orchestrator/SKILL.md) owns sales actions for client requests.
 
+- Follow-up stages [1](openai_managed/capabilities/followup-stage-1/SKILL.md), [2](openai_managed/capabilities/followup-stage-2/SKILL.md), [3](openai_managed/capabilities/followup-stage-3/SKILL.md), [4](openai_managed/capabilities/followup-stage-4/SKILL.md), and [5](openai_managed/capabilities/followup-stage-5/SKILL.md) provide tactic pools and tone rules.
+
 Account Manager's routing and no-reply rules govern the specialized skills.
+All actions use [shared sales rules](openai_managed/capabilities/account-manager/references/sales_rules.md), including pricing, proofs, stock, delivery, and samples.
 Before drafting, the agent reads [shared crafting](openai_managed/capabilities/account-manager/references/shared_crafting.md)
 and the relevant [outreach](openai_managed/capabilities/outreach/references/outreach_crafting.md)
 or [client response](openai_managed/capabilities/client-response-orchestrator/references/client_response_crafting.md)
@@ -398,6 +403,69 @@ For behavioral acceptance, use isolated local history directories and read-only
 requests to exercise every row above, including CRM history that differs from the
 local history. Mocked tests verify plumbing, not the model's routing decisions.
 Report real-agent checks separately.
+
+## Explicit follow-up checks
+
+Open a deal and select **Follow-up check**. Choose a stage and a business date;
+the date defaults to the browser's local calendar date. Days since the client's
+reply are optional context. The selected stage remains authoritative, even when
+the elapsed days suggest another stage. The notes sidebar shows the existing
+notebook from the current environment's runs directory.
+
+The same entry point is available through `POST /api/runs`:
+
+```json
+{
+  "deal_id": "303992",
+  "turn_type": "follow_up",
+  "follow_up_stage": 2,
+  "as_of_date": "2026-10-13",
+  "days_since_client_reply": 5
+}
+```
+
+Stage must be an integer from 1 to 5; date must use `YYYY-MM-DD`; optional days
+must be a nonnegative integer. Initial follow-up checks cannot include client
+messages or new artwork. Additional client messages remain available during the
+active run. Ordinary requests omit follow-up fields. `turn_type: "outreach"`,
+`turn_type: "response"`, and `workflow` are rejected on new requests. The CLI
+continues to start ordinary Account Manager turns.
+
+| Explicit check state | Account Manager action |
+|---|---|
+| Empty local conversation | No reply |
+| Unanswered local client request | Client response |
+| Conversation exists, no unanswered request | Evaluate one supported unused tactic in the requested stage |
+| No supported unused tactic | No reply |
+| Client message arrives during follow-up work | Reconsider and handle it in the same session |
+
+Run metadata says **requested follow-up check**, since the final action may be a
+client response or no reply. Follow-up research is read-only. There is no second
+agent, scheduler, automatic sending, or database conversation integration.
+
+The notebook retains every prior `Stage N follow-up generated: tactic_id` entry.
+Only a successful nonblank follow-up draft adds one entry. No-reply, failed,
+ordinary, or superseded work does not add a used tactic. Historical `sent` entries
+also count as used, but that wording does not prove delivery. Generated drafts
+count as used in this POC. No history migration is needed.
+
+Samples remain free and blank. Offering one without approval requires verified
+value below $50 and evidence that no sample was sent within the preceding 14 days.
+Exactly $50, a more recent sample, or missing evidence requires confirmation before
+promising one. Internal cost and approval details stay out of client drafts.
+
+Real-agent verification uses synthetic conversations and container-local browser
+fixtures, separately from mocked unit tests. It reads only OpenAI credentials and
+runtime configuration from `.env`, never deployment CRM credentials or records:
+
+```bash
+.venv/bin/python tests/FM01_synthetic_agent_checks.py
+```
+
+This opt-in check uses the configured OpenAI API and Docker image. Results and
+isolated histories are saved under `runs/FM01_synthetic_followup_checks/`.
+Pass case names as arguments to run a subset. Inspect the recorded drafts and
+notebooks for semantic behavior as well as the harness's structural assertions.
 
 ## Tests
 
