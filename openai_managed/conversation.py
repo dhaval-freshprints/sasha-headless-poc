@@ -51,7 +51,10 @@ class ConversationStore:
         client_message: str | None,
         message_html: str,
         additional_messages: list[str] | tuple[str, ...] = (),
+        turn_date: str | None = None,
     ) -> None:
+        """turn_date is the turn's business date (YYYY-MM-DD), saved on each new entry."""
+        dated = {"date": turn_date} if turn_date else {}
         updated_history = list(history)
         client_messages = list(additional_messages)
         if client_message is not None:
@@ -62,6 +65,7 @@ class ConversationStore:
                     "role": "client",
                     "content_type": "text",
                     "content": message,
+                    **dated,
                 }
             )
         if message_html.strip():
@@ -71,6 +75,7 @@ class ConversationStore:
                     "content_type": "text/html",
                     "content": message_html,
                     "delivery_status": "generated",
+                    **dated,
                 }
             )
         self._write(

@@ -1,10 +1,3 @@
-const FOLLOWUP_STAGE_LABELS = {
-  1: "Reignite interest",
-  2: "Relevance & gentle pressure",
-  3: "Invite honesty",
-  4: "Final answer",
-  5: "Re-engage",
-};
 const followupForm = document.querySelector("#followup-form");
 const followupFormCard = document.querySelector("#followup-form-card");
 const followupSubmitButton = document.querySelector("#followup-submit-button");
@@ -514,7 +507,7 @@ function updateChannelFields() {
 
 function runTitle(run) {
   if (run.turn_type === "follow_up") {
-    return `Requested follow-up check · Stage ${run.follow_up_stage}`;
+    return "Requested follow-up check";
   }
   if (run.turn_type === "outreach") return "Initial outreach";
   if (run.turn_type === "response") return truncate(run.client_message || "Client response", 72);
@@ -660,13 +653,11 @@ async function startFollowup(event) {
   followupSubmitButton.disabled = true;
   followupSubmitButton.textContent = "Starting…";
 
-  const stage = Number(document.querySelector("#followup-stage").value);
   const asOfDate = document.querySelector("#as-of-date").value;
   const daysValue = document.querySelector("#days-since-reply").value.trim();
   const payload = {
     deal_id: currentDealId,
     turn_type: "follow_up",
-    follow_up_stage: stage,
     as_of_date: asOfDate,
   };
   if (daysValue !== "") {
@@ -718,7 +709,7 @@ function showFollowupForm() {
     const now = new Date();
     dateInput.value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
   }
-  document.querySelector("#followup-stage").focus();
+  document.querySelector("#as-of-date").focus();
 }
 
 function hideFollowupForm() {
@@ -738,16 +729,12 @@ function renderFollowupMeta(run) {
     element.textContent = "";
     return;
   }
-  const parts = [`Requested follow-up check · Stage ${run.follow_up_stage}`];
+  const parts = ["Requested follow-up check"];
   if (run.as_of_date) {
     parts.push(`As-of ${run.as_of_date}`);
   }
   if (run.days_since_client_reply !== null && run.days_since_client_reply !== undefined) {
     parts.push(`${run.days_since_client_reply} day(s) since client reply`);
-  }
-  const stageLabel = FOLLOWUP_STAGE_LABELS[run.follow_up_stage] || "";
-  if (stageLabel) {
-    parts.push(stageLabel);
   }
   element.textContent = parts.join(" · ");
   element.classList.toggle("hidden", parts.length === 0);

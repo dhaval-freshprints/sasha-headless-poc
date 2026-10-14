@@ -17,12 +17,11 @@ from webapp.tests.helpers import FakeRunner, PassThroughResolver, wait_for_finis
 
 class WebAppTests(unittest.TestCase):
     def test_followup_validation_and_metadata(self):
-        valid = {"deal_id": "303839", "turn_type": "follow_up", "follow_up_stage": 1,
+        valid = {"deal_id": "303839", "turn_type": "follow_up",
                  "as_of_date": "2026-10-13", "days_since_client_reply": 99}
         invalid = [
             {"turn_type": "outreach"}, {"turn_type": "response"}, {"turn_type": None},
-            {"follow_up_stage": None}, {"follow_up_stage": 0}, {"follow_up_stage": 6},
-            {"follow_up_stage": True}, {"follow_up_stage": 1.5}, {"follow_up_stage": "1"},
+            {"follow_up_stage": 1}, {"follow_up_stage": None},
             {"as_of_date": None}, {"as_of_date": "2026-02-30"}, {"as_of_date": "20261013"},
             {"days_since_client_reply": -1}, {"days_since_client_reply": True},
             {"client_message": "Hello"}, {"file_urls": ["https://example.com/art.png"]},
@@ -37,7 +36,7 @@ class WebAppTests(unittest.TestCase):
         response = self.client.post("/api/runs", json={**valid, "client_message": "  "})
         self.assertEqual(response.status_code, 202)
         run = wait_for_finish(self.manager, response.json()["run_id"])
-        self.assertEqual(run.follow_up_stage, 1)
+        self.assertIsNone(run.follow_up_stage)
         self.assertEqual(run.days_since_client_reply, 99)
         self.assertEqual(self.manager._make_task(run).turn_type, "follow_up")
 
@@ -60,7 +59,7 @@ class WebAppTests(unittest.TestCase):
         self.addCleanup(release.set)
         self.manager.runner_factory = lambda write: FakeRunner(write, self.root, release)
         run = self.client.post("/api/runs", json={"deal_id": "303839", "turn_type": "follow_up",
-            "follow_up_stage": 4, "as_of_date": "2026-10-13"}).json()
+            "as_of_date": "2026-10-13"}).json()
         deadline = time.monotonic() + 1
         while not self.manager.get(run["run_id"]).accepting_messages:
             self.assertLess(time.monotonic(), deadline)

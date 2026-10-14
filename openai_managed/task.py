@@ -11,17 +11,15 @@ def normalize_client_message(message: str | None) -> str | None:
 
 
 def validate_follow_up(
-    turn_type: str | None, stage: int | None, as_of_date: str | None,
+    turn_type: str | None, as_of_date: str | None,
     days: int | None, client_message: str | None, file_urls: list[str] | tuple[str, ...],
 ) -> None:
     if turn_type is None:
-        if any(value is not None for value in (stage, as_of_date, days)):
+        if any(value is not None for value in (as_of_date, days)):
             raise ValueError("Follow-up metadata requires turn_type: follow_up")
         return
     if turn_type != "follow_up":
         raise ValueError("Only follow_up is accepted; Account Manager selects outreach or response")
-    if type(stage) is not int or not 1 <= stage <= 5:
-        raise ValueError("follow_up_stage must be an integer from 1 to 5")
     try:
         if not isinstance(as_of_date, str) or date.fromisoformat(as_of_date).isoformat() != as_of_date:
             raise ValueError()
@@ -63,13 +61,12 @@ class SashaTask:
     file_urls: tuple[str, ...] = ()
     deal_notes: str = ""
     turn_type: Literal["follow_up"] | None = None
-    follow_up_stage: int | None = None
     as_of_date: str | None = None
     days_since_client_reply: int | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "client_message", normalize_client_message(self.client_message))
-        validate_follow_up(self.turn_type, self.follow_up_stage, self.as_of_date,
+        validate_follow_up(self.turn_type, self.as_of_date,
                            self.days_since_client_reply, self.client_message, self.file_urls)
 
 

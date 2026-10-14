@@ -74,7 +74,7 @@ class DockerSandboxTests(unittest.TestCase):
                 "outreach",
                 "client-response-orchestrator",
                 "internal-email",
-                *(f"followup-stage-{stage}" for stage in range(1, 6)),
+                "followup",
             },
         )
         self.assertNotIn("workflow", json.loads((handle.workspace_directory / "task.json").read_text()))
@@ -97,10 +97,9 @@ class DockerSandboxTests(unittest.TestCase):
         internal_directory = source_directory / "internal-email"
         internal_directory.mkdir()
         (internal_directory / "SKILL.md").write_text("Handle team updates.")
-        for stage in range(1, 6):
-            directory = source_directory / f"followup-stage-{stage}"
-            directory.mkdir()
-            (directory / "SKILL.md").write_text("Follow-up tactics.")
+        followup_directory = source_directory / "followup"
+        followup_directory.mkdir()
+        (followup_directory / "SKILL.md").write_text("Follow-up tactics.")
         source_file = outreach_directory / "SKILL.md"
         source_file.write_text("Ask about quantity.")
         task = SashaTask("303839", "outreach-303839", "https://qa.example/deal?id=303839")

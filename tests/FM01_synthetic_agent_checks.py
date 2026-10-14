@@ -1,5 +1,6 @@
 """Real managed-agent routing checks against a synthetic, container-local CRM."""
 import json
+import re
 import sys
 import subprocess
 import threading
@@ -69,17 +70,21 @@ history = [
     {'role':'sasha', 'content_type':'text/html', 'content':'<p>Take your time discussing the Synthetic Cotton Tee with the club.</p>', 'delivery_status':'generated'},
 ]
 prior_notes = "## Current decisions\n- Stage 1 follow-up sent: curated_design_idea\n"
-exhausted = prior_notes + "".join(f"- Stage 1 follow-up generated: {tactic}\n" for tactic in ['product_suggestion', 'offer_art_team', 'expertise_value_add'])
+TACTICS = re.findall(r"^\| `([a-z_]+)` \|", (ROOT / 'openai_managed/capabilities/followup/references/tactics.md').read_text(), re.MULTILINE)
+exhausted = prior_notes + "".join(f"- Follow-up generated: {tactic}\n" for tactic in TACTICS if tactic != 'curated_design_idea')
+# Follow-up checks give (as_of_date, days_since_client_reply); the skill infers the phase from them.
 cases = [
-    (f'stage_{stage}', history, None, False, 'follow_up', stage, prior_notes, 'Sample value and shipping history unknown.')
-    for stage in range(1, 6)
+    (f'quiet_{days}_days', history, None, False, 'follow_up', ('2026-10-13', days), prior_notes,
+     'Sample value and shipping history unknown.')
+    for days in (2, 6, 10, 15)
 ]
 cases += [
-    ('empty_followup', [], None, False, 'no_reply', 1, prior_notes, 'Unknown.'),
-    ('exhausted', history, None, False, 'no_reply', 1, exhausted, 'Unknown.'),
-    ('unanswered_client', [client], None, False, 'response', 3, prior_notes, 'Unknown.'),
-    ('message_during_followup', history, None, True, 'response', 4, prior_notes, 'Unknown.'),
-    ('message_during_empty_followup', [], None, True, 'response', 1, prior_notes, 'Unknown.'),
+    ('event_passed', history, None, False, 'follow_up', ('2026-12-15', 40), prior_notes, 'Unknown.'),
+    ('empty_followup', [], None, False, 'no_reply', ('2026-10-13', None), prior_notes, 'Unknown.'),
+    ('exhausted', history, None, False, 'no_reply', ('2026-10-13', 10), exhausted, 'Unknown.'),
+    ('unanswered_client', [client], None, False, 'response', ('2026-10-13', 9), prior_notes, 'Unknown.'),
+    ('message_during_followup', history, None, True, 'response', ('2026-10-13', 15), prior_notes, 'Unknown.'),
+    ('message_during_empty_followup', [], None, True, 'response', ('2026-10-13', None), prior_notes, 'Unknown.'),
     ('ordinary_empty', [], None, False, 'outreach', None, prior_notes, 'Unknown.'),
     ('ordinary_handled', history, None, False, 'no_reply', None, prior_notes, 'Unknown.'),
     ('acknowledgement', history, 'Thanks, nothing else needed.', False, 'no_reply', None, prior_notes, 'Unknown.'),
@@ -97,7 +102,8 @@ if selected:
     cases = [case for case in cases if case[0] in selected]
 results_path = DIRECTORY / 'FM01_results.json'
 results = json.loads(results_path.read_text()) if selected and results_path.exists() else []
-for name, history, message, additional, expected, stage, notes_text, sample_evidence in cases:
+for name, history, message, additional, expected, follow_up, notes_text, sample_evidence in cases:
+    as_of_date, days_since_reply = follow_up or (None, None)
     directory = DIRECTORY / name
     store = ConversationStore(directory, DEAL)
     store._write({'deal_id':DEAL,'conversation_history':history})
@@ -116,7 +122,7 @@ for name, history, message, additional, expected, stage, notes_text, sample_evid
     errors = []
     def execute():
         try:
-            outputs.append(runner.run(SashaTask(DEAL, 'FM01_' + name, application.deal_url(DEAL), message, turn_type='follow_up' if stage else None, follow_up_stage=stage, as_of_date='2026-10-13' if stage else None, days_since_client_reply=99 if stage else None)))
+            outputs.append(runner.run(SashaTask(DEAL, 'FM01_' + name, application.deal_url(DEAL), message, turn_type='follow_up' if follow_up else None, as_of_date=as_of_date, days_since_client_reply=days_since_reply)))
         except Exception as error:
             errors.append(type(error).__name__ + ': ' + str(error))
     worker = threading.Thread(target=execute)
@@ -139,7 +145,9 @@ for name, history, message, additional, expected, stage, notes_text, sample_evid
     checks['prior_tactics_preserved'] = all(entry in after_entries for entry in before_entries)
     checks['new_tactic_count'] = len(after_entries) - len(before_entries) == (1 if expected == 'follow_up' else 0)
     if expected == 'follow_up':
-        checks['requested_stage_generated'] = any(entry.startswith(f'- Stage {stage} follow-up generated:') and entry not in before_entries for entry in after_entries)
+        new = [entry for entry in after_entries if entry not in before_entries]
+        checks['library_tactic_generated'] = len(new) == 1 and new[0].startswith('- Follow-up generated:') \
+            and new[0].split(':', 1)[1].split()[0].strip('`') in TACTICS
     if additional:
         checks['additional_message_accepted'] = any(update.get('status')=='accepted' for update in updates)
     results = [result for result in results if result['case'] != name]

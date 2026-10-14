@@ -23,7 +23,7 @@ async function main() {
       return;
     }
     if (path === '/api/deals/900001/notes') {
-      data = { deal_id: '900001', notes: 'Stage 1 follow-up generated: offer_art_team' };
+      data = { deal_id: '900001', notes: 'Follow-up generated: offer_art_team' };
     } else if (path === '/api/deals/900001') {
       data = { deal_id: '900001', runs: [], run_count: 0 };
     } else if (path === '/api/runs' && request.method() === 'POST') {
@@ -43,25 +43,25 @@ async function main() {
   });
   try {
     await page.goto('http://account-manager.test/deals/900001');
-    await page.locator('#deal-notes-content').getByText('Stage 1 follow-up generated: offer_art_team').waitFor();
+    await page.locator('#deal-notes-content').getByText('Follow-up generated: offer_art_team').waitFor();
     await page.getByRole('button', { name: 'Follow-up check', exact: true }).click();
     assert.equal(await page.locator('#as-of-date').inputValue(), '2026-10-12');
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     await page.setViewportSize({ width: 390, height: 844 });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     await page.setViewportSize({ width: 1280, height: 900 });
-    await page.locator('#followup-stage').selectOption('4');
+    assert.equal(await page.locator('#followup-stage').count(), 0);
     await page.locator('#days-since-reply').fill('99');
-    run = { ...run, turn_type: 'follow_up', follow_up_stage: 4, as_of_date: '2026-10-12', days_since_client_reply: 99 };
+    run = { ...run, turn_type: 'follow_up', as_of_date: '2026-10-12', days_since_client_reply: 99 };
     await page.getByRole('button', { name: 'Run follow-up', exact: true }).click();
     await page.locator('#additional-message-button:not([disabled])').waitFor();
-    assert.deepEqual(submitted, { deal_id: '900001', turn_type: 'follow_up', follow_up_stage: 4, as_of_date: '2026-10-12', days_since_client_reply: 99 });
-    assert.match(await page.locator('#followup-meta').textContent(), /Requested follow-up check · Stage 4/);
-    await page.locator('#run-notes-content').getByText('Stage 1 follow-up generated: offer_art_team').waitFor();
+    assert.deepEqual(submitted, { deal_id: '900001', turn_type: 'follow_up', as_of_date: '2026-10-12', days_since_client_reply: 99 });
+    assert.match(await page.locator('#followup-meta').textContent(), /^Requested follow-up check · As-of 2026-10-12 · 99 day\(s\) since client reply$/);
+    await page.locator('#run-notes-content').getByText('Follow-up generated: offer_art_team').waitFor();
     await page.locator('#additional-message-text').fill('Does the sample include printing?');
     await page.getByRole('button', { name: 'Send Additional Message', exact: true }).click();
     await page.getByText('Does the sample include printing?\nAccepted', { exact: true }).waitFor();
-    run = { ...run, turn_type: null, follow_up_stage: null, as_of_date: null, days_since_client_reply: null, messages: [] };
+    run = { ...run, turn_type: null, as_of_date: null, days_since_client_reply: null, messages: [] };
     await page.goto('http://account-manager.test/deals/900001');
     await page.getByRole('button', { name: 'Start new run', exact: true }).click();
     assert.equal(await page.locator('#workflow').count(), 0);

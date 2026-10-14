@@ -15,6 +15,7 @@ from .attachments import AttachmentSet, fetch_to_directory, restore_saved_attach
 from .conversation import ConversationStore
 from .additional_messages import AdditionalMessageInbox, additional_message_prompt
 from .environment import ApplicationEnvironment
+from .followup_signals import describe_signals, follow_up_signals
 from .notes import (
     NOTES_OUTPUT_NAME,
     NotesStore,
@@ -364,12 +365,11 @@ class OpenAIManagedRunner:
             if url not in urls:
                 urls.append(url)
         try:
-            stage = None
             has_additional_message = self.additional_messages and self.additional_messages.accepted()
-            if task.turn_type == "follow_up" and result.message_html.strip() and not has_additional_message:
-                stage = task.follow_up_stage
+            follow_up = bool(task.turn_type == "follow_up" and result.message_html.strip()
+                             and not has_additional_message)
             notes.publish(self.last_run_directory / "workspace", attachment_urls=urls,
-                          follow_up_stage=stage)
+                          follow_up=follow_up)
             self.progress.report(f"[notes] Updated deal notes: {notes.path}")
         except (OSError, ValueError) as error:
             self.progress.report(
@@ -525,6 +525,7 @@ class OpenAIManagedRunner:
                     task.client_message,
                     result.message_html,
                     additional_messages=additional_messages,
+                    turn_date=task.as_of_date or datetime.now(timezone.utc).date().isoformat(),
                 )
             except (OSError, ValueError) as error:
                 result = SashaResult(
@@ -753,14 +754,16 @@ class OpenAIManagedRunner:
 
         follow_up_context = ""
         if task.turn_type == "follow_up":
+            signals = follow_up_signals(task.conversation_history, task.deal_notes,
+                                        task.as_of_date, task.days_since_client_reply)
             follow_up_context = (
                 "Requested check: explicit follow-up. Account Manager still selects the final action.\n"
-                f"Manually selected follow_up_stage: {task.follow_up_stage} (authoritative).\n"
-                f"Business as_of_date: {task.as_of_date}.\n"
-                f"days_since_client_reply: {task.days_since_client_reply} (context only).\n"
+                "Follow-up signals computed from the dated conversation and deal notes:\n"
+                f"{describe_signals(signals)}\n"
                 "Empty local history means no reply only while no incoming client message exists. "
                 "An incoming message or unanswered local client request takes priority. "
-                "Otherwise evaluate one supported unused tactic from the requested stage.\n\n"
+                "Otherwise use the `followup` skill to read the situation and choose one unused "
+                "tactic that gives the client new value, or return no reply.\n\n"
             )
 
         file_data = ""
@@ -796,8 +799,7 @@ class OpenAIManagedRunner:
             f"Runtime version: {RUNNER_VERSION}.\n"
             "Use the `account-manager` skill to decide what work is needed from the "
             "local conversation history and incoming client messages. "
-            "The outreach, client-response-orchestrator, and followup-stage-1 through "
-            "followup-stage-5 skills are available. "
+            "The outreach, client-response-orchestrator, and followup skills are available. "
             "CRM activity supplies deal facts, not the routing conversation for this version.\n\n"
             f"Deal ID: {task.deal_id}\n"
             f"Originating task ID: {task.task_id}\n"

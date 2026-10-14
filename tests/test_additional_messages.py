@@ -109,18 +109,18 @@ class AdditionalMessageTests(unittest.TestCase):
 
     def followup_task(self):
         self.task = SashaTask("303839", "follow-up", runner_tests.TASK_URL,
-                             turn_type="follow_up", follow_up_stage=4, as_of_date="2026-10-13")
+                             turn_type="follow_up", as_of_date="2026-10-13")
 
     def test_followup_completion_race_selects_response_and_discards_proposed_tactic(self):
         self.followup_task()
         notes = NotesStore(self.runner.settings.runs_directory, "303839")
         notes.path.parent.mkdir(parents=True)
-        prior = "- Stage 1 follow-up generated: offer_art_team"
+        prior = "- Stage 1 follow-up generated: offer_art_team"  # Older entry format.
         notes.path.write_text("## Current decisions\n" + prior)
         original_publish = self.runner._publish_notes
         def publish(store, task, result):
             candidate = self.runner.last_run_directory / "workspace" / NOTES_OUTPUT_NAME
-            candidate.write_text("## Current decisions\n- Stage 4 follow-up generated: close_the_loop")
+            candidate.write_text("## Current decisions\n- Follow-up generated: close_the_loop")
             original_publish(store, task, result)
         self.runner._publish_notes = publish
         self.test_completion_during_delivery_waits_for_new_turn_and_uses_its_answer()
