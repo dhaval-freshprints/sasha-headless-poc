@@ -2,7 +2,7 @@
 
 Fresh Prints sends free, blank samples (the garment only, no print) so a client can check fit, feel and quality before ordering. Use your judgement as the client's account manager; nothing here is a keyword rule.
 
-The task includes this deal's samples (style, color, size, status, tracking and dates) and the limits from Sasha's settings. Use them as the record of what was already sent. You are responsible for applying the limits: nothing checks them after you.
+The task includes this deal's samples (style, color, size, status and dates) and the limits from Sasha's settings. Use them as the record of what was already sent. You are responsible for applying the limits: nothing checks them after you.
 
 ## When to offer one
 
