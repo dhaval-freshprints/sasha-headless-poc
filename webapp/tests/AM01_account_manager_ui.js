@@ -1,4 +1,4 @@
-// Run in the existing sasha-openai-managed Docker image with this repository at /repo.
+// Run in the existing sasha-account-manager-agent Docker image with this repository at /repo.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const { chromium } = require('playwright');

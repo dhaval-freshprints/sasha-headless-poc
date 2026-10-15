@@ -5,7 +5,7 @@ import tempfile
 import threading
 import time
 import unittest
-from tests.test_openai_managed_environment import APPLICATION_VALUES
+from tests.test_account_manager_agent_environment import APPLICATION_VALUES
 from pathlib import Path
 from unittest.mock import patch
 

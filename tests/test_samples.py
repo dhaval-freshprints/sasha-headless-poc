@@ -2,8 +2,8 @@
 import json
 import unittest
 
-from openai_managed.samples.freshdesk import FreshdeskClient, ticket_payload
-from openai_managed.samples.service import SampleService
+from account_manager_agent.samples.freshdesk import FreshdeskClient, ticket_payload
+from account_manager_agent.samples.service import SampleService
 
 REQUEST = {"trigger": "client_request", "style_code": "C1717", "product_link": "https://fp.test/p/c1717",
            "color": "White", "size": "M", "ship_to_name": "Rita Lee",

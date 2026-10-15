@@ -4,6 +4,6 @@
 .venv
 __pycache__
 auth
-auth-openai-managed
+auth-account-manager-agent
 evals
 runs

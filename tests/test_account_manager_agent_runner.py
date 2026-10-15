@@ -1,0 +1,1312 @@
+from dataclasses import replace
+import json
+import tempfile
+import threading
+import time
+import unittest
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
+
+from account_manager_agent.attachments import Attachment, AttachmentSet
+from tests.database_helpers import MemoryStorage
+from tests.test_account_manager_agent_environment import APPLICATION_VALUES, application_environment
+from account_manager_agent.notes import (
+    saved_attachment_urls, with_attachment_links,
+)
+from tests.test_attachments import FakeResponse
+from account_manager_agent.pricing import CostReporter
+from account_manager_agent.progress import ProgressReporter
+from account_manager_agent.runner import (
+    STREAM_ERROR_EVENT,
+    ManagedRunnerSettings,
+    AccountManagerAgent,
+    _extract_final_assistant_text,
+)
+from account_manager_agent.sandbox import SandboxHandle
+from account_manager_agent.task import SashaTask
+
+
+MESSAGE = "<p>Model-generated outreach</p>"
+ASTRA_PRICES = {
+    "OPENAI_AGENT_INPUT_USD_PER_MILLION": "10.00",
+    "OPENAI_AGENT_CACHED_INPUT_USD_PER_MILLION": "1.00",
+    "OPENAI_AGENT_OUTPUT_USD_PER_MILLION": "50.00",
+}
+SUCCESS_EVENTS = [
+    {"type": "agent.session.environment.connected"},
+    {
+        "type": "agent.session.turn.item.added",
+        "item": {
+            "id": "commentary-1",
+            "type": "message",
+            "phase": "commentary",
+        },
+    },
+    {
+        "type": "agent.session.turn.output_text.done",
+        "item_id": "commentary-1",
+        "text": "I am inspecting the deal and its proof.",
+    },
+    {
+        "type": "agent.session.turn.item.added",
+        "item": {"id": "command-1", "type": "command_execution"},
+    },
+    {
+        "type": "agent.session.turn.item.done",
+        "item": {
+            "id": "command-1",
+            "type": "command_execution",
+            "status": "completed",
+        },
+    },
+    {"type": "agent.session.turn.completed"},
+]
+CONNECTED_ONLY = [{"type": "agent.session.environment.connected"}]
+CANCEL_EVENT = {"type": "agent.session.input.cancel"}
+TASK_URL = "https://qa.example/deal?id=303839"
+
+
+def _command_added(item_id, command):
+    return {
+        "type": "agent.session.turn.item.added",
+        "item": {"id": item_id, "type": "command_execution", "command": command},
+    }
+
+
+def _command_done(item_id, command, output, exit_code):
+    return {
+        "type": "agent.session.turn.item.done",
+        "item": {
+            "id": item_id,
+            "type": "command_execution",
+            "command": command,
+            "output": output,
+            "exit_code": exit_code,
+            "status": "completed",
+        },
+    }
+
+
+class FakeConflictError(Exception):
+    status_code = 409
+
+
+class FakeEventsAPI:
+    def __init__(self, values, operations):
+        self.sent = []
+        self.values = SUCCESS_EVENTS if values is None else values
+        self.operations = operations
+        self.stays_open = False
+        self.stream_error = None
+        self.send_error = None
+        self.cancel_error = None
+        self.released = threading.Event()
+
+    def stream(self, session_id):
+        yield from self.values
+        if self.stream_error is not None:
+            raise self.stream_error
+        if self.stays_open:
+            self.released.wait(5)
+            if CANCEL_EVENT in self.sent:
+                yield {"type": "agent.session.turn.cancelled"}
+
+    def create(self, session_id, events, idempotency_key=None):
+        if CANCEL_EVENT in events:
+            self._cancel()
+        elif self.send_error is not None:
+            raise self.send_error
+        self.sent.extend(events)
+
+    def _cancel(self):
+        self.operations.append("cancel")
+        if self.cancel_error is not None:
+            raise self.cancel_error
+        self.released.set()
+
+
+class FakeCursorPage:
+    """Like the SDK page: data is the first page, iterating walks every page."""
+
+    def __init__(self, items, limit):
+        self.items = items
+        self.data = items[:limit]
+
+    def __iter__(self):
+        return iter(self.items)
+
+
+class FakeItemsAPI:
+    def __init__(self, deal_id):
+        self.deal_id = deal_id
+        self.commentary_count = 0
+
+    def list(self, session_id, order, limit):
+        items = [self._commentary_item() for _ in range(self.commentary_count)]
+        items.append(self._final_item())
+        return FakeCursorPage(items, limit)
+
+    @staticmethod
+    def _commentary_item():
+        return {
+            "role": "assistant",
+            "phase": "commentary",
+            "content": [{"type": "output_text", "text": "Checking the catalog."}],
+        }
+
+    def _final_item(self):
+        result = {
+            "deal_id": self.deal_id,
+            "status": "completed",
+            "message_html": MESSAGE,
+            "notes": "## Current decisions\n- None recorded.",
+            "convo_type": "outreach",
+            "failure_code": "",
+            "failure_message": "",
+        }
+        return {
+            "role": "assistant",
+            "phase": "final_answer",
+            "content": [{"type": "output_text", "text": json.dumps(result)}],
+        }
+
+
+class FakeSessionsAPI:
+    def __init__(self, deal_id, event_values=None, retrieve_error=None, operations=None):
+        self.operations = [] if operations is None else operations
+        self.events = FakeEventsAPI(event_values, self.operations)
+        self.items = FakeItemsAPI(deal_id)
+        self.deleted = ""
+        self.delete_outcomes = []
+        self.delete_attempts = 0
+        self.create_arguments = None
+        self.retrieve_error = retrieve_error
+        self.retrieve_count = 0
+
+    def create(self, **kwargs):
+        self.create_arguments = kwargs
+        return SimpleNamespace(
+            id="session-1",
+            environment=SimpleNamespace(id="environment-1", remote_url="wss://example.test"),
+        )
+
+    def delete(self, session_id):
+        self.operations.append("delete")
+        self.delete_attempts += 1
+        self.events.released.set()
+        if self.delete_outcomes:
+            error = self.delete_outcomes.pop(0)
+            if error is not None:
+                raise error
+        self.deleted = session_id
+
+    def retrieve(self, session_id):
+        self.retrieve_count += 1
+        if self.retrieve_error is not None:
+            raise self.retrieve_error
+        return SimpleNamespace(
+            usage={
+                "input_tokens": 1000,
+                "input_tokens_details": {"cached_tokens": 400},
+                "output_tokens": 200,
+                "output_tokens_details": {"reasoning_tokens": 50},
+                "total_tokens": 1200,
+            }
+        )
+
+
+class FakeSandbox:
+    def __init__(self, config, executor_api_key, number, operations=None):
+        self.config = config
+        self.number = number
+        self.operations = [] if operations is None else operations
+        self.container_started = False
+        self.executor_started = False
+        self.stopped = False
+        self.handle = None
+        self.task_message = ""
+        self.authenticated = False
+        self.authentication_error = None
+        self.browser_started = False
+        self.browser_error = None
+
+    def prepare(self, task):
+        run_directory = self.config.runs_directory / f"run-{self.number}"
+        workspace = run_directory / "workspace"
+        workspace.mkdir(parents=True)
+        (workspace / "artifacts").mkdir()
+        (workspace / "executor.log").write_text("connected")
+        (workspace / "task.json").write_text(
+            json.dumps({"deal_id": task.deal_id, "client_message": task.client_message})
+        )
+        self.handle = SandboxHandle("container-1", run_directory, workspace)
+        return self.handle
+
+    def save_task_message(self, task_message):
+        self.task_message = task_message
+        (self.handle.workspace_directory / "TASK.md").write_text(task_message)
+
+    def remove_client_files(self):
+        directory = self.handle.workspace_directory / "client-files"
+        if directory.exists():
+            import shutil
+
+            shutil.rmtree(directory)
+
+    def start_container(self):
+        self.container_started = True
+
+    def authenticate(self, deal_url, login_url, login_user, login_password):
+        if self.authentication_error is not None:
+            raise self.authentication_error
+        self.authenticated = True
+
+    def start_browser(self):
+        if self.browser_error is not None:
+            raise self.browser_error
+        self.browser_started = True
+
+    def connect_executor(self, environment_id, remote_url):
+        self.executor_started = True
+
+    def logs(self):
+        return "connected"
+
+    def executor_exit_code(self):
+        return None
+
+    def stop(self):
+        self.operations.append("stop")
+        self.stopped = True
+
+class ManagedRunnerTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary_directory = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary_directory.name)
+        self.database = MemoryStorage()
+
+    def tearDown(self):
+        self.temporary_directory.cleanup()
+
+    def test_environment_defaults_to_twenty_minute_turn_limit(self):
+        environment = {
+            **APPLICATION_VALUES,
+            "OPENAI_EXECUTOR_API_KEY": "executor-key",
+            "FP_LOGIN_URL": "https://qa.example/login",
+            "FP_USER": "qa-user",
+            "FP_PASSWORD": "qa-password",
+        }
+
+        with patch.dict("os.environ", environment, clear=True):
+            settings = ManagedRunnerSettings.from_environment()
+
+        self.assertEqual(settings.turn_timeout_seconds, 1200)
+
+    def test_runs_session_without_browser_checker_or_message_validation(self):
+        progress_messages = []
+        runner, sessions, sandboxes = self._make_runner(progress_messages)
+
+        result = runner.run(
+            SashaTask("303839", "task-1", "https://qa.example/deal?id=303839")
+        )
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.message_html, MESSAGE)
+        self.assertEqual(sessions.deleted, "session-1")
+        self.assertTrue(sandboxes[0].container_started)
+        self.assertTrue(sandboxes[0].executor_started)
+        self.assertTrue(sandboxes[0].authenticated)
+        self.assertTrue(sandboxes[0].stopped)
+        workspace = self.root / "runs" / "run-1" / "workspace"
+        self.assertTrue((workspace / "session-events.json").is_file())
+        self.assertTrue((workspace / "session-items.json").is_file())
+        self.assertTrue((workspace / "executor.log").is_file())
+        self.assertTrue((workspace / "result.json").is_file())
+        runtime = json.loads((workspace / "runtime.json").read_text())
+        self.assertEqual(runtime["application"], application_environment().to_dict())
+        self.assertNotIn("qa-password", json.dumps(runtime))
+        self.assertNotIn(CANCEL_EVENT, sessions.events.sent)
+        self.assertEqual(sessions.operations, ["delete", "stop"])
+        cleanup = json.loads((workspace / "cleanup.json").read_text())
+        self.assertEqual(cleanup["session_id"], "session-1")
+        self.assertEqual(cleanup["delete_attempts"], 1)
+        self.assertTrue(cleanup["session_deleted"])
+        self.assertFalse(cleanup["cancel_sent"])
+        self.assertEqual(cleanup["errors"], [])
+
+    def test_wrong_environment_is_rejected_before_loading_context_or_starting_browser(self):
+        runner, sessions, sandboxes = self._make_runner([])
+        result = runner.run(SashaTask(
+            "303839", "task-1", "https://another.example/deal?id=303839",
+        ))
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.failure_code, "environment_error")
+        self.assertEqual(sandboxes, [])
+        self.assertIsNone(runner.storage)
+
+    @patch("account_manager_agent.runner.fetch_to_directory")
+    def test_supplied_artwork_is_staged_for_astra_then_removed(self, fetch):
+        remote_url = "https://example.test/logo.svg?signature=secret"
+
+        def download(urls, directory):
+            self.assertEqual(urls, [remote_url])
+            directory.mkdir()
+            file_path = directory / "file_1.svg"
+            file_path.write_text("<svg></svg>")
+            return AttachmentSet([Attachment("file_1", file_path, "logo.svg", 11)])
+
+        fetch.side_effect = download
+        runner, sessions, sandboxes = self._make_runner([])
+        result = runner.run(
+            SashaTask(
+                "303839",
+                "task-1",
+                "https://qa.example/deal?id=303839",
+                "Put my logo on the back.",
+                file_urls=(remote_url,),
+            )
+        )
+
+        self.assertEqual(result.status, "completed")
+        self.assertIsNotNone(sessions.create_arguments)
+        workspace = sandboxes[0].handle.workspace_directory
+        self.assertIn("/workspace/client-files/file_1.svg", sandboxes[0].task_message)
+        self.assertIn("upload-file-input", sandboxes[0].task_message)
+        self.assertNotIn(remote_url, sandboxes[0].task_message)
+        self.assertNotIn(remote_url, (workspace / "task.json").read_text())
+        self.assertFalse((workspace / "client-files").exists())
+
+    @patch("account_manager_agent.runner.fetch_to_directory")
+    def test_failed_download_never_creates_openai_session(self, fetch):
+        remote_url = "https://example.test/logo.png?signature=secret"
+        fetch.side_effect = ValueError("file_1: could not download artwork.")
+        runner, sessions, sandboxes = self._make_runner([])
+
+        result = runner.run(
+            SashaTask(
+                "303839",
+                "task-1",
+                "https://qa.example/deal?id=303839",
+                "Put my logo on the back.",
+                file_urls=(remote_url,),
+            )
+        )
+
+        self.assertEqual(result.status, "failed")
+        self.assertIn("could not download artwork", result.failure_message)
+        self.assertNotIn("signature", result.failure_message)
+        self.assertIsNone(sessions.create_arguments)
+        self.assertFalse(sandboxes[0].container_started)
+        self.assertTrue(sandboxes[0].stopped)
+
+    def test_progress_reporter_shows_orchestration_and_agent_activity(self):
+        progress_messages = []
+        runner, _, _ = self._make_runner(progress_messages)
+
+        runner.run(
+            SashaTask("303839", "task-1", "https://qa.example/deal?id=303839")
+        )
+
+        output = "\n".join(progress_messages)
+        self.assertIn("[1/7] Preparing disposable Account Manager container", output)
+        self.assertIn("[2/7] Signing into Fresh Prints (qa)", output)
+        self.assertIn("Fresh Prints authentication succeeded", output)
+        self.assertIn("[5/7] Account Manager is working on the task", output)
+        self.assertIn("Account Manager: I am inspecting the deal and its proof.", output)
+        self.assertIn("Account Manager tool step 1 started", output)
+        self.assertIn("Account Manager tool step 1: completed", output)
+        self.assertIn("[7/7] Saving artifacts and cleaning up", output)
+        self.assertIn("[context] Loaded notes and conversation from database", output)
+
+    def test_completed_turn_is_saved_and_loaded_by_the_next_turn(self):
+        runner, _, sandboxes = self._make_runner([])
+
+        first_result = runner.run(
+            SashaTask(
+                "303839",
+                "task-1",
+                "https://qa.example/deal?id=303839",
+                "Show me green polos.",
+            )
+        )
+        second_result = runner.run(
+            SashaTask(
+                "303839",
+                "task-2",
+                "https://qa.example/deal?id=303839",
+                "I want the second one.",
+            )
+        )
+
+        self.assertEqual(first_result.status, "completed")
+        self.assertEqual(second_result.status, "completed")
+        second_task = sandboxes[1].task_message
+        self.assertIn('"content": "Show me green polos."', second_task)
+        self.assertIn(f'"content": "{MESSAGE}"', second_task)
+        self.assertIn(
+            "--- BEGIN CLIENT MESSAGE ---\n"
+            "Channel: EMAIL\nFrom: client@example.com\n\nI want the second one.\n"
+            "--- END CLIENT MESSAGE ---",
+            second_task,
+        )
+
+        saved = {"conversation_history": self.database.history["303839"]}
+        self.assertEqual(
+            [entry["role"] for entry in saved["conversation_history"]],
+            ["client", "sasha", "client", "sasha"],
+        )
+        self.assertEqual(
+            saved["conversation_history"][1]["delivery_status"],
+            "generated",
+        )
+
+
+    @patch.dict("os.environ", ASTRA_PRICES)
+    def test_collects_and_prints_pricing_when_requested(self):
+        pricing_messages = []
+        runner, _, _ = self._make_runner(
+            [], CostReporter(pricing_messages.append)
+        )
+
+        runner.run(
+            SashaTask("303839", "task-1", "https://qa.example/deal?id=303839")
+        )
+
+        self.assertEqual(runner.last_cost_estimate.status, "estimated")
+        self.assertEqual(runner.last_cost_estimate.estimated_cost_usd, 0.0164)
+        self.assertIn("[pricing] Estimated OpenAI cost: $0.01640000", pricing_messages)
+        workspace = self.root / "runs" / "run-1" / "workspace"
+        self.assertTrue((workspace / "pricing.json").is_file())
+
+    def test_reads_final_answer_after_first_hundred_items(self):
+        runner, sessions, _ = self._make_runner([])
+        sessions.items.commentary_count = 100
+
+        result = runner.run(
+            SashaTask("303839", "task-1", "https://qa.example/deal?id=303839")
+        )
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.message_html, MESSAGE)
+        workspace = self.root / "runs" / "run-1" / "workspace"
+        saved_items = json.loads((workspace / "session-items.json").read_text())
+        self.assertEqual(len(saved_items), 101)
+
+    def test_extracts_final_answer_instead_of_earlier_text(self):
+        items = [
+            {"role": "assistant", "content": [{"type": "output_text", "text": "one"}]},
+            {
+                "role": "assistant",
+                "phase": "final_answer",
+                "content": [{"type": "output_text", "text": "two"}],
+            },
+        ]
+        self.assertEqual(_extract_final_assistant_text(items), "two")
+
+    def test_loads_generic_sasha_instructions(self):
+        instructions = AccountManagerAgent._load_instructions()
+
+        self.assertIn("Use the `account-manager` skill", instructions)
+        self.assertIn("exact deal URL", instructions)
+        self.assertIn("untrusted data", instructions)
+        self.assertIn("Sasha result schema", instructions)
+        self.assertNotIn("initial outreach", instructions.lower())
+
+    def test_outreach_remains_read_only_and_uses_sasha_persona(self):
+        directory = Path(__file__).resolve().parents[1] / "account_manager_agent" / "capabilities" / "outreach"
+        skill = (directory / "SKILL.md").read_text()
+        crafting = (directory.parent / "account-manager" / "references" / "crafting_rules.md").read_text()
+        self.assertIn("Do not open the quoter or change deal or proof records", skill)
+        self.assertIn("Keep this inspection read-only", skill)
+        self.assertIn("Introduce Sasha as the client's account manager", crafting)
+
+    def test_playbooks_use_natural_product_references(self):
+        repository_root = Path(__file__).resolve().parents[1]
+        playbook_paths = [
+            repository_root
+            / "account_manager_agent"
+            / "capabilities"
+            / "account-manager"
+            / "references"
+            / "crafting_rules.md"
+        ]
+
+        for playbook_path in playbook_paths:
+            playbook = playbook_path.read_text(encoding="utf-8")
+
+            self.assertIn(
+                "Use full catalog names when first presenting or comparing products",
+                playbook,
+            )
+            self.assertIn(
+                "After the client selects a product, use the shortest natural name",
+                playbook,
+            )
+            self.assertIn(
+                "Never call a garment",
+                playbook,
+            )
+
+    def test_registers_workspace_capability_directory(self):
+        runner, sessions, _ = self._make_runner([])
+
+        runner.run(
+            SashaTask("303839", "task-1", "https://qa.example/deal?id=303839")
+        )
+
+        self.assertEqual(
+            sessions.create_arguments["environment"]["capability_directories"],
+            ["/workspace/capabilities"],
+        )
+
+    def test_builds_initial_outreach_task_message(self):
+        task = SashaTask(
+            "303839",
+            "task-1",
+            "https://qa.example/deal?id=303839",
+        )
+
+        message = AccountManagerAgent._build_task_message(task, application_environment())
+
+        self.assertIsNone(task.client_message)
+        self.assertNotIn("Selected workflow:", message)
+        self.assertIn("Deal ID: 303839", message)
+        self.assertIn("Deal URL: https://qa.example/deal?id=303839", message)
+        self.assertIn("Use the `account-manager` skill", message)
+        self.assertIn("start at the exact deal URL", message)
+        self.assertIn("/workspace/artifacts/visited_urls.json", message)
+        self.assertIn("Do not launch Chrome yourself.", message)
+
+    def test_task_message_supplies_conversation_without_selecting_a_workflow(self):
+        history = ({"role": "client", "content": "Do you offer samples?"},)
+        task = SashaTask(
+            "303839", "task-1", TASK_URL, "What about printing?",
+            conversation_history=history,
+        )
+        message = AccountManagerAgent._build_task_message(task, application_environment())
+        self.assertIn("Use the `account-manager` skill", message)
+        self.assertIn("client-response, internal-email, followup, promo-codes, winback, samples, and handoff skills are available", message)
+        self.assertNotIn("Follow-up signals", message)
+        self.assertIn("CRM activity supplies deal facts, not the routing conversation", message)
+        self.assertNotIn("Selected workflow:", message)
+        self.assertIn("Do you offer samples?", message)
+        self.assertIn("--- BEGIN CLIENT MESSAGE ---\nWhat about printing?\n--- END CLIENT MESSAGE ---", message)
+        self.assertIn("untrusted sales-request data", message)
+
+    def test_failed_turn_returns_failure_and_still_cleans_up(self):
+        events = [
+            {"type": "agent.session.environment.connected"},
+            {"type": "agent.session.turn.failed"},
+        ]
+        runner, sessions, sandboxes = self._make_runner([], event_values=events)
+
+        result = runner.run(
+            SashaTask("303839", "task-1", "https://qa.example/deal?id=303839")
+        )
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.failure_code, "turn_not_completed")
+        self.assertEqual(result.failure_message, "agent.session.turn.failed")
+        self.assertTrue(sandboxes[0].stopped)
+        self.assertEqual(sessions.deleted, "session-1")
+        self.assertNotIn("cancel", sessions.operations)
+
+    def test_authentication_failure_stops_before_openai_session_creation(self):
+        runner, sessions, sandboxes = self._make_runner(
+            [], authentication_error=RuntimeError("QA authentication failed")
+        )
+
+        result = runner.run(
+            SashaTask("303839", "task-1", "https://qa.example/deal?id=303839")
+        )
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.failure_code, "managed_runner_error")
+        self.assertIn("QA authentication failed", result.failure_message)
+        self.assertIsNone(sessions.create_arguments)
+        self.assertTrue(sandboxes[0].container_started)
+        self.assertFalse(sandboxes[0].executor_started)
+        self.assertTrue(sandboxes[0].stopped)
+
+    def test_browser_start_failure_stops_before_openai_session_creation(self):
+        runner, sessions, sandboxes = self._make_runner(
+            [], browser_error=RuntimeError("Browser did not start: keeper exited")
+        )
+
+        result = runner.run(SashaTask("303839", "task-1", TASK_URL))
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.failure_code, "browser_start_failed")
+        self.assertIn("keeper exited", result.failure_message)
+        self.assertIsNone(sessions.create_arguments)
+        self.assertFalse(sandboxes[0].executor_started)
+        self.assertTrue(sandboxes[0].stopped)
+
+    def test_browser_starts_after_login_and_task_tells_sasha_to_attach(self):
+        progress_messages = []
+        runner, _, sandboxes = self._make_runner(progress_messages)
+
+        runner.run(SashaTask("303839", "task-1", TASK_URL))
+
+        self.assertTrue(sandboxes[0].browser_started)
+        self.assertIn(
+            "      Signed-in browser is open for the whole turn", progress_messages
+        )
+        task_message = sandboxes[0].task_message
+        self.assertIn("chromium.connectOverCDP('http://127.0.0.1:9222')", task_message)
+        self.assertIn("Do not launch Chrome yourself", task_message)
+        self.assertIn("node /opt/sasha/start_browser.js", task_message)
+        self.assertNotIn("Close the browser", task_message)
+
+    def test_cleanup_reports_workspace_scripts_that_launch_chrome(self):
+        progress_messages = []
+        runner, _, _ = self._make_runner(progress_messages)
+        workspace = self.root / "workspace-with-scripts"
+        (workspace / "capabilities" / "account-manager").mkdir(parents=True)
+        (workspace / "inspect.js").write_text(
+            "const c = await chromium.launchPersistentContext('/browser-profile', {});"
+        )
+        (workspace / "attach.js").write_text(
+            "const b = await chromium.connectOverCDP('http://127.0.0.1:9222');"
+        )
+        (workspace / "capabilities" / "account-manager" / "tool.js").write_text(
+            "chromium.launch({})"
+        )
+
+        runner._report_scripts_that_launch_chrome(workspace)
+
+        self.assertEqual(
+            progress_messages,
+            ["[cleanup] WARNING: Account Manager's script inspect.js launches its own Chrome"],
+        )
+
+    def test_progress_reports_browser_restarts_and_own_chrome_launches(self):
+        restart = "/bin/bash -lc 'node /opt/sasha/start_browser.js'"
+        attach = (
+            "/bin/bash -lc \"node -e \\\"const b=await chromium.connectOverCDP("
+            "'http://127.0.0.1:9222')\\\"\""
+        )
+        own_chrome = (
+            "/bin/bash -lc \"node -e \\\"chromium.launchPersistentContext("
+            "'/browser-profile')\\\"\""
+        )
+        events = [
+            {"type": "agent.session.environment.connected"},
+            _command_added("command-1", restart),
+            _command_done("command-1", restart, '{"status":"started"}', 0),
+            _command_added("command-2", attach),
+            _command_done("command-2", attach, "READY", 0),
+            _command_added("command-3", own_chrome),
+            _command_done("command-3", own_chrome, "", 0),
+            {"type": "agent.session.turn.completed"},
+        ]
+        progress_messages = []
+        runner, _, _ = self._make_runner(progress_messages, event_values=events)
+
+        runner.run(SashaTask("303839", "task-1", TASK_URL))
+
+        browser_lines = [
+            line.strip()
+            for line in progress_messages
+            if "restarted the browser" in line or "own Chrome" in line
+        ]
+        self.assertEqual(
+            browser_lines,
+            [
+                "Account Manager restarted the browser: started",
+                "WARNING: Account Manager launched its own Chrome",
+            ],
+        )
+
+    def test_connection_timeout_returns_failure_and_cleans_up(self):
+        runner, sessions, sandboxes = self._make_runner(
+            [],
+            event_values=[],
+            connection_timeout=0.01,
+            stays_open=True,
+        )
+
+        result = runner.run(
+            SashaTask("303839", "task-1", "https://qa.example/deal?id=303839")
+        )
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.failure_code, "managed_runner_error")
+        self.assertIn("Timed out waiting", result.failure_message)
+        self.assertTrue(sandboxes[0].stopped)
+        self.assertEqual(sessions.deleted, "session-1")
+        self.assertEqual(sessions.operations, ["delete", "stop"])
+
+    def test_turn_timeout_cancels_turn_and_returns_failure(self):
+        runner, sessions, sandboxes = self._make_runner(
+            [],
+            event_values=CONNECTED_ONLY,
+            turn_timeout=0.01,
+            stays_open=True,
+        )
+
+        result = runner.run(
+            SashaTask("303839", "task-1", "https://qa.example/deal?id=303839")
+        )
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.failure_code, "managed_runner_error")
+        self.assertIn("exceeded its time limit", result.failure_message)
+        self.assertEqual(sessions.operations, ["cancel", "delete", "stop"])
+        self.assertTrue(sandboxes[0].stopped)
+
+    def test_progress_and_pricing_are_optional(self):
+        runner, sessions, _ = self._make_runner(None)
+
+        result = runner.run(
+            SashaTask("303839", "task-1", "https://qa.example/deal?id=303839")
+        )
+
+        self.assertEqual(result.status, "completed")
+        self.assertIsNone(runner.progress.write)
+        self.assertIsNone(runner.last_cost_estimate)
+        self.assertEqual(sessions.retrieve_count, 0)
+        workspace = self.root / "runs" / "run-1" / "workspace"
+        self.assertFalse((workspace / "pricing.json").exists())
+
+    def test_pricing_failure_does_not_fail_completed_turn(self):
+        pricing_messages = []
+        runner, sessions, _ = self._make_runner(
+            [],
+            CostReporter(pricing_messages.append),
+            retrieve_error=RuntimeError("usage unavailable"),
+        )
+
+        result = runner.run(
+            SashaTask("303839", "task-1", "https://qa.example/deal?id=303839")
+        )
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(sessions.retrieve_count, 1)
+        self.assertEqual(runner.last_cost_estimate.status, "unavailable")
+        self.assertIn("[pricing] Estimated OpenAI cost: unavailable", pricing_messages)
+        workspace = self.root / "runs" / "run-1" / "workspace"
+        self.assertTrue((workspace / "pricing.json").is_file())
+
+    @patch.dict("os.environ", ASTRA_PRICES)
+    @patch("account_manager_agent.runner.time.sleep")
+    def test_delayed_usage_is_saved_before_cleanup(self, sleep):
+        runner, sessions, sandboxes = self._make_runner([], CostReporter(lambda value: None))
+        available = sessions.retrieve("session-1")
+        with patch.object(sessions, "retrieve", side_effect=[
+            SimpleNamespace(usage=None), SimpleNamespace(usage=None), available,
+        ]) as retrieve:
+            result = runner.run(SashaTask("303839", "task-1", "https://qa.example/deal?id=303839"))
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(retrieve.call_count, 3)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [1, 2])
+        evidence = json.loads((runner.last_run_directory / "workspace" / "pricing.json").read_text())
+        self.assertEqual(evidence["session_id"], "session-1")
+        self.assertEqual(evidence["raw_usage"], available.usage)
+        self.assertEqual(evidence["rates_usd_per_million"]["input"], "10.00")
+        self.assertEqual(evidence["estimated_cost_usd"], 0.0164)
+        self.assertEqual(len(evidence["usage_attempts"]), 3)
+        self.assertEqual(sessions.deleted, "session-1")
+        self.assertTrue(sandboxes[0].stopped)
+
+    @patch.dict("os.environ", ASTRA_PRICES)
+    @patch("account_manager_agent.runner.time.sleep")
+    def test_missing_usage_retries_are_bounded_and_cleanup_runs(self, sleep):
+        runner, sessions, sandboxes = self._make_runner([], CostReporter(lambda value: None))
+        def missing_usage(session_id):
+            self.assertEqual(sessions.deleted, "")
+            return SimpleNamespace(usage=None)
+        with patch.object(sessions, "retrieve", side_effect=missing_usage) as retrieve:
+            result = runner.run(SashaTask("303839", "task-1", "https://qa.example/deal?id=303839"))
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(retrieve.call_count, 5)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [1, 2, 4, 8])
+        self.assertEqual(runner.last_cost_estimate.status, "unavailable")
+        self.assertIsNone(runner.last_cost_estimate.estimated_cost_usd)
+        self.assertEqual(len(runner.last_cost_estimate.usage_attempts), 5)
+        self.assertEqual(sessions.deleted, "session-1")
+        self.assertTrue(sandboxes[0].stopped)
+
+    def test_stream_exception_cancels_turn_and_keeps_stream_error(self):
+        runner, sessions, sandboxes = self._make_runner(
+            [],
+            event_values=CONNECTED_ONLY,
+            stream_error=ConnectionError("stream dropped"),
+        )
+
+        result = runner.run(SashaTask("303839", "task-1", TASK_URL))
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.failure_code, "managed_runner_error")
+        self.assertIn("Session event stream failed: stream dropped", result.failure_message)
+        self.assertEqual(sessions.operations, ["cancel", "delete", "stop"])
+        workspace = runner.last_run_directory / "workspace"
+        saved_events = json.loads((workspace / "session-events.json").read_text())
+        self.assertIn(
+            {
+                "type": STREAM_ERROR_EVENT,
+                "error_type": "ConnectionError",
+                "message": "stream dropped",
+            },
+            saved_events,
+        )
+        cleanup = json.loads((workspace / "cleanup.json").read_text())
+        self.assertTrue(cleanup["cancel_sent"])
+
+    def test_error_event_fails_turn_fast_and_keeps_its_message(self):
+        error_event = {
+            "type": "error",
+            "error": {"type": "server_error", "message": "model crashed"},
+        }
+        runner, sessions, _ = self._make_runner(
+            [],
+            event_values=CONNECTED_ONLY + [error_event],
+            turn_timeout=30,
+            stays_open=True,
+        )
+
+        started = time.monotonic()
+        result = runner.run(SashaTask("303839", "task-1", TASK_URL))
+
+        self.assertLess(time.monotonic() - started, 5)
+        self.assertEqual(result.failure_code, "turn_not_completed")
+        self.assertEqual(result.failure_message, "error: model crashed")
+        self.assertEqual(sessions.operations, ["cancel", "delete", "stop"])
+
+    def test_environment_failure_keeps_its_message(self):
+        failed_event = {
+            "type": "agent.session.environment.failed",
+            "environment": {
+                "status": "failed",
+                "error": {"type": "executor_error", "message": "executor rejected"},
+            },
+        }
+        runner, sessions, _ = self._make_runner(
+            [],
+            event_values=[failed_event],
+            connection_timeout=30,
+            stays_open=True,
+        )
+
+        started = time.monotonic()
+        result = runner.run(SashaTask("303839", "task-1", TASK_URL))
+
+        self.assertLess(time.monotonic() - started, 5)
+        self.assertEqual(result.failure_code, "managed_runner_error")
+        self.assertIn(
+            "failed to connect (agent.session.environment.failed: executor rejected)",
+            result.failure_message,
+        )
+        self.assertEqual(sessions.operations, ["delete", "stop"])
+
+    def test_stream_ending_without_terminal_event_fails_fast(self):
+        runner, sessions, _ = self._make_runner(
+            [],
+            event_values=CONNECTED_ONLY,
+            turn_timeout=30,
+        )
+
+        started = time.monotonic()
+        result = runner.run(SashaTask("303839", "task-1", TASK_URL))
+
+        self.assertLess(time.monotonic() - started, 5)
+        self.assertEqual(result.failure_code, "managed_runner_error")
+        self.assertIn("ended before the turn finished", result.failure_message)
+        self.assertEqual(sessions.operations, ["cancel", "delete", "stop"])
+        workspace = runner.last_run_directory / "workspace"
+        saved_events = json.loads((workspace / "session-events.json").read_text())
+        self.assertEqual(saved_events[-1]["error_type"], "StreamEnded")
+
+    @patch("account_manager_agent.runner.time.sleep")
+    def test_delete_conflicts_are_retried_before_docker_stops(self, sleep):
+        progress_messages = []
+        runner, sessions, sandboxes = self._make_runner(
+            progress_messages,
+            delete_outcomes=[FakeConflictError("not settled"), FakeConflictError("not settled")],
+        )
+
+        result = runner.run(SashaTask("303839", "task-1", TASK_URL))
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [1, 2])
+        self.assertEqual(sessions.operations, ["delete", "delete", "delete", "stop"])
+        self.assertIn(
+            "[cleanup] Session deletion succeeded after 3 attempts", progress_messages
+        )
+        cleanup = json.loads(
+            (runner.last_run_directory / "workspace" / "cleanup.json").read_text()
+        )
+        self.assertEqual(cleanup["delete_attempts"], 3)
+        self.assertTrue(cleanup["session_deleted"])
+
+    @patch("account_manager_agent.runner.time.sleep")
+    def test_delete_conflict_retries_are_bounded_and_keep_primary_failure(self, sleep):
+        events = CONNECTED_ONLY + [{"type": "agent.session.turn.failed"}]
+        runner, sessions, sandboxes = self._make_runner(
+            [],
+            event_values=events,
+            delete_outcomes=[FakeConflictError("not settled")] * 5,
+        )
+
+        result = runner.run(SashaTask("303839", "task-1", TASK_URL))
+
+        self.assertEqual(result.failure_code, "turn_not_completed")
+        self.assertTrue(result.failure_message.startswith("agent.session.turn.failed; "))
+        self.assertIn("Cleanup errors: session deletion: not settled", result.failure_message)
+        self.assertEqual(sessions.delete_attempts, 5)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [1, 2, 4, 8])
+        self.assertTrue(sandboxes[0].stopped)
+        cleanup = json.loads(
+            (runner.last_run_directory / "workspace" / "cleanup.json").read_text()
+        )
+        self.assertFalse(cleanup["session_deleted"])
+
+    @patch("account_manager_agent.runner.time.sleep")
+    def test_non_conflict_delete_error_is_not_retried(self, sleep):
+        events = CONNECTED_ONLY + [{"type": "agent.session.turn.failed"}]
+        runner, sessions, _ = self._make_runner(
+            [],
+            event_values=events,
+            delete_outcomes=[RuntimeError("permission denied")],
+        )
+
+        result = runner.run(SashaTask("303839", "task-1", TASK_URL))
+
+        self.assertEqual(result.failure_code, "turn_not_completed")
+        self.assertIn("session deletion: permission denied", result.failure_message)
+        self.assertEqual(sessions.delete_attempts, 1)
+        sleep.assert_not_called()
+
+    def test_cancel_failure_still_deletes_session_and_stops_docker(self):
+        runner, sessions, sandboxes = self._make_runner(
+            [],
+            event_values=CONNECTED_ONLY,
+            turn_timeout=0.01,
+            stays_open=True,
+            cancel_error=RuntimeError("cancel rejected"),
+            delete_outcomes=[RuntimeError("delete rejected")],
+        )
+
+        result = runner.run(SashaTask("303839", "task-1", TASK_URL))
+
+        self.assertEqual(result.failure_code, "managed_runner_error")
+        self.assertIn("exceeded its time limit", result.failure_message)
+        self.assertIn("turn cancellation: cancel rejected", result.failure_message)
+        self.assertIn("session deletion: delete rejected", result.failure_message)
+        self.assertEqual(sessions.operations, ["cancel", "delete", "stop"])
+        self.assertTrue(sandboxes[0].stopped)
+
+    def test_failed_task_send_still_cancels_turn(self):
+        runner, sessions, _ = self._make_runner(
+            [],
+            event_values=CONNECTED_ONLY,
+            stays_open=True,
+            send_error=RuntimeError("response lost"),
+        )
+
+        result = runner.run(SashaTask("303839", "task-1", TASK_URL))
+
+        self.assertEqual(result.failure_code, "managed_runner_error")
+        self.assertIn("response lost", result.failure_message)
+        self.assertEqual(sessions.operations, ["cancel", "delete", "stop"])
+
+    def test_completed_turn_stays_completed_when_cleanup_fails(self):
+        progress_messages = []
+        runner, _, _ = self._make_runner(
+            progress_messages,
+            delete_outcomes=[RuntimeError("delete rejected")],
+        )
+
+        result = runner.run(
+            SashaTask("303839", "task-1", TASK_URL, "Show me green polos.")
+        )
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.message_html, MESSAGE)
+        self.assertEqual(len(self.database.history["303839"]), 2)
+        self.assertIn(
+            "[cleanup] WARNING: session deletion: delete rejected", progress_messages
+        )
+        workspace = runner.last_run_directory / "workspace"
+        cleanup = json.loads((workspace / "cleanup.json").read_text())
+        self.assertEqual(cleanup["errors"], ["session deletion: delete rejected"])
+        saved_result = json.loads((workspace / "result.json").read_text())
+        self.assertEqual(saved_result["status"], "completed")
+
+
+    def test_followup_context_gives_signals_and_the_planned_reason_not_a_stage(self):
+        history = ({"role": "sasha", "content": "<p>Hi</p>", "date": "2026-10-01"},
+                   {"role": "client", "content": "Navy please", "date": "2026-10-03"})
+        task = SashaTask("303839", "follow-up", TASK_URL, turn_type="follow_up", as_of_date="2026-10-13",
+                         conversation_history=history,
+                         deal_state={"status": "active", "status_reason": "",
+                                     "followup": {"scheduled_followup_reason": "Sent navy mockup; check in"}})
+        message = AccountManagerAgent._build_task_message(task, application_environment())
+        self.assertIn("Business as_of_date: 2026-10-13", message)
+        self.assertIn("Days since client reply: 10 day(s)", message)
+        self.assertIn("Why this follow-up was planned: Sent navy mockup; check in", message)
+        self.assertIn("Empty database history means no reply", message)
+        self.assertNotIn("follow_up_stage", message)
+
+    def _final_with(self, sessions, **changes):
+        final = sessions.items._final_item()
+        result = json.loads(final["content"][0]["text"])
+        result.update(changes)
+        final["content"][0]["text"] = json.dumps(result)
+        return final
+
+    def test_agent_handoff_saves_notes_status_and_offers_the_deal(self):
+        runner, sessions, _ = self._make_runner([])
+        offered = []
+
+        class Service:
+            def offer_next(self, deal_id):
+                offered.append(deal_id)
+                return {"outcome": "created", "isa_email": "isa@freshprints.com"}
+
+        runner.handoff_service_factory = lambda storage: Service()
+        holding = "<p>I'm checking with my team and someone will follow up shortly.</p>"
+        reason = "The chapter wants each member to order and pay separately."
+        final = self._final_with(sessions, status="handoff", convo_type="client_response",
+                                 message_html=holding, handoff_reason=reason)
+        with patch.object(sessions.items, "_final_item", return_value=final):
+            result = runner.run(SashaTask("303839", "task-1", TASK_URL, "Can everyone pay separately?"))
+        self.assertEqual((result.status, offered), ("handoff", ["303839"]))
+        self.assertEqual((runner.last_handoff["source"], runner.last_handoff["offer"]["outcome"]), ("agent", "created"))
+        self.assertEqual(self.database.deal_status("303839"), ("handoff_needed", reason))
+        self.assertEqual(self.database.completed[-1][3], holding)
+
+    def _crm_runner(self):
+        runner, sessions, sandboxes = self._make_runner([])
+        edits = []
+
+        class Crm:
+            def edit_deal(self, deal_id, payload):
+                edits.append((deal_id, payload))
+                return True, "ok"
+
+        runner.crm_factory = lambda: Crm()
+        return runner, sessions, sandboxes, edits
+
+    def test_calm_opt_out_sends_one_winback_question_and_marks_the_deal_lost(self):
+        runner, sessions, sandboxes, edits = self._crm_runner()
+        state = {"status": "paused", "reason": "Went with another vendor; win-back question sent.",
+                 "next_check_on": "", "crm_lost_reason": "Client opted out — win-back sent"}
+        question = "<p>Totally understand. What made the other option a better fit?</p>"
+        final = self._final_with(sessions, convo_type="client_response", message_html=question, deal_state=state)
+        with patch.object(sessions.items, "_final_item", return_value=final):
+            result = runner.run(SashaTask("303839", "task-1", TASK_URL, "We went with another vendor, thanks"))
+        self.assertEqual((result.status, result.message_html), ("completed", question))
+        self.assertEqual(self.database.deal_state("303839")["status"], "paused")
+        self.assertEqual(self.database.deal_state("303839")["status_reason"], state["reason"])
+        self.assertEqual(edits, [(303839, {"stage": "lost", "lostReason": "Client opted out — win-back sent"})])
+        self.assertEqual(runner.last_deal_state["crm"], "marked lost")
+        self.assertEqual(self.database.deal_state("303839")["followup"],
+                         {"status": "stopped", "stop_reason": "opt_out_winback"})
+        self.assertIn('"status": "active"', sandboxes[0].task_message)
+
+    def test_opt_out_never_drafts_to_the_client(self):
+        runner, sessions, _, edits = self._crm_runner()
+        state = {"status": "opt_out", "reason": "Asked us to stop emailing.", "next_check_on": "",
+                 "crm_lost_reason": "Client opted out — no win-back"}
+        final = self._final_with(sessions, convo_type="client_response", message_html="<p>Sorry to see you go</p>",
+                                 deal_state=state)
+        with patch.object(sessions.items, "_final_item", return_value=final):
+            result = runner.run(SashaTask("303839", "task-1", TASK_URL, "Stop emailing me"))
+        self.assertEqual((result.status, result.message_html, result.convo_type), ("completed", "", None))
+        self.assertEqual(self.database.deal_state("303839")["status"], "opt_out")
+        self.assertEqual(self.database.deal_state("303839")["followup"]["stop_reason"], "opted_out")
+        self.assertEqual(len(edits), 1)
+        final = self._final_with(sessions, convo_type="followup", message_html="<p>Checking in</p>", deal_state=None)
+        with patch.object(sessions.items, "_final_item", return_value=final):
+            result = runner.run(SashaTask("303839", "task-2", TASK_URL, turn_type="follow_up",
+                                          as_of_date="2026-10-16"))
+        self.assertEqual(result.message_html, "")
+
+    def test_pause_schedules_the_follow_up_without_crm_changes(self):
+        runner, sessions, _, edits = self._crm_runner()
+        state = {"status": "paused", "reason": "Asked to reconnect after spring break.",
+                 "next_check_on": "2027-03-22", "crm_lost_reason": ""}
+        final = self._final_with(sessions, convo_type="client_response", message_html="<p>Sounds good!</p>",
+                                 deal_state=state)
+        with patch.object(sessions.items, "_final_item", return_value=final):
+            runner.run(SashaTask("303839", "task-1", TASK_URL, "Can you reach out after spring break?"))
+        self.assertEqual(self.database.deal_state("303839")["followup"],
+                         {"status": "active", "next_followup_date": "2027-03-22",
+                          "scheduled_followup_reason": state["reason"]})
+        self.assertEqual(runner.last_deal_state["followup"], "scheduled for 2027-03-22")
+        self.assertEqual(edits, [])
+
+    def test_followup_turn_counts_the_draft_and_pauses_without_a_next_day(self):
+        runner, sessions, _, _ = self._crm_runner()
+        self.database.followups["303839"] = {"status": "active", "next_followup_date": None}
+        final = self._final_with(sessions, convo_type="followup", message_html="<p>Two new options</p>")
+        with patch.object(sessions.items, "_final_item", return_value=final):
+            runner.run(SashaTask("303839", "task-1", TASK_URL, turn_type="follow_up", as_of_date="2026-10-16"))
+        followup = self.database.deal_state("303839")["followup"]
+        self.assertEqual((followup["followup_count"], followup["status"]), (1, "paused"))
+
+    def test_followup_turn_with_a_next_day_stays_scheduled(self):
+        runner, sessions, _, _ = self._crm_runner()
+        self.database.followups["303839"] = {"status": "active", "next_followup_date": None}
+        state = {"status": "active", "reason": "Shared two options; check in 2 days.",
+                 "next_check_on": "2026-10-18", "crm_lost_reason": ""}
+        final = self._final_with(sessions, convo_type="followup", message_html="<p>Two new options</p>",
+                                 deal_state=state)
+        with patch.object(sessions.items, "_final_item", return_value=final):
+            runner.run(SashaTask("303839", "task-1", TASK_URL, turn_type="follow_up", as_of_date="2026-10-16"))
+        followup = self.database.deal_state("303839")["followup"]
+        self.assertEqual((followup["status"], followup["next_followup_date"]), ("active", "2026-10-18"))
+
+    def _sample_runner(self, placed=True):
+        runner, sessions, sandboxes = self._make_runner([])
+        calls = []
+
+        class Service:
+            def context(self, deal_id):
+                return {"samples": [{"id": 3, "style_code": "G500", "status": "placed"}], "limits": {"max_unit_price": 50}}
+
+            def place(self, deal_id, run_id, request):
+                calls.append(("place", request["style_code"]))
+                return {"placed": True, "sample_id": 4, "ticket": "url"} if placed else \
+                    {"placed": False, "reason": "style_already_sampled"}
+
+            def record_update(self, deal_id, update):
+                calls.append(("update", update["sample_id"], update["status"]))
+                return {"updated": True, "sample_id": update["sample_id"], "status": update["status"]}
+
+        runner.sample_service_factory = lambda storage: Service()
+        return runner, sessions, sandboxes, calls
+
+    def test_confirmed_sample_is_placed_and_the_turn_saved(self):
+        runner, sessions, sandboxes, calls = self._sample_runner()
+        request = {"trigger": "client_request", "style_code": "C1717", "product_link": "", "color": "White",
+                   "size": "M", "ship_to_name": "Rita", "ship_to_address": "1 Main St",
+                   "contact_email": "", "contact_phone": "", "organization": ""}
+        final = self._final_with(sessions, convo_type="client_response", sample_request=request)
+        with patch.object(sessions.items, "_final_item", return_value=final):
+            result = runner.run(SashaTask("303839", "task-1", TASK_URL, "M in white, 1 Main St"))
+        self.assertEqual((result.status, calls, runner.last_sample["sample_id"]), ("completed", [("place", "C1717")], 4))
+        self.assertIn('"style_code": "G500"', sandboxes[0].task_message)
+        self.assertEqual(len(self.database.completed), 1)
+
+    def test_sample_that_cannot_be_placed_saves_nothing(self):
+        runner, sessions, _, _ = self._sample_runner(placed=False)
+        request = {"trigger": "client_request", "style_code": "G500", "product_link": "", "color": "Black",
+                   "size": "L", "ship_to_name": "Rita", "ship_to_address": "1 Main St",
+                   "contact_email": "", "contact_phone": "", "organization": ""}
+        final = self._final_with(sessions, convo_type="client_response", sample_request=request)
+        with patch.object(sessions.items, "_final_item", return_value=final):
+            result = runner.run(SashaTask("303839", "task-1", TASK_URL, "Another G500 please"))
+        self.assertEqual((result.status, result.failure_code), ("failed", "sample_not_placed"))
+        self.assertIn("style_already_sampled", result.failure_message)
+        self.assertEqual(self.database.completed, [])
+
+    def test_logistics_update_is_recorded(self):
+        runner, sessions, _, calls = self._sample_runner()
+        update = {"sample_id": 3, "status": "shipped", "cancel_reason": ""}
+        final = self._final_with(sessions, convo_type="internal_mail", sample_update=update)
+        reply = "Channel: Email\nFrom: logistics@freshprints.com\n\nSample shipped, UPS 1Z9"
+        with patch.object(sessions.items, "_final_item", return_value=final):
+            result = runner.run(SashaTask("303839", "task-1", TASK_URL, reply))
+        self.assertEqual((result.status, calls), ("completed", [("update", 3, "shipped")]))
+        self.assertTrue(runner.last_sample["update"]["updated"])
+
+    def test_handed_off_deal_gives_the_agent_the_state_and_applies_an_isa_decision(self):
+        runner, sessions, sandboxes = self._make_runner([])
+        self.database.mark_handoff("303839", "Asked for a manager.")
+        applied = []
+        state = {"status": "handoff_needed", "reason": "Asked for a manager.",
+                 "offer": {"id": 5, "status": "OFFERED", "isa_email": "isa@freshprints.com"}}
+
+        class Service:
+            def handoff_context(self, deal_id):
+                return state
+
+            def apply_isa_decision(self, offer_id, decision):
+                applied.append((offer_id, decision))
+                return {"decision": decision, "accepted": True}
+
+        runner.handoff_service_factory = lambda storage: Service()
+        final = self._final_with(sessions, isa_decision="accepted", message_html="<p>Should not be sent</p>")
+        reply = "Channel: Email\nFrom: isa@freshprints.com\n\nYes, I'll take it"
+        with patch.object(sessions.items, "_final_item", return_value=final):
+            outcome = runner.run(SashaTask("303839", "task-1", TASK_URL, reply))
+        self.assertEqual((outcome.status, outcome.message_html, applied), ("completed", "", [(5, "accepted")]))
+        self.assertIn('"isa_email": "isa@freshprints.com"', sandboxes[0].task_message)
+        self.assertEqual(runner.last_handoff["source"], "isa_reply")
+        self.assertEqual(self.database.completed[-1][3], "")
+        final = self._final_with(sessions, status="handoff", handoff_reason="Again", message_html="<p>Hi</p>")
+        with patch.object(sessions.items, "_final_item", return_value=final):
+            outcome = runner.run(SashaTask("303839", "task-2", TASK_URL, "Hello again?"))
+        self.assertEqual((outcome.status, outcome.message_html, runner.last_handoff), ("completed", "", None))
+
+    def _make_runner(
+        self,
+        progress_messages,
+        cost_reporter=None,
+        *,
+        event_values=None,
+        retrieve_error=None,
+        authentication_error=None,
+        browser_error=None,
+        connection_timeout=1,
+        turn_timeout=1,
+        stays_open=False,
+        stream_error=None,
+        send_error=None,
+        cancel_error=None,
+        delete_outcomes=(),
+    ):
+        operations = []
+        sessions = FakeSessionsAPI("303839", event_values, retrieve_error, operations)
+        sessions.events.stays_open = stays_open
+        sessions.events.stream_error = stream_error
+        sessions.events.send_error = send_error
+        sessions.events.cancel_error = cancel_error
+        sessions.delete_outcomes = list(delete_outcomes)
+        client = SimpleNamespace(
+            beta=SimpleNamespace(agents=SimpleNamespace(sessions=sessions))
+        )
+        settings = ManagedRunnerSettings(
+            model="gpt-6-astra",
+            reasoning_effort="medium",
+            executor_api_key="executor-key",
+            application=application_environment(),
+            login_user="qa-user",
+            login_password="qa-password",
+            sandbox_image="test-image",
+            runs_directory=self.root / "runs",
+            connection_timeout_seconds=connection_timeout,
+            turn_timeout_seconds=turn_timeout,
+        )
+        sandboxes = []
+
+        def create_sandbox(config, executor_api_key):
+            sandbox = FakeSandbox(
+                config, executor_api_key, len(sandboxes) + 1, operations
+            )
+            sandbox.authentication_error = authentication_error
+            sandbox.browser_error = browser_error
+            sandboxes.append(sandbox)
+            return sandbox
+
+        progress = ProgressReporter(
+            progress_messages.append if progress_messages is not None else None
+        )
+        runner = AccountManagerAgent(
+            client,
+            settings,
+            create_sandbox,
+            progress,
+            cost_reporter=cost_reporter,
+            storage_factory=lambda: self.database,
+        )
+        return runner, sessions, sandboxes
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -6,7 +6,7 @@ import subprocess
 import uuid
 from pathlib import Path
 
-from openai_managed.sandbox import DockerSandbox, SandboxConfig, SandboxHandle
+from account_manager_agent.sandbox import DockerSandbox, SandboxConfig, SandboxHandle
 
 from sasha_database.config import DatabaseSettings, container_database_options
 

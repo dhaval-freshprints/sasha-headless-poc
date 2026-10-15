@@ -8,10 +8,10 @@ from pathlib import Path
 from subprocess import CompletedProcess
 from unittest.mock import MagicMock, patch
 
-from openai_managed import customer_links
+from account_manager_agent import customer_links
 from sasha_database.config import DatabaseSettings as CustomerLinkDatabase
-from openai_managed.sandbox import DockerSandbox, SandboxConfig
-from openai_managed.task import SashaTask
+from account_manager_agent.sandbox import DockerSandbox, SandboxConfig
+from account_manager_agent.task import SashaTask
 
 
 DATABASE_ENVIRONMENT = {
@@ -141,9 +141,9 @@ class CustomerLinkRuntimeTests(unittest.TestCase):
             settings = CustomerLinkDatabase(dict(DATABASE_ENVIRONMENT))
             sandbox = DockerSandbox(SandboxConfig("image", root, "https://hq.example"), "executor")
             handle = sandbox.prepare(SashaTask("100", "task", "https://crm.example/deal?id=100"))
-            with patch("openai_managed.sandbox.DatabaseSettings.from_environment", return_value=settings), \
+            with patch("account_manager_agent.sandbox.DatabaseSettings.from_environment", return_value=settings), \
                     patch.dict(os.environ, {"UNRELATED_SECRET": "unrelated", "OPENAI_API_KEY": "openai-secret"}), \
-                    patch("openai_managed.sandbox.subprocess.run", return_value=CompletedProcess([], 0)) as run:
+                    patch("account_manager_agent.sandbox.subprocess.run", return_value=CompletedProcess([], 0)) as run:
                 sandbox.start_container()
             run.assert_called_once()
             arguments = run.call_args.args[0]
@@ -171,8 +171,8 @@ class CustomerLinkRuntimeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             sandbox = DockerSandbox(SandboxConfig("image", Path(directory)), "executor")
             sandbox.prepare(SashaTask("100", "task", "https://crm.example/deal?id=100"))
-            with patch("openai_managed.sandbox.DatabaseSettings.from_environment", side_effect=ValueError("missing")), \
-                    patch("openai_managed.sandbox.subprocess.run") as run:
+            with patch("account_manager_agent.sandbox.DatabaseSettings.from_environment", side_effect=ValueError("missing")), \
+                    patch("account_manager_agent.sandbox.subprocess.run") as run:
                 with self.assertRaises(ValueError):
                     sandbox.start_container()
                 run.assert_not_called()

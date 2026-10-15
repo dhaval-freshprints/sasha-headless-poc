@@ -1,4 +1,4 @@
-# OpenAI-managed Account Manager POC
+# Account Manager Agent POC
 
 Account Manager handles one Fresh Prints sales turn through an OpenAI managed agent
 session, using Sasha as its client-facing persona. It chooses outreach, client response,
@@ -13,10 +13,10 @@ purchase anything, or delete CRM records.
 deal ID + optional client message
               |
               v
-scripts/run_openai_managed_sasha.py
+scripts/run_account_manager_agent_sasha.py
               |
               v
-OpenAIManagedRunner
+AccountManagerAgent
               |
               +--> sign in to the configured Fresh Prints environment
               +--> start a disposable Docker browser environment
@@ -30,7 +30,7 @@ in before the agent starts, passes credentials to the fixed login script over
 standard input, and removes the container when the turn ends.
 
 After sign-in, the runner starts one headless Chrome on the signed-in profile
-(`openai_managed/start_browser.js`) and keeps it running for the whole turn.
+(`account_manager_agent/start_browser.js`) and keeps it running for the whole turn.
 Sasha's Playwright scripts attach to it with
 `chromium.connectOverCDP('http://127.0.0.1:9222')` instead of launching Chrome,
 so page state carries over between commands. The port exists only inside the
@@ -91,7 +91,7 @@ explicitly. Legacy notes/conversation files are ignored; do not import them duri
 Then build the disposable executor image:
 
 ```bash
-docker build -t sasha-openai-managed:local .
+docker build -t sasha-account-manager-agent:local .
 ```
 
 ## Run
@@ -99,13 +99,13 @@ docker build -t sasha-openai-managed:local .
 Run Account Manager (an empty database conversation produces initial outreach):
 
 ```bash
-.venv/bin/python scripts/run_openai_managed_sasha.py DEAL_ID --verbose
+.venv/bin/python scripts/run_account_manager_agent_sasha.py DEAL_ID --verbose
 ```
 
 Handle a client message:
 
 ```bash
-.venv/bin/python scripts/run_openai_managed_sasha.py DEAL_ID \
+.venv/bin/python scripts/run_account_manager_agent_sasha.py DEAL_ID \
   --message "What's the price for 40?" \
   --verbose \
   --pricing
@@ -114,7 +114,7 @@ Handle a client message:
 Add direct artwork URLs with repeatable `--file` arguments:
 
 ```bash
-.venv/bin/python scripts/run_openai_managed_sasha.py DEAL_ID \
+.venv/bin/python scripts/run_account_manager_agent_sasha.py DEAL_ID \
   --message "Put this logo on the back." \
   --file "https://example.com/logo.png"
 ```
@@ -212,13 +212,13 @@ maps them for the lookup, and the agent container receives resolved values.
 ## Time limit
 
 Sasha may work for up to 20 minutes per managed turn. Change
-`OPENAI_MANAGED_TURN_TIMEOUT_SECONDS` if a different limit is required.
+`ACCOUNT_MANAGER_AGENT_TURN_TIMEOUT_SECONDS` if a different limit is required.
 Container preparation, Fresh Prints authentication, artifact collection, and cleanup are
 outside that managed-turn limit.
 
 ## Output
 
-Run artifacts remain under `runs/openai-managed/<environment>/`. They may contain debug
+Run artifacts remain under `runs/account-manager-agent/<environment>/`. They may contain debug
 copies of prompts and results. They are never a fallback for deal notes or conversation history.
 Downloaded client artwork is removed after the turn.
 
@@ -321,19 +321,19 @@ test conversations and explicitly request no saved QA changes when only testing
 notes. Automated tests use simulated agent output and do not prove these semantic
 behaviors.
 
-## OpenAI-managed source
+## Account Manager Agent source
 
-- `openai_managed/runner.py`: session lifecycle and result collection
-- `openai_managed/sandbox.py`: disposable Docker environment
-- `openai_managed/setup_auth.js`: Fresh Prints authentication inside the container
-- `openai_managed/conversation.py`: per-deal conversation history
-- `openai_managed/notes.py`: shared Markdown notebooks
-- `openai_managed/attachments.py`: temporary client artwork downloads
-- `openai_managed/agent_instructions.md`: stable agent boundaries
-- `openai_managed/capabilities/account-manager/`: conversation routing, shared browser, evidence, verification, and formatting rules
-- `openai_managed/capabilities/outreach/SKILL.md`: outreach inspection and action rules
-- `openai_managed/capabilities/client-response-orchestrator/SKILL.md`: client-response strategy and action rules
-- `scripts/run_openai_managed_sasha.py`: CLI entry point
+- `account_manager_agent/runner.py`: session lifecycle and result collection
+- `account_manager_agent/sandbox.py`: disposable Docker environment
+- `account_manager_agent/setup_auth.js`: Fresh Prints authentication inside the container
+- `account_manager_agent/conversation.py`: per-deal conversation history
+- `account_manager_agent/notes.py`: shared Markdown notebooks
+- `account_manager_agent/attachments.py`: temporary client artwork downloads
+- `account_manager_agent/agent_instructions.md`: stable agent boundaries
+- `account_manager_agent/capabilities/account-manager/`: conversation routing, shared browser, evidence, verification, and formatting rules
+- `account_manager_agent/capabilities/outreach/SKILL.md`: outreach inspection and action rules
+- `account_manager_agent/capabilities/client-response/SKILL.md`: client-response strategy and action rules
+- `scripts/run_account_manager_agent_sasha.py`: CLI entry point
 
 ## Send an Additional Message during a run
 
@@ -407,22 +407,25 @@ A successful no-reply result has `status: "completed"` and `message_html: ""`;
 the console displays **No reply needed**. Client messages are saved before AM starts, including when the run fails or returns no reply.
 No-reply turns do not append an empty Sasha entry.
 
-Every run copies these six skills:
+Every run copies these nine skills:
 
-- [Account Manager](openai_managed/capabilities/account-manager/SKILL.md) owns action selection, no-reply rules, and shared browser/evidence boundaries.
-- [Outreach](openai_managed/capabilities/outreach/SKILL.md) owns read-only initial outreach inspection.
-- [Client response](openai_managed/capabilities/client-response-orchestrator/SKILL.md) owns sales actions for client requests.
+- [Account Manager](account_manager_agent/capabilities/account-manager/SKILL.md) owns action selection, no-reply rules, and shared browser/evidence boundaries.
+- [Outreach](account_manager_agent/capabilities/outreach/SKILL.md) owns read-only initial outreach inspection.
+- [Client response](account_manager_agent/capabilities/client-response/SKILL.md) owns sales actions for client requests.
 
-- [Internal email](openai_managed/capabilities/internal-email/SKILL.md) handles internal updates and decides whether the client needs a draft.
-- [Follow-up](openai_managed/capabilities/followup/SKILL.md) selects a phase and one unused, evidence-backed tactic for explicit follow-up checks.
-- [Promo Codes](openai_managed/capabilities/promo-codes/SKILL.md) owns one current regular-order promo per deal, discount policy, database verification, and customer explanation. Reuse the deal's valid unused code; client responses may create a first code or replace a verified expired/used one. Follow-ups may explain a freshly verified existing deal code but cannot create or replace it.
+- [Internal email](account_manager_agent/capabilities/internal-email/SKILL.md) handles internal updates and decides whether the client needs a draft.
+- [Follow-up](account_manager_agent/capabilities/followup/SKILL.md) selects a phase and one unused, evidence-backed tactic for explicit follow-up checks.
+- [Promo Codes](account_manager_agent/capabilities/promo-codes/SKILL.md) owns one current regular-order promo per deal, discount policy, database verification, and customer explanation. Reuse the deal's valid unused code; client responses may create a first code or replace a verified expired/used one. Follow-ups may explain a freshly verified existing deal code but cannot create or replace it.
+
+- [Winback](account_manager_agent/capabilities/winback/SKILL.md) handles opt-outs, one permitted feedback question, and replies to that question.
+- [Samples](account_manager_agent/capabilities/samples/SKILL.md) owns free blank sample eligibility, requests, and shipping updates.
+- [Handoff](account_manager_agent/capabilities/handoff/SKILL.md) supplies takeover criteria and the handoff procedure, including ISA replies for already handed-off deals. Account Manager owns the handoff decision.
 
 Account Manager's routing and no-reply rules govern the specialized skills.
-All actions use [shared sales rules](openai_managed/capabilities/account-manager/references/sales_rules.md), including pricing, proofs, stock, delivery, and samples.
-Before drafting, the agent reads [shared crafting](openai_managed/capabilities/account-manager/references/shared_crafting.md)
-and the relevant [outreach](openai_managed/capabilities/outreach/references/outreach_crafting.md)
-or [client response](openai_managed/capabilities/client-response-orchestrator/references/client_response_crafting.md)
-crafting guide. The [Workplace reference](openai_managed/capabilities/account-manager/references/workplace.md)
+All actions use [shared sales rules](account_manager_agent/capabilities/account-manager/references/sales_rules.md), including pricing, proofs, stock, delivery, and samples.
+Before drafting, the agent reads the common rules in [Crafting Rules](account_manager_agent/capabilities/account-manager/references/crafting_rules.md)
+and the Client responses or Outreach section when that workflow is selected.
+Follow-ups use the common rules plus the followup skill's tone guidance. The [Workplace reference](account_manager_agent/capabilities/account-manager/references/workplace.md)
 describes application pages and controls. Sasha remains the client-facing name.
 
 The Promo Codes section in Workplace documents V4 navigation, conditional form
@@ -432,7 +435,7 @@ targeting without individual account searches, with one total use and corporate
 visibility off. The notebook keeps the current code and database ID. New codes use
 `SASHA<deal_id>-` names for recovery if notebook persistence fails. Always open the
 saved code's detail dialog for its terms; use the list only to locate it. The
-[database operations](openai_managed/capabilities/promo-codes/references/check_promo_expiry_and_usage.md)
+[database operations](account_manager_agent/capabilities/promo-codes/references/check_promo_expiry_and_usage.md)
 use the existing read-only `python /opt/sasha/database.py --role main` command for
 UTC validity, status, total usage, and completed redemptions before each offer.
 Database timestamps take precedence over conflicting UI dates. AM chooses expiry and minimum
@@ -456,7 +459,7 @@ Report real-agent checks separately.
 
 Sasha hands a deal to a Fresh Prints teammate (an ISA) when it judges that a person should take
 over. There are no keyword rules or fixed categories: Account Manager decides, following
-[the handoff guide](openai_managed/capabilities/account-manager/references/handoff.md), which
+[the handoff guide](account_manager_agent/capabilities/handoff/SKILL.md), which
 describes the kinds of situations (an item Fresh Prints does not carry, a group order, a client
 upset with Sasha, work that keeps failing or a request it cannot resolve) and leaves the call to
 the agent. It returns `status: "handoff"` with `handoff_reason` in its own words for the ISA, and
@@ -501,8 +504,8 @@ Sasha.
 ## Replying, opt-out and win-back
 
 Account Manager decides whether to write at all and what a client's words mean for the deal,
-following [conversation judgement](openai_managed/capabilities/account-manager/references/conversation_judgement.md)
-and [win-back](openai_managed/capabilities/account-manager/references/winback.md). There are no
+following [conversation and deal state rules](account_manager_agent/capabilities/account-manager/references/conversation_and_deal_state_rules.md)
+and [win-back](account_manager_agent/capabilities/winback/SKILL.md). There are no
 keyword rules: silence for a plain thanks or an auto-reply, a pause when the client asks to be
 contacted later, one gentle re-engagement after a declined order, and v3's opt-out handling
 (one calm win-back question, otherwise a permanent opt-out).
@@ -531,7 +534,7 @@ Database setup: apply `sql/20261016_0001_sasha_deal_status_reason.sql`; the oper
 
 Fresh Prints sends free, blank samples (no print) so a client can check fit and quality. Account
 Manager handles the selling and judgement, following
-[the samples guide](openai_managed/capabilities/account-manager/references/samples.md): it offers a
+[the samples guide](account_manager_agent/capabilities/samples/SKILL.md): it offers a
 sample when the client asks or doubts fit or quality (or as a follow-up tactic), checks the limits,
 collects style, color, size, shipping address and contact details, and places the sample only once
 everything is confirmed.
@@ -559,7 +562,7 @@ and cancelling open samples on opt-out.
 
 **Account Manager decides when.** After every turn (outreach, client response, internal update,
 follow-up) Sasha sets the next follow-up day with its own reason in `deal_state.next_check_on`,
-following "Choose the next follow-up" in the [follow-up skill](openai_managed/capabilities/followup/SKILL.md)
+following "Choose the next follow-up" in the [follow-up skill](account_manager_agent/capabilities/followup/SKILL.md)
 (v3's rhythm is the default guidance, not a fixed calendar; a client's own date always wins). The day
 is written to v3's `sasha_followup_schedule` (`next_followup_date`, `scheduled_followup_reason`).
 
@@ -643,7 +646,7 @@ Run the browser UI test with synthetic HTTP responses (no CRM or OpenAI access):
 
 ```bash
 docker run --rm --mount "type=bind,src=$PWD,dst=/repo,readonly" \
-  sasha-openai-managed:local node /repo/webapp/tests/AM01_account_manager_ui.js
+  sasha-account-manager-agent:local node /repo/webapp/tests/AM01_account_manager_ui.js
 ```
 
 ### Independent Deal Manager Agent
@@ -732,7 +735,7 @@ Live QA smoke tests for the kept-open browser sign in to the configured Fresh Pr
 the managed Docker image. They are skipped unless `SASHA_LIVE_QA=1`:
 
 ```bash
-SASHA_LIVE_QA=1 .venv/bin/python -m unittest tests.test_openai_managed_browser -v
+SASHA_LIVE_QA=1 .venv/bin/python -m unittest tests.test_account_manager_agent_browser -v
 ```
 
 ## Account Manager customer links

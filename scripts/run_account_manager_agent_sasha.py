@@ -1,0 +1,92 @@
+#!/usr/bin/env python3
+"""Run one Fresh Prints Account Manager turn."""
+
+import argparse
+import json
+import sys
+import time
+import uuid
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from account_manager_agent.pricing import CostReporter
+from account_manager_agent.progress import ProgressReporter
+from account_manager_agent.runner import AccountManagerAgent
+from account_manager_agent.environment import ApplicationEnvironment
+from account_manager_agent.task import SashaTask
+
+
+def parse_arguments(arguments: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Run one Fresh Prints Account Manager turn."
+    )
+    parser.add_argument("deal_id", help="Fresh Prints deal ID")
+    parser.add_argument(
+        "--message",
+        help="Optional inbound client message",
+    )
+    parser.add_argument(
+        "-f",
+        "--file",
+        action="append",
+        default=[],
+        metavar="URL",
+        help="Direct URL to a client artwork file; repeat for multiple files",
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print live orchestration and agent activity",
+    )
+    parser.add_argument(
+        "--pricing",
+        action="store_true",
+        help="Print estimated OpenAI token pricing for the complete run",
+    )
+    return parser.parse_args(arguments)
+
+
+def main() -> int:
+    load_dotenv(ROOT / ".env")
+    arguments = parse_arguments()
+
+    application = ApplicationEnvironment.from_environment()
+
+    task = SashaTask(
+        deal_id=arguments.deal_id,
+        task_id=f"sasha-{arguments.deal_id}-{uuid.uuid4().hex[:8]}",
+        deal_url=application.deal_url(arguments.deal_id),
+        client_message=arguments.message,
+        file_urls=tuple(arguments.file),
+    )
+    progress = ProgressReporter(
+        (lambda message: print(message, file=sys.stderr))
+        if arguments.verbose
+        else None
+    )
+    cost_reporter = (
+        CostReporter(lambda message: print(message, file=sys.stderr))
+        if arguments.pricing
+        else None
+    )
+    runner = AccountManagerAgent.from_environment(progress, cost_reporter)
+    started_at = time.perf_counter()
+    try:
+        result = runner.run(task)
+    finally:
+        elapsed_seconds = time.perf_counter() - started_at
+        minutes, seconds = divmod(int(elapsed_seconds + 0.5), 60)
+        print(f"[timing] Total run: {minutes} min {seconds:02d} sec", file=sys.stderr)
+    print(json.dumps(result.to_dict(), indent=2))
+    if runner.last_run_directory:
+        print(f"Artifacts: {runner.last_run_directory}", file=sys.stderr)
+    return 0 if result.status in {"completed", "handoff"} else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

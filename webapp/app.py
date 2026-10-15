@@ -16,8 +16,8 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from openai_managed.environment import ApplicationEnvironment
-from openai_managed.task import normalize_client_message, validate_follow_up
+from account_manager_agent.environment import ApplicationEnvironment
+from account_manager_agent.task import normalize_client_message, validate_follow_up
 from sasha_database.storage import SashaStorage, validate_deal_id
 from sasha_database.connection import DatabaseError
 from sasha_database.messages import IncomingMessage, incoming_message
@@ -407,7 +407,7 @@ class LazyHandoffService:
     def __getattr__(self, name):
         with self._lock:
             if self._service is None:
-                from openai_managed.handoff.service import HandoffService
+                from account_manager_agent.handoff.service import HandoffService
 
                 self._service = HandoffService()
         return getattr(self._service, name)
@@ -437,7 +437,7 @@ def run_due_followups(manager: JobManager, deals: DealStore, settings=None, forc
     Runs only when sasha_settings enable Sasha and automatic follow-ups, and, unless forced,
     during client hours (Mon–Fri 8:00–17:00 New York). Account Manager decides what to send.
     """
-    from openai_managed.handoff.working_hours import ISA_TZ, is_working_time
+    from account_manager_agent.handoff.working_hours import ISA_TZ, is_working_time
 
     now = now or datetime.now(timezone.utc)
     if settings is None:

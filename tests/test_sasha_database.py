@@ -72,8 +72,8 @@ class MessageTests(unittest.TestCase):
         from deal_manager_agent.settings import DealManagerSettings
         from deal_manager_agent.sandbox import DealManagerSandbox
         from deal_manager_agent.models import LookupRequest
-        from openai_managed.sandbox import DockerSandbox, SandboxConfig
-        from openai_managed.task import SashaTask
+        from account_manager_agent.sandbox import DockerSandbox, SandboxConfig
+        from account_manager_agent.task import SashaTask
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             database = DatabaseSettings({
@@ -87,7 +87,7 @@ class MessageTests(unittest.TestCase):
             am = DockerSandbox(SandboxConfig('image', root / 'am'), 'key')
             dm.prepare(LookupRequest(sender_email='client@example.com', body='Hello'))
             am.prepare(SashaTask('42', 'task', 'https://example.com/deal?id=42'))
-            with patch('subprocess.run') as run, patch('openai_managed.sandbox.DatabaseSettings.from_environment', return_value=database):
+            with patch('subprocess.run') as run, patch('account_manager_agent.sandbox.DatabaseSettings.from_environment', return_value=database):
                 dm.start_container()
                 am.start_container()
             names = []
@@ -311,7 +311,7 @@ class MySQLStorageTests(unittest.TestCase):
             self.storage.complete_run('42', 'two', 'Handed off.', 'x', '', None, handoff_reason='  ')
 
     def test_handoff_offers_keep_one_open_offer_per_deal(self):
-        from openai_managed.handoff.selection import select_next_isa
+        from account_manager_agent.handoff.selection import select_next_isa
         from sasha_database.handoff import HandoffOffers
         with self.admin.cursor() as cursor:
             cursor.execute("INSERT INTO sasha_handoff_isas (id,user_id,email,first_name,rank_order) VALUES "
@@ -332,7 +332,7 @@ class MySQLStorageTests(unittest.TestCase):
         self.assertEqual(self.storage.client_contact('42'), {'client_id': 7, 'email': 'client@example.com'})
 
     def test_samples_are_stored_updated_and_settings_read(self):
-        from openai_managed.samples.service import SampleService
+        from account_manager_agent.samples.service import SampleService
         with self.admin.cursor() as cursor:
             cursor.execute("INSERT INTO sasha_settings (`key`,`value`) VALUES ('followup_sample_max_unit_value','50'),"
                            "('sample_max_per_deal','4'),('followup_sample_cooldown_days','14'),('sasha_user_id','42')")

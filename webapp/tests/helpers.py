@@ -1,8 +1,8 @@
 import time
 from pathlib import Path
 
-from openai_managed.task import SashaResult
-from openai_managed.additional_messages import AdditionalMessageInbox
+from account_manager_agent.task import SashaResult
+from account_manager_agent.additional_messages import AdditionalMessageInbox
 
 
 class FakeRunner:

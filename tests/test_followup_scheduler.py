@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from tests.database_helpers import MemoryStorage
-from tests.test_openai_managed_environment import APPLICATION_VALUES
+from tests.test_account_manager_agent_environment import APPLICATION_VALUES
 from webapp.app import run_due_followups
 from webapp.deals import DealStore
 from webapp.jobs import JobManager

@@ -4,8 +4,8 @@ import json
 import time
 from pathlib import Path
 
-from openai_managed.progress import ProgressReporter
-from openai_managed.runner import (
+from account_manager_agent.progress import ProgressReporter
+from account_manager_agent.runner import (
     SessionEvents, _extract_final_assistant_text, _read_value,
     _strip_json_fence, _to_plain_value,
 )

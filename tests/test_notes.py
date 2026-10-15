@@ -1,5 +1,5 @@
 import unittest
-from openai_managed.notes import (
+from account_manager_agent.notes import (
     MAX_NOTES_BYTES, prepare_notes, validate_notes, saved_attachment_urls,
     with_attachment_links, preserve_follow_up_history, follow_up_entries, used_follow_up_tactics,
 )

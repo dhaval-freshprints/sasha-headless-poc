@@ -4,9 +4,9 @@ import json
 from unittest.mock import patch
 import unittest
 
-from tests import test_openai_managed_runner as fixtures
-from openai_managed.task import SashaTask
-from openai_managed.notes import follow_up_entries, saved_attachment_urls
+from tests import test_account_manager_agent_runner as fixtures
+from account_manager_agent.task import SashaTask
+from account_manager_agent.notes import follow_up_entries, saved_attachment_urls
 from sasha_database.connection import DatabaseError
 from sasha_database.messages import IncomingMessage
 
@@ -107,10 +107,10 @@ class RunnerPersistenceTests(unittest.TestCase):
         self.assertNotIn('Dead legacy notes', self.sandboxes[0].task_message)
 
     def test_saved_attachments_are_restored_and_urls_preserved(self):
-        from openai_managed.attachments import AttachmentSet
+        from account_manager_agent.attachments import AttachmentSet
         url = 'https://example.test/logo.svg?signature=abc%2Fdef'
         self.database.notes['303839'] = f'## Attachments\n- logo.svg: <{url}>\n'
-        with patch('openai_managed.runner.restore_saved_attachments') as restore:
+        with patch('account_manager_agent.runner.restore_saved_attachments') as restore:
             result = self.runner.run(self.task)
         self.assertEqual(result.status, 'completed')
         self.assertEqual(restore.call_args.args[0], [url])

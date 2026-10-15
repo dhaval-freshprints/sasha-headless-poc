@@ -4,7 +4,7 @@ import tempfile
 import threading
 import time
 import unittest
-from tests.test_openai_managed_environment import APPLICATION_VALUES
+from tests.test_account_manager_agent_environment import APPLICATION_VALUES
 from pathlib import Path
 from unittest.mock import patch
 
@@ -160,7 +160,7 @@ class WebAppTests(unittest.TestCase):
                 self.assertEqual(_deals_directory(), self.root / "deals" / environment)
 
     def test_rejects_obsolete_workflow_before_creating_jobs(self):
-        for workflow in ("outreach", "client-response-orchestrator", "unknown", None):
+        for workflow in ("outreach", "client-response", "client-response-orchestrator", "unknown", None):
             with self.subTest(workflow=workflow):
                 response = self.client.post("/api/runs", json={"deal_id": "303839", "workflow": workflow})
                 self.assertEqual(response.status_code, 422)

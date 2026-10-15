@@ -12,15 +12,15 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from dotenv import dotenv_values
 from openai import OpenAI
-from openai_managed.runner import OpenAIManagedRunner, ManagedRunnerSettings
-from openai_managed.sandbox import DockerSandbox
-from openai_managed.environment import ApplicationEnvironment
-from openai_managed.progress import ProgressReporter
+from account_manager_agent.runner import AccountManagerAgent, ManagedRunnerSettings
+from account_manager_agent.sandbox import DockerSandbox
+from account_manager_agent.environment import ApplicationEnvironment
+from account_manager_agent.progress import ProgressReporter
 from tests.database_helpers import MemoryStorage
 from sasha_database.config import DatabaseSettings
 from unittest.mock import patch
-from openai_managed.task import SashaTask
-from openai_managed.notes import follow_up_entries
+from account_manager_agent.task import SashaTask
+from account_manager_agent.notes import follow_up_entries
 
 configuration = dotenv_values(ROOT / '.env')
 # Only OpenAI credentials and runtime settings are used from configuration.
@@ -34,7 +34,7 @@ settings = ManagedRunnerSettings(
     reasoning_effort=configuration.get('OPENAI_AGENT_REASONING_EFFORT', 'medium'),
     executor_api_key=configuration['OPENAI_EXECUTOR_API_KEY'],
     application=application, login_user='synthetic', login_password='synthetic',
-    sandbox_image=configuration.get('OPENAI_MANAGED_SANDBOX_IMAGE', 'sasha-openai-managed:local'),
+    sandbox_image=configuration.get('ACCOUNT_MANAGER_AGENT_SANDBOX_IMAGE', 'sasha-account-manager-agent:local'),
     runs_directory=DIRECTORY, connection_timeout_seconds=90, turn_timeout_seconds=300,
 )
 FIXTURE = """<!doctype html><html><head><title>Synthetic CRM</title></head><body>
@@ -56,7 +56,7 @@ class FixtureSandbox(DockerSandbox):
             'NON_PROD_USER': 'synthetic', 'NON_PROD_PASS': 'synthetic',
             'DEAL_MANAGER_MAIN_SCHEMA': 'synthetic', 'DEAL_MANAGER_OPERATIONS_SCHEMA': 'synthetic',
         })
-        with patch('openai_managed.sandbox.DatabaseSettings.from_environment', return_value=database):
+        with patch('account_manager_agent.sandbox.DatabaseSettings.from_environment', return_value=database):
             super().start_container()
 
     def prepare(self, task):
@@ -68,10 +68,10 @@ class FixtureSandbox(DockerSandbox):
     def authenticate(self, *arguments):
         subprocess.run(['docker', 'exec', '--detach', self.handle.container_name, 'node', '/workspace/FM01_fixture_server.js'], check=True)
 
-class ReadOnlyRunner(OpenAIManagedRunner):
+class ReadOnlyRunner(AccountManagerAgent):
     @staticmethod
     def _load_instructions():
-        return OpenAIManagedRunner._load_instructions() + '\nVerification constraint: Use only the supplied synthetic localhost applications. This is a read-only verification run: do not create or change any deal, proof, or art request. Local notebook updates are allowed.\n'
+        return AccountManagerAgent._load_instructions() + '\nVerification constraint: Use only the supplied synthetic localhost applications. This is a read-only verification run: do not create or change any deal, proof, or art request. Local notebook updates are allowed.\n'
 
 DEAL = '900001'
 question = 'Are samples free, and do they include the printed design?'
@@ -81,7 +81,7 @@ history = [
     {'role':'sasha', 'content_type':'text/html', 'content':'<p>Take your time discussing the Synthetic Cotton Tee with the club.</p>', 'delivery_status':'generated'},
 ]
 prior_notes = "## Current decisions\n- Stage 1 follow-up sent: curated_design_idea\n"
-TACTICS = re.findall(r"^\| `([a-z_]+)` \|", (ROOT / 'openai_managed/capabilities/followup/references/tactics.md').read_text(), re.MULTILINE)
+TACTICS = re.findall(r"^\| `([a-z_]+)` \|", (ROOT / 'account_manager_agent/capabilities/followup/references/tactics.md').read_text(), re.MULTILINE)
 exhausted = prior_notes + "".join(f"- Follow-up generated: {tactic}\n" for tactic in TACTICS if tactic != 'curated_design_idea')
 # Follow-up checks give (as_of_date, days_since_client_reply); the skill infers the phase from them.
 cases = [

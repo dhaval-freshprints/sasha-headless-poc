@@ -3,9 +3,9 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import unittest
 
-from openai_managed.handoff.selection import select_next_isa
-from openai_managed.handoff.service import HandoffService, offer_body
-from openai_managed.handoff.working_hours import is_offer_timed_out, is_working_time, working_minutes_elapsed
+from account_manager_agent.handoff.selection import select_next_isa
+from account_manager_agent.handoff.service import HandoffService, offer_body
+from account_manager_agent.handoff.working_hours import is_offer_timed_out, is_working_time, working_minutes_elapsed
 from sasha_database.handoff import Isa, Offer
 from sasha_database.storage import validate_handoff_reason
 

@@ -9,8 +9,8 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-from openai_managed.task import SashaResult
-from tests.test_openai_managed_environment import APPLICATION_VALUES
+from account_manager_agent.task import SashaResult
+from tests.test_account_manager_agent_environment import APPLICATION_VALUES
 from webapp.app import create_app
 from webapp.deal_manager_jobs import DealManagerJobs
 from webapp.deals import DealStore

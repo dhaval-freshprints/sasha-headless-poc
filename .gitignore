@@ -2,7 +2,7 @@
 .venv/
 auth
 auth/
-auth-openai-managed/
+auth-account-manager-agent/
 evals/
 runs/
 __pycache__/

@@ -12,14 +12,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from openai_managed.pricing import CostReporter
-from openai_managed.progress import ProgressReporter
-from openai_managed.runner import OpenAIManagedRunner
-from openai_managed.environment import ApplicationEnvironment
+from account_manager_agent.pricing import CostReporter
+from account_manager_agent.progress import ProgressReporter
+from account_manager_agent.runner import AccountManagerAgent
+from account_manager_agent.environment import ApplicationEnvironment
 from sasha_database.storage import SashaStorage
 from sasha_database.messages import IncomingMessage, incoming_message
 
-from openai_managed.task import SashaResult, SashaTask, normalize_client_message, validate_follow_up
+from account_manager_agent.task import SashaResult, SashaTask, normalize_client_message, validate_follow_up
 
 
 FINAL_STATUSES = {"completed", "handoff", "failed"}
@@ -83,7 +83,7 @@ class JobManager:
         self.runner_factory = runner_factory or self._create_runner
         self.lock = threading.RLock()
         self.jobs: dict[str, WebRun] = {}
-        self.active_runners: dict[str, OpenAIManagedRunner] = {}
+        self.active_runners: dict[str, AccountManagerAgent] = {}
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="sasha-web")
         self._load_saved_jobs()
 
@@ -318,8 +318,8 @@ class JobManager:
             temporary_path.unlink(missing_ok=True)
 
     @staticmethod
-    def _create_runner(write: Callable[[str], None]) -> OpenAIManagedRunner:
-        return OpenAIManagedRunner.from_environment(
+    def _create_runner(write: Callable[[str], None]) -> AccountManagerAgent:
+        return AccountManagerAgent.from_environment(
             ProgressReporter(write),
             CostReporter(write),
         )

@@ -5,11 +5,11 @@ import time
 import unittest
 from types import SimpleNamespace
 
-from openai_managed.conversation import ConversationStore
-from openai_managed.additional_messages import AdditionalMessageInbox
-from openai_managed.task import SashaTask
-from openai_managed.notes import follow_up_entries
-from tests import test_openai_managed_runner as runner_tests
+from account_manager_agent.conversation import ConversationStore
+from account_manager_agent.additional_messages import AdditionalMessageInbox
+from account_manager_agent.task import SashaTask
+from account_manager_agent.notes import follow_up_entries
+from tests import test_account_manager_agent_runner as runner_tests
 
 
 class ControlledStream:
@@ -304,11 +304,11 @@ class AdditionalMessageTests(unittest.TestCase):
     def test_additional_artwork_is_staged_without_exposing_signed_url(self):
         from unittest.mock import patch
         from sasha_database.messages import IncomingMessage
-        from openai_managed.notes import saved_attachment_urls
+        from account_manager_agent.notes import saved_attachment_urls
         self.start()
         url = 'https://example.test/logo.svg?signature=synthetic-secret'
         message = IncomingMessage('Use this logo', 'client@example.com', attachments=(url,))
-        with patch('openai_managed.attachments.urllib.request.urlopen',
+        with patch('account_manager_agent.attachments.urllib.request.urlopen',
                    return_value=runner_tests.FakeResponse(b'<svg/>', 'image/svg+xml')):
             self.runner.submit_message('artwork', message.body, message)
         self.assertTrue(self.control.additional_message_sent.wait(2))

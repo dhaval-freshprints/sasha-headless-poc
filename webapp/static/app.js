@@ -577,6 +577,7 @@ function runTitle(run) {
   switch (run.workflow) {
     case "outreach":
       return "Initial outreach";
+    case "client-response":
     case "client-response-orchestrator":
       return truncate(displayClientMessage(run.client_message) || "Client response", 72);
     default:

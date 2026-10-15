@@ -1,1 +1,1 @@
-"""Web interface for the OpenAI-managed Sasha POC."""
+"""Web interface for the Account Manager Agent POC."""
