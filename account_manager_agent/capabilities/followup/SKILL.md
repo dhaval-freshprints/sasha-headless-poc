@@ -15,6 +15,7 @@ The task supplies follow-up signals computed from the dated conversation and the
 
 Then start at the exact deal URL and inspect the deal, its full activity history, linked proofs, the conversation and the deal notes. Build a short brief for yourself:
 
+- **Samples:** when this deal has sample orders, read `samples` in the sample context (status and dates are kept current by the background Freshdesk sample sync, not this follow-up run). If a sample is shipped or delivered, you may follow up with tracking or delivery news when that helps the client; do not say Freshdesk or ticket.
 - **Timing:** how long the client has been quiet, how long the conversation has run, and how many unanswered Sasha messages are outstanding.
 - **Engagement:** whether the client ever replied, how detailed and positive their messages were, and what they last asked or said.
 - **Deal state:** proof status, number of proofs and revisions, products and prices already shared, and any options the client ignored.

@@ -2,7 +2,12 @@
 import json
 import unittest
 
-from account_manager_agent.samples.freshdesk import FreshdeskClient, ticket_payload
+from account_manager_agent.samples.freshdesk import (
+    FreshdeskClient,
+    infer_sample_status_from_thread,
+    ticket_id_from_url,
+    ticket_payload,
+)
 from account_manager_agent.samples.service import SampleService
 
 REQUEST = {"trigger": "client_request", "style_code": "C1717", "product_link": "https://fp.test/p/c1717",
@@ -28,6 +33,13 @@ class FakeSamples:
     def for_deal(self, deal_id):
         return list(self.rows)
 
+    def deal_ids_with_open_tickets(self, limit=200):
+        return sorted({
+            str(row["deal_id"]) if "deal_id" in row else "42"
+            for row in self.rows
+            if row.get("status") in ("placed", "shipped") and row.get("freshdesk_ticket_url")
+        })
+
     def place(self, deal_id, run_id, request):
         row = {**request, "id": len(self.rows) + 1, "status": "placed"}
         self.rows.append(row)
@@ -35,6 +47,9 @@ class FakeSamples:
 
     def set_ticket(self, sample_id, url):
         self.tickets[sample_id] = url
+        for row in self.rows:
+            if row["id"] == sample_id:
+                row["freshdesk_ticket_url"] = url
 
     def update(self, deal_id, sample_id, status, details):
         row = next(row for row in self.rows if row["id"] == sample_id)
@@ -42,15 +57,22 @@ class FakeSamples:
 
 
 class FakeFreshdesk:
-    def __init__(self, fail=False):
+    def __init__(self, fail=False, conversations=()):
         self.fail = fail
         self.calls = []
+        self.conversations = list(conversations)
 
     def create_sample_ticket(self, sample, deal_id, organization):
         self.calls.append((sample["style_code"], deal_id, organization))
         if self.fail:
             raise RuntimeError("Freshdesk refused the ticket (HTTP 400)")
         return "https://fp.freshdesk.com/a/tickets/9001"
+
+    def get_ticket(self, ticket_id):
+        return {"id": ticket_id, "status": 2}
+
+    def get_conversations(self, ticket_id):
+        return self.conversations
 
 
 class ServiceTests(unittest.TestCase):
@@ -85,11 +107,34 @@ class ServiceTests(unittest.TestCase):
         result = self.service.place("42", "run-1", REQUEST)
         self.assertEqual((result["placed"], result["ticket"]), (True, "not sent: Freshdesk is not configured"))
 
+    def test_followup_sync_advances_sample_status_from_freshdesk_thread(self):
+        self.service.place("42", "run-1", REQUEST)
+        self.samples.set_ticket(1, "https://fp.freshdesk.com/a/tickets/9001")
+        self.freshdesk.conversations = [{"body_text": "Shipped via UPS tracking 1Z999"}]
+        sync = self.service.sync_freshdesk_for_deal("42")
+        self.assertEqual(sync["updates_applied"], [{"sample_id": 1, "from": "placed", "to": "shipped"}])
+        self.assertEqual(self.samples.rows[0]["status"], "shipped")
+        all_sync = self.service.sync_all_open_samples()
+        self.assertEqual(len(all_sync["deals"]), 1)
+        context = self.service.context("42")
+        self.assertEqual(context["samples"][0]["status"], "shipped")
+
     def test_updates_are_stored_as_the_agent_read_them(self):
         self.service.place("42", "run-1", REQUEST)
         shipped = self.service.record_update("42", {"sample_id": 1, "status": "shipped", "cancel_reason": ""})
         self.assertEqual((shipped["updated"], self.samples.rows[0]["status"]), (True, "shipped"))
         self.assertFalse(self.service.record_update("42", {"sample_id": 99, "status": "shipped"})["updated"])
+
+
+class FreshdeskParsingTests(unittest.TestCase):
+    def test_ticket_id_from_url(self):
+        self.assertEqual(ticket_id_from_url("https://fp.freshdesk.com/a/tickets/9001"), 9001)
+        self.assertIsNone(ticket_id_from_url(""))
+
+    def test_infer_status_from_thread(self):
+        conversations = [{"body_text": "Your sample shipped today. Tracking: 1Z"}]
+        self.assertEqual(infer_sample_status_from_thread(conversations, "placed"), "shipped")
+        self.assertIsNone(infer_sample_status_from_thread(conversations, "shipped"))
 
 
 class FreshdeskTests(unittest.TestCase):

@@ -31,6 +31,18 @@ class SampleRequests:
                                "AND deleted_at IS NULL ORDER BY id", (validate_deal_id(deal_id),))
                 return cursor.fetchall()
 
+    def deal_ids_with_open_tickets(self, limit: int = 200) -> list[str]:
+        """Deals that still have a sample ticket to poll on Freshdesk."""
+        with self.transaction(self.settings, readonly=True) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT DISTINCT deal_id FROM sasha_sample_requests "
+                    "WHERE deleted_at IS NULL AND status IN ('placed','shipped') "
+                    "AND freshdesk_ticket_url IS NOT NULL ORDER BY deal_id LIMIT %s",
+                    (limit,),
+                )
+                return [str(row["deal_id"]) for row in cursor.fetchall()]
+
     def place(self, deal_id, run_id: str, request: dict) -> dict:
         sample_id = self._write(
             "INSERT INTO sasha_sample_requests (deal_id,run_id,status,style_code,color,size) "

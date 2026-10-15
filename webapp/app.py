@@ -174,6 +174,7 @@ def create_app(
             _start_timeout_worker(handoffs, stop_worker)
         if followup_settings is None:
             _start_followup_worker(lambda: run_due_followups(manager, deals, None), stop_worker)
+            _start_sample_freshdesk_worker(sync_open_sample_tickets, stop_worker)
         yield
         stop_worker.set()
         manager.shutdown()
@@ -345,6 +346,10 @@ def create_app(
     def run_followups_now(force: bool = False) -> dict:
         return run_due_followups(manager, deals, followup_settings, force=force)
 
+    @app.post("/api/samples/sync-freshdesk")
+    def sync_samples_from_freshdesk() -> dict:
+        return sync_open_sample_tickets()
+
     @app.get("/api/runs/{run_id}")
     def get_run(run_id: str) -> dict:
         try:
@@ -473,6 +478,29 @@ def _start_followup_worker(run_due, stop: threading.Event) -> None:
                 pass
 
     threading.Thread(target=loop, daemon=True, name="followups").start()
+
+
+def sync_open_sample_tickets() -> dict:
+    """Poll Freshdesk for open sample tickets and update sasha_sample_requests (separate from follow-ups)."""
+    from account_manager_agent.samples.service import SampleService
+
+    return SampleService().sync_all_open_samples()
+
+
+def _start_sample_freshdesk_worker(sync, stop: threading.Event) -> None:
+    """Every SAMPLE_FRESHDESK_SYNC_SECONDS (default 1800), refresh sample status from Freshdesk. 0 disables it."""
+    interval = float(os.environ.get("SAMPLE_FRESHDESK_SYNC_SECONDS") or 1800)
+    if interval <= 0:
+        return
+
+    def loop():
+        while not stop.wait(interval):
+            try:
+                sync()
+            except Exception:  # Freshdesk or database outage: try again on the next tick.
+                pass
+
+    threading.Thread(target=loop, daemon=True, name="sample-freshdesk").start()
 
 
 def _deal_payload(

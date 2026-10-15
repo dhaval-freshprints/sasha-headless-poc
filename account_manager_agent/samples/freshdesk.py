@@ -9,10 +9,13 @@ from __future__ import annotations
 import base64
 import html
 import json
+import re
 import urllib.error
 import urllib.request
 
 from sasha_database.config import env_value
+
+TICKET_ID_PATTERN = re.compile(r"/tickets/(\d+)")
 
 SUBJECT = "New Sample Requested for Fresh Prints"
 TAGS = ["sasha-sample", "sasha"]
@@ -31,6 +34,50 @@ OPS_NOTE = ("BLANK sample only (no print or decoration). Please reply on this ti
 
 def _esc(value) -> str:
     return html.escape(str(value or "").strip() or "—", quote=True)
+
+
+def ticket_id_from_url(url: str | None) -> int | None:
+    """Parse a Freshdesk agent URL saved on sasha_sample_requests."""
+    match = TICKET_ID_PATTERN.search(str(url or ""))
+    return int(match.group(1)) if match else None
+
+
+def _conversation_text(conversation: dict) -> str:
+    for key in ("body_text", "body"):
+        value = conversation.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def summarize_conversations(conversations: list[dict], limit: int = 3) -> list[str]:
+    """Most recent logistics replies on the sample ticket (plain text, truncated)."""
+    summaries = []
+    for conversation in conversations[:limit]:
+        text = _conversation_text(conversation)
+        if not text:
+            continue
+        one_line = " ".join(text.split())
+        summaries.append(one_line[:500] + ("…" if len(one_line) > 500 else ""))
+    return summaries
+
+
+def infer_sample_status_from_thread(conversations: list[dict], current_status: str) -> str | None:
+    """Infer a forward sample status from Freshdesk thread text. Never moves backward."""
+    if current_status in ("delivered", "cancelled"):
+        return None
+    combined = "\n".join(_conversation_text(item).lower() for item in conversations)
+    if not combined.strip():
+        return None
+    if "cancel" in combined and "cancelled" not in current_status:
+        return "cancelled"
+    if "delivered" in combined and current_status in ("placed", "shipped"):
+        return "delivered"
+    if current_status == "placed" and any(
+        phrase in combined for phrase in ("shipped", "tracking", "track your", "on the way", "in transit")
+    ):
+        return "shipped"
+    return None
 
 
 def ticket_payload(sample: dict, deal_id, organization: str, requester_email: str,
@@ -103,3 +150,28 @@ class FreshdeskClient:
         except (urllib.error.URLError, TimeoutError, OSError, KeyError, ValueError) as error:
             raise RuntimeError(f"Freshdesk request failed ({type(error).__name__})") from None
         return self.ticket_url(ticket_id)
+
+    def _authorized_request(self, path: str, method: str = "GET", payload: dict | None = None):
+        token = base64.b64encode(f"{self.api_key}:X".encode()).decode()
+        data = json.dumps(payload).encode() if payload is not None else None
+        request = urllib.request.Request(
+            f"https://{self.domain}/api/v2{path}",
+            data=data,
+            method=method,
+            headers={"Content-Type": "application/json", "Authorization": f"Basic {token}"},
+        )
+        try:
+            with self.opener(request, timeout=30) as response:
+                return json.loads(response.read() or b"{}")
+        except urllib.error.HTTPError as error:
+            with error:
+                raise RuntimeError(f"Freshdesk request failed (HTTP {error.code})") from None
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError) as error:
+            raise RuntimeError(f"Freshdesk request failed ({type(error).__name__})") from None
+
+    def get_ticket(self, ticket_id: int) -> dict:
+        return self._authorized_request(f"/tickets/{ticket_id}")
+
+    def get_conversations(self, ticket_id: int) -> list[dict]:
+        payload = self._authorized_request(f"/tickets/{ticket_id}/conversations")
+        return list(payload if isinstance(payload, list) else payload.get("conversations", []))

@@ -12,7 +12,12 @@ from typing import Callable
 from sasha_database.samples import SampleRequests
 from sasha_database.settings import SashaSettings
 
-from .freshdesk import FreshdeskClient
+from .freshdesk import (
+    FreshdeskClient,
+    infer_sample_status_from_thread,
+    summarize_conversations,
+    ticket_id_from_url,
+)
 
 # sasha_settings keys shared with Sasha v3; shown to the agent as the limits it applies.
 LIMIT_KEYS = ("followup_sample_max_unit_value", "sample_max_per_deal", "followup_sample_cooldown_days")
@@ -28,6 +33,51 @@ class SampleService:
     def context(self, deal_id) -> dict:
         """What the agent sees on every run: this deal's samples and the limits from sasha_settings."""
         return {"samples": self.samples.for_deal(deal_id), "limits": self.settings.values(*LIMIT_KEYS)}
+
+    def sync_freshdesk_for_deal(self, deal_id) -> dict:
+        """On follow-up checks, read open sample tickets from Freshdesk and advance stored status when the thread shows it."""
+        client = self.freshdesk_factory()
+        if client is None:
+            return {"configured": False, "updates_applied": [], "tickets": []}
+        updates_applied = []
+        tickets = []
+        for row in self.samples.for_deal(deal_id):
+            status = str(row.get("status") or "placed")
+            if status in ("delivered", "cancelled"):
+                continue
+            ticket_id = ticket_id_from_url(row.get("freshdesk_ticket_url"))
+            if ticket_id is None:
+                continue
+            entry = {"sample_id": row["id"], "ticket_id": ticket_id, "status_before": status}
+            try:
+                ticket = client.get_ticket(ticket_id)
+                conversations = client.get_conversations(ticket_id)
+            except Exception as error:
+                entry["error"] = str(error)
+                tickets.append(entry)
+                continue
+            entry["freshdesk_status"] = ticket.get("status")
+            entry["recent_thread"] = summarize_conversations(conversations)
+            inferred = infer_sample_status_from_thread(conversations, status)
+            if inferred and inferred != status:
+                details = {"cancel_reason": "Cancelled per Freshdesk ticket" if inferred == "cancelled" else ""}
+                self.samples.update(deal_id, row["id"], inferred, details)
+                updates_applied.append({"sample_id": row["id"], "from": status, "to": inferred})
+                entry["status_after"] = inferred
+            tickets.append(entry)
+        return {"configured": True, "updates_applied": updates_applied, "tickets": tickets}
+
+    def sync_all_open_samples(self) -> dict:
+        """Poll Freshdesk for every deal with an open sample ticket. Used by the sample sync worker."""
+        client = self.freshdesk_factory()
+        if client is None:
+            return {"configured": False, "deals": []}
+        deals = []
+        for deal_id in self.samples.deal_ids_with_open_tickets():
+            sync = self.sync_freshdesk_for_deal(deal_id)
+            if sync.get("tickets") or sync.get("updates_applied"):
+                deals.append({"deal_id": deal_id, **sync})
+        return {"configured": True, "deals": deals}
 
     def place(self, deal_id, run_id: str, request: dict) -> dict:
         """Store the sample and create its Freshdesk ticket. Returns {"placed": bool, ...}; never raises."""

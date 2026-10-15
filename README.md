@@ -555,8 +555,14 @@ it. The outcome is recorded on the run (`sample`).
 Database setup: apply `sql/20261015_0002_sasha_sample_requests.sql` to the operations schema, which
 also needs v3's `sasha_settings`. Sasha's CRM user for deal lookups is the `sasha_user_id` setting.
 
-Not ported from v3: the Freshdesk webhook and daily poller, the stale-shipment nudge and Slack alert,
-and cancelling open samples on opt-out.
+**Freshdesk polling (separate from follow-ups).** Every `SAMPLE_FRESHDESK_SYNC_SECONDS` (default 1800)
+the web app polls Freshdesk for deals with open sample tickets (`placed` / `shipped`) and updates
+`sasha_sample_requests` when the thread implies shipped, delivered or cancelled. Follow-up runs do
+not call Freshdesk. `POST /api/samples/sync-freshdesk` runs the poll now. Set the interval to `0` to
+disable the background worker.
+
+Not ported from v3: the Freshdesk webhook, the stale-shipment nudge and Slack alert, and cancelling
+open samples on opt-out.
 
 ## Follow-ups
 

@@ -11,6 +11,8 @@ Fresh Prints sends free, blank samples (the garment only, no print) so a client 
 
 The task includes this deal's samples (style, color, size, status and dates) and the limits from Sasha's settings. Use them as the record of what was already sent. You are responsible for applying the limits: nothing checks them after you.
 
+A **background job** polls Freshdesk for open sample tickets and updates `samples` status in the database. Every run, including follow-ups, reads that record in the sample context. Do not assume this turn refreshed Freshdesk.
+
 ## When to offer one
 
 - The client asks for a sample. A direct ask counts as accepting it.
