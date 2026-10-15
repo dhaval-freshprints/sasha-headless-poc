@@ -10,6 +10,10 @@ Internal team mail (an email from INTERNAL_SENDER_DOMAINS, default freshprints.c
 step 1, because a staff address never maps to a client: the Deal Manager agent finds the
 deal from the message. Validation never merges deals for it, it never joins an open
 conversation, and Account Manager handles it with its internal-email skill.
+
+A deal handed off to a person still goes through Account Manager, which decides from the
+handoff state what the message is (for example an ISA's reply to the offer) and never
+writes to the client.
 """
 
 from __future__ import annotations
@@ -35,7 +39,7 @@ from deal_manager_agent.settings import env_value
 IN_PROGRESS = {"queued", "resolving", "agent_running", "validating"}
 FINAL_STATUSES = {"run_started", "needs_review", "no_match", "failed"}
 STATUSES = IN_PROGRESS | FINAL_STATUSES
-RUN_FINAL_STATUSES = {"completed", "failed"}
+RUN_FINAL_STATUSES = {"completed", "handoff", "failed"}
 MAX_BODY = 20_000
 
 

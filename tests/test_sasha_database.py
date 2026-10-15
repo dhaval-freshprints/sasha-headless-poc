@@ -124,6 +124,7 @@ TABLES = [
     '''CREATE TABLE IF NOT EXISTS sasha_deal_status (
         id INT NOT NULL AUTO_INCREMENT PRIMARY KEY, deal_id INT NOT NULL UNIQUE,
         status ENUM('active','paused','handoff_needed','opt_out','completed','rejected') NOT NULL DEFAULT 'active',
+        handoff_reason TEXT NULL,
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         deleted_at DATETIME NULL) ENGINE=InnoDB''',
@@ -144,6 +145,20 @@ TABLES = [
         updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, deleted_at DATETIME,
         KEY (deal_id,message_timestamp), KEY (deal_id,convo_type), KEY (run_id),
         KEY (external_message_id), KEY (external_thread_id)) ENGINE=InnoDB''',
+    # v3's handoff tables (migrations 20260710_0001 and _0003), used unchanged.
+    '''CREATE TABLE IF NOT EXISTS sasha_handoff_isas (
+        id INT NOT NULL AUTO_INCREMENT PRIMARY KEY, user_id INT NOT NULL UNIQUE, email VARCHAR(255) NOT NULL UNIQUE,
+        first_name VARCHAR(255), last_name VARCHAR(255), rank_order INT NOT NULL, is_active BOOLEAN NOT NULL DEFAULT 1,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB''',
+    '''CREATE TABLE IF NOT EXISTS sasha_handoff_offers (
+        id INT NOT NULL AUTO_INCREMENT PRIMARY KEY, deal_id INT NOT NULL, sasha_deal_context_id INT NULL,
+        isa_id INT NOT NULL, thread_id VARCHAR(255) NULL,
+        status ENUM('OFFERED','ACCEPTED','REJECTED','TIMED_OUT') NOT NULL,
+        offered_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, responded_at DATETIME NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        open_deal_id INT AS (CASE WHEN status IN ('OFFERED','ACCEPTED') THEN deal_id ELSE NULL END) STORED,
+        UNIQUE KEY uq_sasha_handoff_offers_one_open_per_deal (open_deal_id),
+        CONSTRAINT fk_sasha_handoff_offers_isa_id FOREIGN KEY (isa_id) REFERENCES sasha_handoff_isas (id)) ENGINE=InnoDB''',
     'CREATE TABLE IF NOT EXISTS user (id INT PRIMARY KEY,email VARCHAR(255),deleted_at DATETIME)',
     'CREATE TABLE IF NOT EXISTS deals (id INT PRIMARY KEY,client_id INT,deleted_at DATETIME)',
 ]
@@ -176,7 +191,8 @@ class MySQLStorageTests(unittest.TestCase):
 
     def setUp(self):
         with self.admin.cursor() as cursor:
-            for table in ('sasha_conversation_history','sasha_deal_notes','sasha_deal_status','deals','user'):
+            for table in ('sasha_handoff_offers','sasha_handoff_isas','sasha_conversation_history',
+                          'sasha_deal_notes','sasha_deal_status','deals','user'):
                 cursor.execute(f'DELETE FROM {table}')
             cursor.execute("INSERT INTO user (id,email) VALUES (7,'client@example.com')")
             cursor.execute('INSERT INTO deals (id,client_id) VALUES (42,7)')
@@ -248,6 +264,37 @@ class MySQLStorageTests(unittest.TestCase):
         self.assertEqual(history[0]['attachments'], ['https://example.com/art.svg'])
         self.assertEqual(history[0]['convo_type'], 'internal_mail')
         self.assertEqual(history[1]['message_type'], 'SMS')
+
+    def test_handoff_completion_sets_status_reason_notes_and_holding_draft_together(self):
+        self.storage.prepare_run('42', 'one')
+        self.storage.complete_run('42', 'one', '', 'Handed off.', '<p>Checking with my team.</p>', 'client_response',
+                                  handoff_reason='  Asked for a manager. ')
+        self.assertEqual(self.storage.deal_status('42'), ('handoff_needed', 'Asked for a manager.'))
+        self.assertEqual(self.storage.load_notes('42'), 'Handed off.')
+        self.assertEqual(self.storage.deal_status('99'), ('active', ''))
+        with self.assertRaisesRegex(ValueError, 'reason'):
+            self.storage.complete_run('42', 'two', 'Handed off.', 'x', '', None, handoff_reason='  ')
+
+    def test_handoff_offers_keep_one_open_offer_per_deal(self):
+        from openai_managed.handoff.selection import select_next_isa
+        from sasha_database.handoff import HandoffOffers
+        with self.admin.cursor() as cursor:
+            cursor.execute("INSERT INTO sasha_handoff_isas (id,user_id,email,first_name,rank_order) VALUES "
+                           "(1,501,'a@freshprints.com','A',1),(2,502,'b@freshprints.com','B',2)")
+        self.storage.prepare_run('42', 'one')
+        self.storage.complete_run('42', 'one', '', 'Handed off.', '', None, handoff_reason='Chapter store.')
+        offers = HandoffOffers(self.settings)
+        outcome, offer, isa = offers.create_offer('42', select_next_isa)
+        self.assertEqual((outcome, isa.email), ('created', 'a@freshprints.com'))
+        self.assertEqual(offers.create_offer('42', select_next_isa)[0], 'skipped_existing')
+        self.assertTrue(offers.mark_timed_out(offer.id))
+        self.assertEqual(offers.deals_needing_offer(), [42])
+        outcome, second, isa = offers.create_offer('42', select_next_isa)
+        self.assertEqual((outcome, isa.email), ('created', 'b@freshprints.com'))
+        self.assertTrue(offers.accept(second.id))
+        self.assertEqual([item.status for item in offers.offers_for_deal('42')], ['TIMED_OUT', 'ACCEPTED'])
+        self.assertEqual(offers.create_offer('42', select_next_isa)[0], 'skipped_existing')
+        self.assertEqual(self.storage.client_contact('42'), {'client_id': 7, 'email': 'client@example.com'})
 
     def test_completion_commits_notes_and_generated_draft(self):
         self.storage.prepare_run('42', 'run')

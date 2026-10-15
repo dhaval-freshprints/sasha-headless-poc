@@ -10,6 +10,7 @@ class MemoryStorage:
         self.notes = {}
         self.history = {}
         self.statuses = {}
+        self.handoff_reasons = {}
         self.prepared = []
         self.completed = []
 
@@ -38,9 +39,21 @@ class MemoryStorage:
     def load_notes(self, deal_id):
         return self.notes.get(deal_id, '')
 
-    def complete_run(self, deal_id, run_id, previous_notes, notes, message_html, convo_type):
+    def deal_status(self, deal_id):
+        return self.statuses.get(deal_id, 'active'), self.handoff_reasons.get(deal_id, '')
+
+    def mark_handoff(self, deal_id, handoff_reason):
+        if self.statuses.get(deal_id) == 'handoff_needed':
+            return False
+        self.statuses[deal_id], self.handoff_reasons[deal_id] = 'handoff_needed', handoff_reason
+        return True
+
+    def complete_run(self, deal_id, run_id, previous_notes, notes, message_html, convo_type,
+                     handoff_reason=None):
         self.completed.append((deal_id, run_id, notes, message_html, convo_type))
         self.notes[deal_id] = notes
+        if handoff_reason is not None:
+            self.statuses[deal_id], self.handoff_reasons[deal_id] = 'handoff_needed', handoff_reason
         history = self.history.setdefault(deal_id, [])
         if message_html.strip():
             history.append({'id': len(history)+1, 'role': 'sasha', 'content': message_html,

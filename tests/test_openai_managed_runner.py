@@ -1046,6 +1046,63 @@ class ManagedRunnerTests(unittest.TestCase):
         self.assertIn("days_since_client_reply: 99", message)
         self.assertIn("Empty database history means no reply", message)
 
+    def _final_with(self, sessions, **changes):
+        final = sessions.items._final_item()
+        result = json.loads(final["content"][0]["text"])
+        result.update(changes)
+        final["content"][0]["text"] = json.dumps(result)
+        return final
+
+    def test_agent_handoff_saves_notes_status_and_offers_the_deal(self):
+        runner, sessions, _ = self._make_runner([])
+        offered = []
+
+        class Service:
+            def offer_next(self, deal_id):
+                offered.append(deal_id)
+                return {"outcome": "created", "isa_email": "isa@freshprints.com"}
+
+        runner.handoff_service_factory = lambda storage: Service()
+        holding = "<p>I'm checking with my team and someone will follow up shortly.</p>"
+        reason = "The chapter wants each member to order and pay separately."
+        final = self._final_with(sessions, status="handoff", convo_type="client_response",
+                                 message_html=holding, handoff_reason=reason)
+        with patch.object(sessions.items, "_final_item", return_value=final):
+            result = runner.run(SashaTask("303839", "task-1", TASK_URL, "Can everyone pay separately?"))
+        self.assertEqual((result.status, offered), ("handoff", ["303839"]))
+        self.assertEqual((runner.last_handoff["source"], runner.last_handoff["offer"]["outcome"]), ("agent", "created"))
+        self.assertEqual(self.database.deal_status("303839"), ("handoff_needed", reason))
+        self.assertEqual(self.database.completed[-1][3], holding)
+
+    def test_handed_off_deal_gives_the_agent_the_state_and_applies_an_isa_decision(self):
+        runner, sessions, sandboxes = self._make_runner([])
+        self.database.mark_handoff("303839", "Asked for a manager.")
+        applied = []
+        state = {"status": "handoff_needed", "reason": "Asked for a manager.",
+                 "offer": {"id": 5, "status": "OFFERED", "isa_email": "isa@freshprints.com"}}
+
+        class Service:
+            def handoff_context(self, deal_id):
+                return state
+
+            def apply_isa_decision(self, offer_id, decision):
+                applied.append((offer_id, decision))
+                return {"decision": decision, "accepted": True}
+
+        runner.handoff_service_factory = lambda storage: Service()
+        final = self._final_with(sessions, isa_decision="accepted", message_html="<p>Should not be sent</p>")
+        reply = "Channel: Email\nFrom: isa@freshprints.com\n\nYes, I'll take it"
+        with patch.object(sessions.items, "_final_item", return_value=final):
+            outcome = runner.run(SashaTask("303839", "task-1", TASK_URL, reply))
+        self.assertEqual((outcome.status, outcome.message_html, applied), ("completed", "", [(5, "accepted")]))
+        self.assertIn('"isa_email": "isa@freshprints.com"', sandboxes[0].task_message)
+        self.assertEqual(runner.last_handoff["source"], "isa_reply")
+        self.assertEqual(self.database.completed[-1][3], "")
+        final = self._final_with(sessions, status="handoff", handoff_reason="Again", message_html="<p>Hi</p>")
+        with patch.object(sessions.items, "_final_item", return_value=final):
+            outcome = runner.run(SashaTask("303839", "task-2", TASK_URL, "Hello again?"))
+        self.assertEqual((outcome.status, outcome.message_html, runner.last_handoff), ("completed", "", None))
+
     def _make_runner(
         self,
         progress_messages,

@@ -22,7 +22,7 @@ from sasha_database.messages import IncomingMessage, incoming_message
 from openai_managed.task import SashaResult, SashaTask, normalize_client_message, validate_follow_up
 
 
-FINAL_STATUSES = {"completed", "failed"}
+FINAL_STATUSES = {"completed", "handoff", "failed"}
 
 
 def utc_now() -> str:
@@ -55,6 +55,7 @@ class WebRun:
     incoming_messages: list[dict] = field(default_factory=list)
     accepting_messages: bool = False
     deal_check: dict[str, Any] | None = None  # Validation/consolidation before this run.
+    handoff: dict[str, Any] | None = None  # What this run did about handing the deal to a person.
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -263,6 +264,7 @@ class JobManager:
             artifacts=self._list_artifacts(run_directory),
             pricing=pricing.to_dict() if pricing is not None else None,
         )
+        self._change(run_id, handoff=getattr(runner, "last_handoff", None))
 
     def _fail(self, run_id: str, message: str, started: float) -> None:
         self._change(

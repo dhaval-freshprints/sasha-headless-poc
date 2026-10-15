@@ -171,10 +171,10 @@
                 <span id="status-badge" class="status">Queued</span>
               </div>
 
-              <aside id="run-handoff" class="handoff-banner hidden" aria-live="polite">
-                <strong id="run-handoff-title"></strong>
-                <p id="run-handoff-detail" class="step-detail"></p>
-                <p id="run-handoff-message" class="handoff-message hidden"></p>
+              <aside id="run-source" class="source-banner hidden" aria-live="polite">
+                <strong id="run-source-title"></strong>
+                <p id="run-source-detail" class="step-detail"></p>
+                <p id="run-source-message" class="source-message hidden"></p>
               </aside>
 
               <p id="run-deal-check" class="field-hint hidden"></p>
@@ -207,6 +207,13 @@
                 <span id="refresh-note">Updates every 2 seconds</span>
               </div>
               <ol id="progress-list" class="progress-list"></ol>
+
+              <section id="handoff-section" class="handoff-panel hidden" aria-live="polite">
+                <h2>Handed off to a person</h2>
+                <p id="handoff-reason" class="step-detail"></p>
+                <p id="handoff-offer" class="step-detail"></p>
+                <ul id="handoff-offers" class="handoff-offers"></ul>
+              </section>
 
               <section id="result-section" class="result hidden">
                 <h2>Account Manager’s answer</h2>

@@ -66,6 +66,8 @@ class SashaResultTests(unittest.TestCase):
             "failure_message": "",
             "notes": "Saved notes",
             "convo_type": "outreach",
+            "handoff_reason": "",
+            "isa_decision": "",
         }
 
         result = SashaResult.from_json(json.dumps(value))

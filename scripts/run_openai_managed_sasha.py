@@ -85,7 +85,7 @@ def main() -> int:
     print(json.dumps(result.to_dict(), indent=2))
     if runner.last_run_directory:
         print(f"Artifacts: {runner.last_run_directory}", file=sys.stderr)
-    return 0 if result.status == "completed" else 1
+    return 0 if result.status in {"completed", "handoff"} else 1
 
 
 if __name__ == "__main__":
