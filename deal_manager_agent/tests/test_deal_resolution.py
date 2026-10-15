@@ -23,15 +23,20 @@ class FakeConnection:
         self.closed = True
 
 
-def fake_database(deals, proofs=None, outreach=None, fail=False):
-    """deals: {id: {"client_id", "stage", "manager_id", "deleted"}}; outreach: {deal_id: time}."""
+def fake_database(deals, proofs=None, outreach=None, fail=False, sasha_statuses=None):
+    """deals: {id: {"client_id", "stage", "manager_id", "deleted"}}; outreach: {deal_id: time};
+    sasha_statuses: {deal_id: Sasha's own status}."""
     proofs = proofs or {}
+    sasha_statuses = sasha_statuses or {}
     outreach = outreach or {}
     connection = FakeConnection()
 
     def read_query(conn, sql, parameters=(), limit=100):
         if fail:
             raise RuntimeError("secret-host unreachable")
+        if "sasha_deal_status" in sql:
+            status = sasha_statuses.get(parameters[0])
+            return rows([{"status": status}] if status else [])
         if "sasha_conversation_history" in sql:
             return rows([{"deal_id": int(d), "last_outbound_at": outreach[int(d)]}
                          for d in parameters if int(d) in outreach])
@@ -127,6 +132,17 @@ class ValidationTests(unittest.TestCase):
     def test_internal_email_on_a_lost_deal_is_handed_off(self):
         result, _ = resolve("10", {10: {"client_id": 7, "stage": "lost"}}, FakeCrm(), "internal_email")
         self.assertEqual((result.status, result.reason), ("handoff", "incoming_deal_not_active"))
+
+    def test_reply_to_a_winback_on_a_lost_deal_reaches_account_manager(self):
+        deal = {10: {"client_id": 7, "stage": "lost"}}
+        result, _ = resolve("10", deal, FakeCrm(), sasha_statuses={10: "paused"})
+        self.assertEqual((result.status, result.deal_id, result.reason),
+                         ("proceed", "10", "incoming_deal_lost_winback_reply"))
+        for status, workflow in (("opt_out", "client_response"), ("active", "client_response"),
+                                 ("paused", "outreach")):
+            with self.subTest(status=status, workflow=workflow):
+                result, _ = resolve("10", deal, FakeCrm(), workflow, sasha_statuses={10: status})
+                self.assertEqual(result.status, "handoff")
 
     def test_lost_or_other_managers_deal_is_handed_off(self):
         for deal in ({"client_id": 7, "stage": "lost"}, {"client_id": 7, "stage": "leads", "manager_id": 99}):

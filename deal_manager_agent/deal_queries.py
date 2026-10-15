@@ -82,6 +82,13 @@ def deal_by_id(db: DatabaseSession, deal_id: int) -> dict | None:
     return rows[0] if rows else None
 
 
+def sasha_status(db: DatabaseSession, deal_id: int) -> str:
+    """Sasha's own status for the deal (sasha_deal_status); a deal without a row is active."""
+    rows = db.query(f"SELECT status FROM {db.operations}.sasha_deal_status WHERE deal_id=%s "
+                    "AND deleted_at IS NULL", [deal_id], limit=1)["rows"]
+    return rows[0]["status"] if rows else "active"
+
+
 def proof_ids_for_deal(db: DatabaseSession, deal_id: int) -> set[int]:
     rows = db.query(
         f"SELECT proof_id FROM {db.main}.deal_proofs WHERE deal_id=%s AND deleted_at IS NULL",

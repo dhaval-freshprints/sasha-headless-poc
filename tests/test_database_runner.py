@@ -92,7 +92,7 @@ class RunnerPersistenceTests(unittest.TestCase):
         self.database.notes['303839'] = '## Current decisions\n- Follow-up generated: offer_art_team\n'
         with self.output(convo_type='followup', notes='## Current decisions\n- Follow-up generated: close_the_loop'):
             result = self.runner.run(replace(self.task, client_message=None, turn_type='follow_up',
-                                           follow_up_stage=1, as_of_date='2026-10-14'))
+                                           as_of_date='2026-10-14'))
         self.assertEqual(result.status, 'completed')
         self.assertEqual(len(follow_up_entries(result.notes)), 2)
 

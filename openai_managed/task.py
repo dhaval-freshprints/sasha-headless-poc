@@ -14,17 +14,15 @@ def normalize_client_message(message: str | None) -> str | None:
 
 
 def validate_follow_up(
-    turn_type: str | None, stage: int | None, as_of_date: str | None,
+    turn_type: str | None, as_of_date: str | None,
     days: int | None, client_message: str | None, file_urls: list[str] | tuple[str, ...],
 ) -> None:
     if turn_type is None:
-        if any(value is not None for value in (stage, as_of_date, days)):
+        if any(value is not None for value in (as_of_date, days)):
             raise ValueError("Follow-up metadata requires turn_type: follow_up")
         return
     if turn_type != "follow_up":
         raise ValueError("Only follow_up is accepted; Account Manager selects outreach or response")
-    if type(stage) is not int or not 1 <= stage <= 5:
-        raise ValueError("follow_up_stage must be an integer from 1 to 5")
     try:
         if not isinstance(as_of_date, str) or date.fromisoformat(as_of_date).isoformat() != as_of_date:
             raise ValueError()
@@ -55,6 +53,12 @@ SAMPLE_UPDATE_SCHEMA = _object({
     "cancel_reason": TEXT,
 })
 
+# The Account Manager's decision about the deal itself, in its own words.
+DEAL_STATE_SCHEMA = _object({
+    "status": {"type": "string", "enum": ["active", "paused", "opt_out", "completed"]},
+    "reason": TEXT, "next_check_on": TEXT, "crm_lost_reason": TEXT,
+})
+
 SASHA_RESULT_JSON_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
@@ -68,6 +72,7 @@ SASHA_RESULT_JSON_SCHEMA = {
         "isa_decision",
         "sample_request",
         "sample_update",
+        "deal_state",
         "failure_code",
         "failure_message",
     ],
@@ -81,6 +86,7 @@ SASHA_RESULT_JSON_SCHEMA = {
         "isa_decision": {"type": "string", "enum": ["", "accepted", "rejected", "unclear"]},
         "sample_request": {"anyOf": [SAMPLE_REQUEST_SCHEMA, {"type": "null"}]},
         "sample_update": {"anyOf": [SAMPLE_UPDATE_SCHEMA, {"type": "null"}]},
+        "deal_state": {"anyOf": [DEAL_STATE_SCHEMA, {"type": "null"}]},
         "failure_code": {"type": "string"},
         "failure_message": {"type": "string"},
     },
@@ -99,15 +105,15 @@ class SashaTask:
     run_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     incoming_messages: tuple[IncomingMessage, ...] = ()
     turn_type: Literal["follow_up"] | None = None
-    follow_up_stage: int | None = None
     as_of_date: str | None = None
     days_since_client_reply: int | None = None
     handoff_context: dict | None = None  # Set by the runner when the deal is already handed off.
     sample_context: dict | None = None  # This deal's samples and the sample limits, set by the runner.
+    deal_state: dict | None = None  # The deal's current Sasha status, reasons and next check day.
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "client_message", normalize_client_message(self.client_message))
-        validate_follow_up(self.turn_type, self.follow_up_stage, self.as_of_date,
+        validate_follow_up(self.turn_type, self.as_of_date,
                            self.days_since_client_reply, self.client_message or join_messages(self.incoming_messages), self.file_urls)
 
 
@@ -124,6 +130,7 @@ class SashaResult:
     isa_decision: str = ""
     sample_request: dict | None = None
     sample_update: dict | None = None
+    deal_state: dict | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

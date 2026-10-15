@@ -1037,14 +1037,19 @@ class ManagedRunnerTests(unittest.TestCase):
         self.assertEqual(saved_result["status"], "completed")
 
 
-    def test_followup_context_preserves_requested_stage_and_dates(self):
-        task = SashaTask("303839", "follow-up", TASK_URL, turn_type="follow_up", follow_up_stage=1,
-                         as_of_date="2026-10-13", days_since_client_reply=99)
+    def test_followup_context_gives_signals_and_the_planned_reason_not_a_stage(self):
+        history = ({"role": "sasha", "content": "<p>Hi</p>", "date": "2026-10-01"},
+                   {"role": "client", "content": "Navy please", "date": "2026-10-03"})
+        task = SashaTask("303839", "follow-up", TASK_URL, turn_type="follow_up", as_of_date="2026-10-13",
+                         conversation_history=history,
+                         deal_state={"status": "active", "status_reason": "",
+                                     "followup": {"scheduled_followup_reason": "Sent navy mockup; check in"}})
         message = OpenAIManagedRunner._build_task_message(task, application_environment())
-        self.assertIn("Manually selected follow_up_stage: 1", message)
         self.assertIn("Business as_of_date: 2026-10-13", message)
-        self.assertIn("days_since_client_reply: 99", message)
+        self.assertIn("Days since client reply: 10 day(s)", message)
+        self.assertIn("Why this follow-up was planned: Sent navy mockup; check in", message)
         self.assertIn("Empty database history means no reply", message)
+        self.assertNotIn("follow_up_stage", message)
 
     def _final_with(self, sessions, **changes):
         final = sessions.items._final_item()
@@ -1073,6 +1078,88 @@ class ManagedRunnerTests(unittest.TestCase):
         self.assertEqual((runner.last_handoff["source"], runner.last_handoff["offer"]["outcome"]), ("agent", "created"))
         self.assertEqual(self.database.deal_status("303839"), ("handoff_needed", reason))
         self.assertEqual(self.database.completed[-1][3], holding)
+
+    def _crm_runner(self):
+        runner, sessions, sandboxes = self._make_runner([])
+        edits = []
+
+        class Crm:
+            def edit_deal(self, deal_id, payload):
+                edits.append((deal_id, payload))
+                return True, "ok"
+
+        runner.crm_factory = lambda: Crm()
+        return runner, sessions, sandboxes, edits
+
+    def test_calm_opt_out_sends_one_winback_question_and_marks_the_deal_lost(self):
+        runner, sessions, sandboxes, edits = self._crm_runner()
+        state = {"status": "paused", "reason": "Went with another vendor; win-back question sent.",
+                 "next_check_on": "", "crm_lost_reason": "Client opted out — win-back sent"}
+        question = "<p>Totally understand. What made the other option a better fit?</p>"
+        final = self._final_with(sessions, convo_type="client_response", message_html=question, deal_state=state)
+        with patch.object(sessions.items, "_final_item", return_value=final):
+            result = runner.run(SashaTask("303839", "task-1", TASK_URL, "We went with another vendor, thanks"))
+        self.assertEqual((result.status, result.message_html), ("completed", question))
+        self.assertEqual(self.database.deal_state("303839")["status"], "paused")
+        self.assertEqual(self.database.deal_state("303839")["status_reason"], state["reason"])
+        self.assertEqual(edits, [(303839, {"stage": "lost", "lostReason": "Client opted out — win-back sent"})])
+        self.assertEqual(runner.last_deal_state["crm"], "marked lost")
+        self.assertEqual(self.database.deal_state("303839")["followup"],
+                         {"status": "stopped", "stop_reason": "opt_out_winback"})
+        self.assertIn('"status": "active"', sandboxes[0].task_message)
+
+    def test_opt_out_never_drafts_to_the_client(self):
+        runner, sessions, _, edits = self._crm_runner()
+        state = {"status": "opt_out", "reason": "Asked us to stop emailing.", "next_check_on": "",
+                 "crm_lost_reason": "Client opted out — no win-back"}
+        final = self._final_with(sessions, convo_type="client_response", message_html="<p>Sorry to see you go</p>",
+                                 deal_state=state)
+        with patch.object(sessions.items, "_final_item", return_value=final):
+            result = runner.run(SashaTask("303839", "task-1", TASK_URL, "Stop emailing me"))
+        self.assertEqual((result.status, result.message_html, result.convo_type), ("completed", "", None))
+        self.assertEqual(self.database.deal_state("303839")["status"], "opt_out")
+        self.assertEqual(self.database.deal_state("303839")["followup"]["stop_reason"], "opted_out")
+        self.assertEqual(len(edits), 1)
+        final = self._final_with(sessions, convo_type="followup", message_html="<p>Checking in</p>", deal_state=None)
+        with patch.object(sessions.items, "_final_item", return_value=final):
+            result = runner.run(SashaTask("303839", "task-2", TASK_URL, turn_type="follow_up",
+                                          as_of_date="2026-10-16"))
+        self.assertEqual(result.message_html, "")
+
+    def test_pause_schedules_the_follow_up_without_crm_changes(self):
+        runner, sessions, _, edits = self._crm_runner()
+        state = {"status": "paused", "reason": "Asked to reconnect after spring break.",
+                 "next_check_on": "2027-03-22", "crm_lost_reason": ""}
+        final = self._final_with(sessions, convo_type="client_response", message_html="<p>Sounds good!</p>",
+                                 deal_state=state)
+        with patch.object(sessions.items, "_final_item", return_value=final):
+            runner.run(SashaTask("303839", "task-1", TASK_URL, "Can you reach out after spring break?"))
+        self.assertEqual(self.database.deal_state("303839")["followup"],
+                         {"status": "active", "next_followup_date": "2027-03-22",
+                          "scheduled_followup_reason": state["reason"]})
+        self.assertEqual(runner.last_deal_state["followup"], "scheduled for 2027-03-22")
+        self.assertEqual(edits, [])
+
+    def test_followup_turn_counts_the_draft_and_pauses_without_a_next_day(self):
+        runner, sessions, _, _ = self._crm_runner()
+        self.database.followups["303839"] = {"status": "active", "next_followup_date": None}
+        final = self._final_with(sessions, convo_type="followup", message_html="<p>Two new options</p>")
+        with patch.object(sessions.items, "_final_item", return_value=final):
+            runner.run(SashaTask("303839", "task-1", TASK_URL, turn_type="follow_up", as_of_date="2026-10-16"))
+        followup = self.database.deal_state("303839")["followup"]
+        self.assertEqual((followup["followup_count"], followup["status"]), (1, "paused"))
+
+    def test_followup_turn_with_a_next_day_stays_scheduled(self):
+        runner, sessions, _, _ = self._crm_runner()
+        self.database.followups["303839"] = {"status": "active", "next_followup_date": None}
+        state = {"status": "active", "reason": "Shared two options; check in 2 days.",
+                 "next_check_on": "2026-10-18", "crm_lost_reason": ""}
+        final = self._final_with(sessions, convo_type="followup", message_html="<p>Two new options</p>",
+                                 deal_state=state)
+        with patch.object(sessions.items, "_final_item", return_value=final):
+            runner.run(SashaTask("303839", "task-1", TASK_URL, turn_type="follow_up", as_of_date="2026-10-16"))
+        followup = self.database.deal_state("303839")["followup"]
+        self.assertEqual((followup["status"], followup["next_followup_date"]), ("active", "2026-10-18"))
 
     def _sample_runner(self, placed=True):
         runner, sessions, sandboxes = self._make_runner([])

@@ -240,8 +240,8 @@ SASHA_SENDER_EMAIL=your-sasha-mailbox@example.com
 
 The sender must be the actual outbound mailbox. Missing configuration prevents AM from
 starting. Existing CRM/V3 credential aliases and `NON_PROD_SASHA_DB` remain supported.
-The operations schema must already contain `sasha_deal_status` (with `handoff_reason`, added by
-`sql/20261015_0001_sasha_deal_status_handoff_reason.sql`), `sasha_deal_notes`, and
+The operations schema must already contain `sasha_deal_status` (with `status_reason`, from
+`sql/20261015_0001_sasha_deal_status_handoff_reason.sql` then `sql/20261016_0001_sasha_deal_status_reason.sql`), `sasha_deal_notes`, and
 `sasha_conversation_history` (column `convo_type`). Handoff offers also need v3's
 `sasha_handoff_isas` and `sasha_handoff_offers` there; see [Handoff to a person](#handoff-to-a-person).
 The account needs SELECT on lookup schemas and SELECT/INSERT/UPDATE on these three Sasha
@@ -447,7 +447,7 @@ may include a short holding message for the client.
 The code only carries out decisions, ported from Sasha v3:
 
 1. In the same transaction as the notes and any holding draft, `sasha_deal_status` becomes
-   `handoff_needed` with `handoff_reason`.
+   `handoff_needed`, with the agent's reason in `status_reason`.
 2. The deal is offered to the next active ISA in `sasha_handoff_isas`, round-robin by
    `rank_order`, never twice to the same ISA and with at most one open offer per deal. The ISA
    is offered "Handoff request — Deal N" with the reason.
@@ -470,7 +470,8 @@ Everything is stored in the Sasha database: the offers in `sasha_handoff_offers`
 files and nothing is sent from this host. `GET /api/handoffs/<deal-id>` shows the deal's status,
 reason and offers with their emails; the run page shows the handoff panel.
 
-Database setup: apply `sql/20261015_0001_sasha_deal_status_handoff_reason.sql` to the operations
+Database setup: apply `sql/20261015_0001_sasha_deal_status_handoff_reason.sql` and then
+`sql/20261016_0001_sasha_deal_status_reason.sql` to the operations
 schema. If `sasha_handoff_isas` and `sasha_handoff_offers` are not there yet, apply v3 migrations
 `20260710_0001_create_sasha_handoff_tables` and `20260710_0003_add_handoff_offer_thread_id`, then
 add the ISAs to offer to.
@@ -478,6 +479,35 @@ add the ISAs to offer to.
 Not ported from v3: email sending (v3's SQS queue), the ISA-reply judge prompt, Slack alerts, the
 code-only external-apparel, promo-goods, MTO and order-history checks, and handing a deal back to
 Sasha.
+
+## Replying, opt-out and win-back
+
+Account Manager decides whether to write at all and what a client's words mean for the deal,
+following [conversation judgement](openai_managed/capabilities/account-manager/references/conversation_judgement.md)
+and [win-back](openai_managed/capabilities/account-manager/references/winback.md). There are no
+keyword rules: silence for a plain thanks or an auto-reply, a pause when the client asks to be
+contacted later, one gentle re-engagement after a declined order, and v3's opt-out handling
+(one calm win-back question, otherwise a permanent opt-out).
+
+Each run shows the agent the deal's Sasha status with the reason saved when it was set. When a turn
+changes it, the agent returns `deal_state`: `status` (active, paused, opt_out or completed), its
+own `reason`, an optional `next_check_on` day, and an optional `crm_lost_reason`. Code saves it
+in `sasha_deal_status` (with Sasha's reason in `status_reason`) and, when `crm_lost_reason` is set, marks the deal lost in
+the CRM through the v3 edit-deal API, as v3 did after a win-back question or a permanent opt-out.
+A client's answer to a win-back question on a lost deal still reaches Account Manager
+(`incoming_deal_lost_winback_reply`).
+
+One safety net stays in code: no draft is ever saved for a deal that is, or becomes, opted out.
+
+`next_check_on` (after spring break, after an out-of-office, 60 days after a declined order) is
+written to v3's `sasha_followup_schedule` as `next_followup_date` with Sasha's reason in
+`scheduled_followup_reason`, the row v3's follow-up cron reads. An opt-out, a win-back question or a
+completed order stops the schedule (`stopped` with `opted_out`, `opt_out_winback` or `completed`), as
+v3 does. Nothing in the POC starts the follow-up on that day yet; the cron will.
+
+Delivered-order notices from sales@ trigger one warm check-in through the internal-email skill.
+
+Database setup: apply `sql/20261016_0001_sasha_deal_status_reason.sql`; the operations schema also needs v3's `sasha_followup_schedule`.
 
 ## Free samples
 
@@ -507,13 +537,29 @@ also needs v3's `sasha_settings`. Sasha's CRM user for deal lookups is the `sash
 Not ported from v3: the Freshdesk webhook and daily poller, the stale-shipment nudge and Slack alert,
 and cancelling open samples on opt-out.
 
-## Explicit follow-up checks
+## Follow-ups
 
-Open a deal and select **Follow-up check**. Choose a stage and a business date;
-the date defaults to the browser's local calendar date. Days since the client's
-reply are optional context. The selected stage remains authoritative, even when
-the elapsed days suggest another stage. The notes sidebar shows the existing
-notebook from the current environment's runs directory.
+**Account Manager decides when.** After every turn (outreach, client response, internal update,
+follow-up) Sasha sets the next follow-up day with its own reason in `deal_state.next_check_on`,
+following "Choose the next follow-up" in the [follow-up skill](openai_managed/capabilities/followup/SKILL.md)
+(v3's rhythm is the default guidance, not a fixed calendar; a client's own date always wins). The day
+is written to v3's `sasha_followup_schedule` (`next_followup_date`, `scheduled_followup_reason`).
+
+**An hourly job runs them.** Every `FOLLOWUP_CHECK_SECONDS` (default 3600) the web app claims deals
+whose day has arrived (active schedule, deal not opted out or handed off) and starts a normal
+follow-up run for each, with today as the business date. It runs only when `sasha_settings` has
+`sasha_master_key=enabled` and `auto_followup_enabled=true`, Mon–Fri 8:00–17:00 New York. Claiming
+clears the date in the same transaction, so a follow-up never starts twice.
+`POST /api/followups/run-due?force=true` runs the check now (force skips only the hours check).
+
+**In the follow-up run** Sasha gets follow-up signals (days since the client replied and since
+Sasha wrote, conversation age, message counts, tactics used) and why this follow-up was planned. It
+works out the phase itself; there is no stage. A drafted follow-up increments `followup_count`; if
+Sasha sets no next day, the schedule is paused. A handoff stops it (`stop_reason: handoff`).
+
+**By hand:** open a deal and select **Follow-up check** with a business date (defaults to today).
+Days since the client's reply are optional and override the conversation's own dates. The notes
+sidebar shows the existing notebook from the current environment's runs directory.
 
 The same entry point is available through `POST /api/runs`:
 
@@ -521,13 +567,12 @@ The same entry point is available through `POST /api/runs`:
 {
   "deal_id": "303992",
   "turn_type": "follow_up",
-  "follow_up_stage": 2,
   "as_of_date": "2026-10-13",
   "days_since_client_reply": 5
 }
 ```
 
-Stage must be an integer from 1 to 5; date must use `YYYY-MM-DD`; optional days
+`follow_up_stage` is rejected; date must use `YYYY-MM-DD`; optional days
 must be a nonnegative integer. Initial follow-up checks cannot include client
 messages or new artwork. Additional client messages remain available during the
 active run. Ordinary requests omit follow-up fields. `turn_type: "outreach"`,
@@ -538,7 +583,7 @@ continues to start ordinary Account Manager turns.
 |---|---|
 | Empty database conversation | No reply |
 | Unanswered client request in DB history | Client response |
-| Conversation exists, no unanswered request | Evaluate one supported unused tactic in the requested stage |
+| Conversation exists, no unanswered request | Choose one unused tactic that adds value, then the next follow-up day |
 | No supported unused tactic | No reply |
 | Client message arrives during follow-up work | Reconsider and handle it in the same session |
 

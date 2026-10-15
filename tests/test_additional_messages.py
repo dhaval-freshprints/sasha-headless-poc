@@ -111,7 +111,7 @@ class AdditionalMessageTests(unittest.TestCase):
 
     def followup_task(self):
         self.task = SashaTask("303839", "follow-up", runner_tests.TASK_URL,
-                             turn_type="follow_up", follow_up_stage=1, as_of_date="2026-10-13")
+                             turn_type="follow_up", as_of_date="2026-10-13")
 
     def test_followup_completion_race_selects_response_and_discards_proposed_tactic(self):
         self.followup_task()

@@ -144,17 +144,15 @@ class JobManagerTests(unittest.TestCase):
             None,
             [],
             turn_type="follow_up",
-            follow_up_stage=4,
             as_of_date="2026-10-07",
             days_since_client_reply=14,
         )
         completed = wait_for_finish(manager, run.run_id)
 
         self.assertEqual(completed.turn_type, "follow_up")
-        self.assertEqual(completed.follow_up_stage, 4)
+        self.assertIsNone(completed.follow_up_stage)
         task = runners[0].last_task
         self.assertEqual(task.turn_type, "follow_up")
-        self.assertEqual(task.follow_up_stage, 4)
         self.assertEqual(task.as_of_date, "2026-10-07")
         self.assertEqual(task.days_since_client_reply, 14)
         self.assertIsNone(task.client_message)

@@ -124,7 +124,7 @@ TABLES = [
     '''CREATE TABLE IF NOT EXISTS sasha_deal_status (
         id INT NOT NULL AUTO_INCREMENT PRIMARY KEY, deal_id INT NOT NULL UNIQUE,
         status ENUM('active','paused','handoff_needed','opt_out','completed','rejected') NOT NULL DEFAULT 'active',
-        handoff_reason TEXT NULL,
+        status_reason TEXT NULL,
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         deleted_at DATETIME NULL) ENGINE=InnoDB''',
@@ -184,6 +184,15 @@ TABLES = [
     KEY ix_sasha_sample_requests_deal_id (deal_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   COMMENT='Free blank samples Sasha placed for a deal' ''',
+    # v3's follow-up schedule (migration 20260414_0001 and 20260715_0001), used unchanged.
+    '''CREATE TABLE IF NOT EXISTS sasha_followup_schedule (
+        id INT NOT NULL AUTO_INCREMENT PRIMARY KEY, deal_id INT NOT NULL UNIQUE,
+        status ENUM('active','paused','stopped','completed') NOT NULL, stop_reason VARCHAR(50) NULL,
+        first_message_timestamp DATETIME NOT NULL, last_followup_timestamp DATETIME NULL,
+        last_channel_used ENUM('email','sms') NULL, followup_count INT NOT NULL DEFAULT 0,
+        next_followup_date DATETIME NULL, scheduled_followup_reason TEXT NULL, followup_metadata JSON NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP) ENGINE=InnoDB''',
     'CREATE TABLE IF NOT EXISTS user (id INT PRIMARY KEY,email VARCHAR(255),deleted_at DATETIME)',
     'CREATE TABLE IF NOT EXISTS deals (id INT PRIMARY KEY,client_id INT,deleted_at DATETIME)',
 ]
@@ -216,7 +225,7 @@ class MySQLStorageTests(unittest.TestCase):
 
     def setUp(self):
         with self.admin.cursor() as cursor:
-            for table in ('sasha_sample_requests','sasha_settings','sasha_handoff_offers','sasha_handoff_isas',
+            for table in ('sasha_followup_schedule','sasha_sample_requests','sasha_settings','sasha_handoff_offers','sasha_handoff_isas',
                           'sasha_conversation_history',
                           'sasha_deal_notes','sasha_deal_status','deals','user'):
                 cursor.execute(f'DELETE FROM {table}')
@@ -342,6 +351,47 @@ class MySQLStorageTests(unittest.TestCase):
         from deal_manager_agent.deal_queries import sasha_user_id
         with patch('sasha_database.settings.DatabaseSettings.from_environment', return_value=self.settings):
             self.assertEqual(sasha_user_id(), 42)
+
+    def test_deal_state_is_saved_with_the_turn_and_never_overrides_a_handoff(self):
+        self.storage.prepare_run('42', 'one')
+        state = {'status': 'paused', 'reason': 'Asked to reconnect after spring break.',
+                 'next_check_on': '2027-03-22', 'crm_lost_reason': ''}
+        self.storage.complete_run('42', 'one', '', 'Paused.', '', None, deal_state=state)
+        self.assertEqual(self.storage.apply_followup_schedule('42', {**state, 'status': 'paused'}),
+                         'scheduled for 2027-03-22')
+        saved = self.storage.deal_state('42')
+        self.assertEqual((saved['status'], saved['status_reason']), ('paused', state['reason']))
+        self.assertEqual((saved['followup']['status'], saved['followup']['next_followup_date'][:10]),
+                         ('active', '2027-03-22'))
+        self.assertEqual(self.storage.apply_followup_schedule('42', {**state, 'status': 'opt_out'}),
+                         'stopped (opted_out)')
+        self.storage.apply_followup_schedule('42', {**state, 'status': 'paused', 'next_check_on': None})
+        self.assertEqual(self.storage.deal_state('42')['followup']['status'], 'stopped')
+        self.storage.complete_run('42', 'two', 'Paused.', 'Handed off.', '', None, handoff_reason='Wants a store.')
+        self.storage.complete_run('42', 'three', 'Handed off.', 'x', '', None,
+                                  deal_state={**state, 'status': 'active'})
+        self.assertEqual(self.storage.deal_state('42')['status'], 'handoff_needed')
+        with self.assertRaisesRegex(ValueError, 'reason'):
+            self.storage.complete_run('42', 'four', 'x', 'y', '', None, deal_state={**state, 'reason': ' '})
+
+    def test_due_followups_are_claimed_once_counted_paused_and_stopped_on_handoff(self):
+        from datetime import datetime
+        self.storage.prepare_run('42', 'one')
+        state = {'status': 'active', 'reason': 'Sent mockup; check in.', 'next_check_on': '2026-10-14',
+                 'crm_lost_reason': ''}
+        self.storage.apply_followup_schedule('42', state)
+        self.assertEqual(self.storage.claim_due_followups(datetime(2026, 10, 13, 15)), [])
+        self.assertEqual(self.storage.claim_due_followups(datetime(2026, 10, 14, 15)), [42])
+        self.assertEqual(self.storage.claim_due_followups(datetime(2026, 10, 14, 15)), [])
+        self.storage.record_followup_sent('42')
+        self.storage.pause_followups('42', 'No next follow-up chosen after this check')
+        followup = self.storage.deal_state('42')['followup']
+        self.assertEqual((followup['status'], followup['followup_count']), ('paused', 1))
+        self.storage.apply_followup_schedule('42', {**state, 'next_check_on': '2026-10-20'})
+        self.storage.complete_run('42', 'two', '', 'Handed off.', '', None, handoff_reason='Wants a store.')
+        followup = self.storage.deal_state('42')['followup']
+        self.assertEqual((followup['status'], followup['stop_reason'], followup['next_followup_date']),
+                         ('stopped', 'handoff', None))
 
     def test_completion_commits_notes_and_generated_draft(self):
         self.storage.prepare_run('42', 'run')

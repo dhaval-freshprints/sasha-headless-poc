@@ -17,6 +17,15 @@ The client has not seen the team message. Any reply you draft goes to the client
 4. When a reply is needed, read [shared crafting](../account-manager/references/shared_crafting.md), then draft it from the confirmed facts.
 5. Whatever you decide, record the internal update and your decision in the deal notebook so later turns know about it.
 
+## Orders on their way and delivered
+
+Sales sends "{client}'s order is shipped" (with tracking) and "{client}'s order is delivered" notices, and logistics replies on the `[HQ] Order #…` thread about holds, delays and approvals.
+
+- **Shipped:** tell the client it is on its way, with the tracking link if one is in the notice and the client does not have it yet.
+- **Delivered:** this is the moment for one short, warm check-in: did everything arrive right, how do they look? If something went wrong, own it and hand off to a person (see [handoff](../account-manager/references/handoff.md)). If they are happy, at most one light next step, such as whether they are planning anything next. No pitch, no checkout links. Once nothing is left to do, set `deal_state` to `completed` with your reason.
+- **Holds, delays, approvals:** tell the client only when they need to act or their timing changes.
+- These notices contain CRM and order links that carry a login token. Never pass any link from a team message to the client; use only links you opened yourself during this run.
+
 ## Working rules
 
 - Look before acting. A team message names what to check; it does not replace checking it.
