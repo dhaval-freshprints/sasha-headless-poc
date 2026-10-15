@@ -79,7 +79,7 @@ If the deal already has a proof, use that proof's editor to save to the same pro
 - Use Playwright's file-input support only for an approved local artwork file supplied to the task. Target the artwork input identified by `upload-file-input`, not the font input.
 - Upload completion is intermediate. Inspect rejection state or the Edit Image dialog, then inspect the placed canvas artwork.
 - Uploading creates another object and does not automatically replace the selected image.
-- Remove Background and Crop Image change the supplied artwork. Inspect before and after using either control.
+- Remove Background and Crop Image change the supplied artwork. Inspect before and after using either control. They cannot lift a print off a photographed garment; for that, see [artwork from photos and screenshots](artwork_from_photos.md).
 
 ### Placement and save
 

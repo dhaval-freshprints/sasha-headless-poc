@@ -1,31 +1,23 @@
-"""Agent-facing Freshdesk operations for open sample tickets on the current deal."""
+"""Sandbox client for the host-side, deal-scoped sample Freshdesk broker."""
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
+import time
+import uuid
 from pathlib import Path
 
-from account_manager_agent.samples.service import SampleService
-
-CONTEXT_PATH = Path("/opt/sasha/customer_link_context.json")
+BROKER_ROOT = Path("/workspace/.sample-freshdesk")
+DEFAULT_TIMEOUT_SECONDS = 35.0
 
 
 class SampleFreshdeskError(Exception):
     def __init__(self, code: str, message: str):
         super().__init__(message)
         self.code = code
-
-
-def deal_id_from_context() -> str:
-    if not CONTEXT_PATH.is_file():
-        raise SampleFreshdeskError("context_missing", "Sample Freshdesk tool context is not mounted.")
-    context = json.loads(CONTEXT_PATH.read_text(encoding="utf-8"))
-    deal_id = str(context.get("deal_id") or "").strip()
-    if not deal_id.isdigit():
-        raise SampleFreshdeskError("invalid_deal", "The current deal id is missing from tool context.")
-    return deal_id
 
 
 def positive_sample_id(value: str) -> int:
@@ -37,57 +29,71 @@ def positive_sample_id(value: str) -> int:
     return number
 
 
-def run_command(command: str, sample_id: int, deal_id: str, body: str | None, private: bool,
-                style_code: str | None, color: str | None, size: str | None) -> dict:
-    service = SampleService()
-    if command == "show":
-        return service.freshdesk_show(deal_id, sample_id)
-    if command == "sync":
-        return service.freshdesk_sync_sample(deal_id, sample_id)
-    if command == "reply":
-        if not body or not body.strip():
-            raise SampleFreshdeskError("body_required", "reply requires --body text.")
-        return service.freshdesk_reply(deal_id, sample_id, body, private=private)
-    if command == "amend":
-        if not any((style_code, color, size)):
-            raise SampleFreshdeskError(
-                "fields_required",
-                "amend requires at least one of --style-code, --color, or --size.",
-            )
-        return service.freshdesk_amend(
-            deal_id,
-            sample_id,
-            style_code=style_code,
-            color=color,
-            size=size,
-            message=body,
-        )
-    raise SampleFreshdeskError("unknown_command", f"Unknown command: {command}")
+def request_broker(payload: dict, timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS) -> dict:
+    """Atomically submit one request and wait for its host-produced response."""
+    requests = BROKER_ROOT / "requests"
+    responses = BROKER_ROOT / "responses"
+    if not requests.is_dir() or not responses.is_dir():
+        raise SampleFreshdeskError("broker_unavailable", "The host Freshdesk broker is unavailable.")
+    action_id = str(payload["action_id"])
+    request_path = requests / f"{action_id}.json"
+    response_path = responses / f"{action_id}.json"
+    fingerprint = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    if not response_path.exists():
+        temporary = request_path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(payload), encoding="utf-8")
+        temporary.replace(request_path)
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        if response_path.exists():
+            response = json.loads(response_path.read_text(encoding="utf-8"))
+            if response.pop("request_fingerprint", None) != fingerprint:
+                raise SampleFreshdeskError(
+                    "action_id_conflict",
+                    "This action id was already used for a different request.",
+                )
+            return response
+        time.sleep(0.05)
+    raise SampleFreshdeskError("broker_timeout", "The host Freshdesk broker did not respond in time.")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Freshdesk sample ticket operations for the current deal.")
-    parser.add_argument("command", choices=("show", "sync", "reply", "amend"))
+    parser.add_argument("command", choices=("show", "sync", "note", "amend"))
     parser.add_argument("sample_id")
     parser.add_argument("--body", default="")
-    parser.add_argument("--private", action="store_true", help="Private note instead of a public thread reply.")
     parser.add_argument("--style-code", default="")
     parser.add_argument("--color", default="")
     parser.add_argument("--size", default="")
+    parser.add_argument("--product-link", default="")
+    parser.add_argument("--action-id", default="", help="Reuse the same id to make retries idempotent.")
     args = parser.parse_args()
     try:
-        deal_id = deal_id_from_context()
         sample_id = positive_sample_id(args.sample_id)
-        result = run_command(
-            args.command,
-            sample_id,
-            deal_id,
-            args.body or None,
-            args.private,
-            args.style_code or None,
-            args.color or None,
-            args.size or None,
-        )
+        if args.command == "note" and not args.body.strip():
+            raise SampleFreshdeskError("body_required", "note requires --body text.")
+        if args.command == "amend" and not any(
+            value.strip() for value in (args.style_code, args.color, args.size, args.product_link)
+        ):
+            raise SampleFreshdeskError(
+                "fields_required",
+                "amend requires --style-code, --color, --size, or --product-link.",
+            )
+        action_id = args.action_id.strip() or uuid.uuid4().hex
+        if not action_id.replace("-", "").replace("_", "").isalnum() or len(action_id) > 100:
+            raise SampleFreshdeskError("invalid_action_id", "Action id must be 1-100 safe characters.")
+        result = request_broker({
+            "action_id": action_id,
+            "action": args.command,
+            "sample_id": sample_id,
+            "body": args.body,
+            "style_code": args.style_code,
+            "color": args.color,
+            "size": args.size,
+            "product_link": args.product_link,
+        })
     except SampleFreshdeskError as error:
         print(json.dumps({"ok": False, "error": error.code, "message": str(error)}))
         sys.exit(1)

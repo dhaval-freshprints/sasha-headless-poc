@@ -7,10 +7,13 @@ import unittest
 from unittest.mock import patch
 
 import pymysql
+from account_manager_agent.sandbox import ARTWORK_ENVIRONMENT_VARIABLES
 from sasha_database.config import DatabaseSettings, container_database_options
 from sasha_database.connection import DatabaseError
 from sasha_database.messages import IncomingMessage, incoming_message
 from sasha_database.storage import SashaStorage
+
+ACCOUNT_MANAGER_TOOL_VARIABLES = set(ARTWORK_ENVIRONMENT_VARIABLES)
 
 
 class MessageTests(unittest.TestCase):
@@ -102,7 +105,8 @@ class MessageTests(unittest.TestCase):
             self.assertNotIn('NON_PROD_SSL_CA', names[1])
             for call in run.call_args_list:
                 self.assertNotIn('rds-ca.pem', str(call.args))
-            self.assertEqual(names[0], names[1])
+            # Account Manager also receives its own tool settings (Freshdesk, artwork) by name.
+            self.assertEqual(names[0], {name for name in names[1] if name not in ACCOUNT_MANAGER_TOOL_VARIABLES})
 
     def test_default_database_configuration_does_not_require_or_load_crm(self):
         from sasha_database.connection import connect_readonly

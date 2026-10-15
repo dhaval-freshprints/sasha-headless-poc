@@ -24,14 +24,11 @@ BROWSER_KEEPER_SCRIPT = Path(__file__).with_name("browser_keeper.js")
 START_BROWSER_SCRIPT = Path(__file__).with_name("start_browser.js")
 CUSTOMER_LINK_SCRIPT = Path(__file__).with_name("customer_links.py")
 SAMPLE_FRESHDESK_SCRIPT = Path(__file__).with_name("sample_freshdesk_tool.py")
-ACCOUNT_MANAGER_PACKAGE = Path(__file__).resolve().parent
+EXTRACT_ARTWORK_SCRIPT = Path(__file__).with_name("extract_artwork.py")
 DATABASE_SCRIPT = Path(__file__).resolve().parents[1] / "deal_manager_agent/skills/deal-manager-database/scripts/database.py"
-FRESHDESK_ENVIRONMENT_VARIABLES = (
-    "FRESHDESK_DOMAIN",
-    "FRESHDESK_API_KEY",
-    "FRESHDESK_REQUESTER_EMAIL",
-    "FRESHDESK_SAMPLE_GROUP_ID",
-)
+# Artwork extraction calls OpenAI's image model. Like the database settings, these are passed
+# to the container by name; their values never appear in the docker command line.
+ARTWORK_ENVIRONMENT_VARIABLES = ("OPENAI_API_KEY", "ARTWORK_IMAGE_MODEL")
 BROWSER_READY_STATUSES = {"started", "running"}
 
 
@@ -130,10 +127,9 @@ class DockerSandbox:
         handle = self._require_handle()
         database = DatabaseSettings.from_environment()
         database_options, process_environment = container_database_options(database)
-        for name in FRESHDESK_ENVIRONMENT_VARIABLES:
-            value = os.environ.get(name, "").strip()
-            if value:
-                database_options.extend(["--env", f"{name}={value}"])
+        for name in ARTWORK_ENVIRONMENT_VARIABLES:
+            if os.environ.get(name, "").strip():
+                database_options.extend(["--env", name])
         subprocess.run(
             [
                 "docker",
@@ -155,7 +151,7 @@ class DockerSandbox:
                 "--mount",
                 f"type=bind,src={SAMPLE_FRESHDESK_SCRIPT},dst=/opt/sasha/sample_freshdesk.py,readonly",
                 "--mount",
-                f"type=bind,src={ACCOUNT_MANAGER_PACKAGE},dst=/opt/account_manager_agent,readonly",
+                f"type=bind,src={EXTRACT_ARTWORK_SCRIPT},dst=/opt/sasha/extract_artwork.py,readonly",
                 "--mount",
                 f"type=bind,src={DATABASE_SCRIPT},dst=/opt/sasha/database.py,readonly",
                 "--mount",

@@ -50,15 +50,27 @@ def _conversation_text(conversation: dict) -> str:
     return ""
 
 
-def summarize_conversations(conversations: list[dict], limit: int = 3) -> list[str]:
-    """Most recent logistics replies on the sample ticket (plain text, truncated)."""
+def summarize_conversations(conversations: list[dict], limit: int = 8) -> list[dict]:
+    """Return newest conversation evidence with source metadata and bounded plain text."""
     summaries = []
-    for conversation in conversations[:limit]:
+    ordered = sorted(
+        conversations,
+        key=lambda item: str(item.get("created_at") or ""),
+        reverse=True,
+    )
+    for conversation in ordered[:limit]:
         text = _conversation_text(conversation)
         if not text:
             continue
         one_line = " ".join(text.split())
-        summaries.append(one_line[:500] + ("…" if len(one_line) > 500 else ""))
+        summaries.append({
+            "id": conversation.get("id"),
+            "created_at": conversation.get("created_at"),
+            "incoming": conversation.get("incoming"),
+            "private": conversation.get("private"),
+            "from_email": conversation.get("from_email"),
+            "text": one_line[:1000] + ("…" if len(one_line) > 1000 else ""),
+        })
     return summaries
 
 
@@ -66,15 +78,23 @@ def infer_sample_status_from_thread(conversations: list[dict], current_status: s
     """Infer a forward sample status from Freshdesk thread text. Never moves backward."""
     if current_status in ("delivered", "cancelled"):
         return None
-    combined = "\n".join(_conversation_text(item).lower() for item in conversations)
+    messages = [
+        _conversation_text(item).lower()
+        for item in conversations
+        if item.get("incoming", True) is not False
+    ]
+    combined = "\n".join(message for message in messages if message)
     if not combined.strip():
         return None
-    if "cancel" in combined and "cancelled" not in current_status:
+    cancellation = re.search(r"\b(cancelled|canceled)\b", combined)
+    cancellation_negated = re.search(r"\b(not|isn't|wasn't|never)\s+(cancelled|canceled)\b", combined)
+    if cancellation and not cancellation_negated:
         return "cancelled"
-    if "delivered" in combined and current_status in ("placed", "shipped"):
+    if re.search(r"\b(delivered|delivery confirmed)\b", combined) and current_status in ("placed", "shipped"):
         return "delivered"
-    if current_status == "placed" and any(
-        phrase in combined for phrase in ("shipped", "tracking", "track your", "on the way", "in transit")
+    if current_status == "placed" and re.search(
+        r"\b(shipped|in transit)\b|tracking(?:\s+(?:number|details|link))?\s*[:#]",
+        combined,
     ):
         return "shipped"
     return None
@@ -165,7 +185,9 @@ class FreshdeskClient:
                 return json.loads(response.read() or b"{}")
         except urllib.error.HTTPError as error:
             with error:
-                raise RuntimeError(f"Freshdesk request failed (HTTP {error.code})") from None
+                details = error.read().decode("utf-8", errors="replace")[:500]
+                suffix = f": {details}" if details else ""
+                raise RuntimeError(f"Freshdesk request failed (HTTP {error.code}){suffix}") from None
         except (urllib.error.URLError, TimeoutError, OSError, ValueError) as error:
             raise RuntimeError(f"Freshdesk request failed ({type(error).__name__})") from None
 
@@ -173,8 +195,16 @@ class FreshdeskClient:
         return self._authorized_request(f"/tickets/{ticket_id}")
 
     def get_conversations(self, ticket_id: int) -> list[dict]:
-        payload = self._authorized_request(f"/tickets/{ticket_id}/conversations")
-        return list(payload if isinstance(payload, list) else payload.get("conversations", []))
+        conversations = []
+        for page in range(1, 6):
+            payload = self._authorized_request(
+                f"/tickets/{ticket_id}/conversations?per_page=100&page={page}"
+            )
+            batch = list(payload if isinstance(payload, list) else payload.get("conversations", []))
+            conversations.extend(batch)
+            if len(batch) < 100:
+                break
+        return conversations
 
     def reply_to_ticket(self, ticket_id: int, body_html: str) -> dict:
         """Public reply on the ticket thread (visible to Sample Orders / logistics)."""

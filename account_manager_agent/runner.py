@@ -23,6 +23,7 @@ from .notes import prepare_notes, saved_attachment_urls
 from .pricing import CostEstimate, CostReporter, estimate_cost
 from .progress import ProgressReporter
 from .sandbox import DockerSandbox, SandboxConfig
+from .samples.broker import SampleFreshdeskBroker
 from .task import SASHA_RESULT_JSON_SCHEMA, SashaResult, SashaTask
 
 
@@ -511,8 +512,14 @@ class AccountManagerAgent:
         handle = sandbox.prepare(task)
         self.last_run_directory = handle.run_directory
         result: SashaResult | None = None
+        sample_broker = SampleFreshdeskBroker(
+            handle.workspace_directory,
+            task.deal_id,
+            service_factory=self._sample_service,
+        )
 
         try:
+            sample_broker.start()
             files = AttachmentSet()
             if task.file_urls:
                 self.progress.report(f"      Downloading {len(task.file_urls)} client file(s)")
@@ -619,6 +626,7 @@ class AccountManagerAgent:
         finally:
             if self.additional_messages is not None:
                 self.additional_messages.close()
+            sample_broker.stop()
             self.progress.report("[7/7] Saving artifacts and cleaning up")
             cleanup = self._clean_up(
                 sandbox,
@@ -893,7 +901,8 @@ class AccountManagerAgent:
             file_data = (
                 "These artwork files are available for this turn, including any "
                 "restored attachments from earlier turns on this deal. "
-                "Use only these paths for uploads; do not fetch a remote URL.\n"
+                "Use only these paths, or an artwork file recreated from them with "
+                "/opt/sasha/extract_artwork.py, for uploads; do not fetch a remote URL.\n"
                 f"{file_lines}\n"
                 "When artwork is needed, use Playwright's setInputFiles on the "
                 "Design Tool input identified by upload-file-input, then inspect "
@@ -963,7 +972,7 @@ class AccountManagerAgent:
             "isa_decision only when the handoff skill asks you to read an ISA's reply. "
             "Set sample_request or sample_update only as the samples skill describes; "
             "otherwise leave them null. For open samples, use "
-            "`python /opt/sasha/sample_freshdesk.py` (show, sync, reply, amend) per the samples "
+            "`python /opt/sasha/sample_freshdesk.py` (show, sync, note, amend) per the samples "
             "skill before claiming tracking or updating logistics. "
             "Set deal_state, with your own reason, whenever this turn changes how Sasha should treat "
             "the deal (opt-out, win-back, pause, a later check date, reactivation); otherwise null. "
