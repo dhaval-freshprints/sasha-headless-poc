@@ -1,7 +1,8 @@
 -- Sasha samples: one row per free blank sample (one style, color and size) placed for a deal.
 -- Target: the operations schema (DEAL_MANAGER_OPERATIONS_SCHEMA), next to sasha_deal_status.
 -- Only what Sasha needs later is kept here; shipping address and contact details live on the
--- Freshdesk ticket, and the product page and price follow from the style code.
+-- Freshdesk ticket, the product page and price follow from the style code, and tracking details
+-- stay in the logistics email and Sasha's message to the client in the conversation history.
 
 CREATE TABLE IF NOT EXISTS sasha_sample_requests (
     id                   INT           NOT NULL AUTO_INCREMENT,
@@ -12,9 +13,6 @@ CREATE TABLE IF NOT EXISTS sasha_sample_requests (
     color                VARCHAR(128)  NOT NULL,
     size                 VARCHAR(32)   NOT NULL,
     freshdesk_ticket_url VARCHAR(500)  NULL     COMMENT 'NULL when Freshdesk is not configured',
-    tracking_number      VARCHAR(128)  NULL,
-    tracking_url         VARCHAR(1000) NULL,
-    eta                  VARCHAR(64)   NULL,
     shipped_at           DATETIME      NULL,
     delivered_at         DATETIME      NULL,
     cancelled_at         DATETIME      NULL,

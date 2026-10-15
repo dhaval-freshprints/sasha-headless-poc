@@ -38,7 +38,7 @@ class FakeSamples:
 
     def update(self, deal_id, sample_id, status, details):
         row = next(row for row in self.rows if row["id"] == sample_id)
-        row.update(status=status, tracking_number=details.get("tracking_number"))
+        row.update(status=status, cancel_reason=details.get("cancel_reason"))
 
 
 class FakeFreshdesk:
@@ -87,8 +87,8 @@ class ServiceTests(unittest.TestCase):
 
     def test_updates_are_stored_as_the_agent_read_them(self):
         self.service.place("42", "run-1", REQUEST)
-        shipped = self.service.record_update("42", {"sample_id": 1, "status": "shipped", "tracking_number": "1Z9"})
-        self.assertEqual((shipped["updated"], self.samples.rows[0]["tracking_number"]), (True, "1Z9"))
+        shipped = self.service.record_update("42", {"sample_id": 1, "status": "shipped", "cancel_reason": ""})
+        self.assertEqual((shipped["updated"], self.samples.rows[0]["status"]), (True, "shipped"))
         self.assertFalse(self.service.record_update("42", {"sample_id": 99, "status": "shipped"})["updated"])
 
 

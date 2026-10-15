@@ -7,9 +7,9 @@ from .connection import transaction
 from .messages import utc_now
 from .storage import validate_deal_id
 
-COLUMNS = ("id,status,style_code,color,size,freshdesk_ticket_url,tracking_number,tracking_url,eta,"
-           "created_at AS placed_at,shipped_at,delivered_at,cancelled_at,cancel_reason")
-UPDATED = ("tracking_number", "tracking_url", "eta", "cancel_reason")
+COLUMNS = ("id,status,style_code,color,size,freshdesk_ticket_url,created_at AS placed_at,shipped_at,"
+           "delivered_at,cancelled_at,cancel_reason")
+UPDATED = ("cancel_reason",)
 STATUS_TIMES = {"shipped": "shipped_at", "delivered": "delivered_at", "cancelled": "cancelled_at"}
 
 

@@ -1120,8 +1120,7 @@ class ManagedRunnerTests(unittest.TestCase):
 
     def test_logistics_update_is_recorded(self):
         runner, sessions, _, calls = self._sample_runner()
-        update = {"sample_id": 3, "status": "shipped", "tracking_number": "1Z9", "tracking_url": "",
-                  "eta": "", "cancel_reason": ""}
+        update = {"sample_id": 3, "status": "shipped", "cancel_reason": ""}
         final = self._final_with(sessions, convo_type="internal_mail", sample_update=update)
         reply = "Channel: Email\nFrom: logistics@freshprints.com\n\nSample shipped, UPS 1Z9"
         with patch.object(sessions.items, "_final_item", return_value=final):

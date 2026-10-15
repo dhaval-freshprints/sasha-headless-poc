@@ -173,9 +173,6 @@ TABLES = [
     color                VARCHAR(128)  NOT NULL,
     size                 VARCHAR(32)   NOT NULL,
     freshdesk_ticket_url VARCHAR(500)  NULL     COMMENT 'NULL when Freshdesk is not configured',
-    tracking_number      VARCHAR(128)  NULL,
-    tracking_url         VARCHAR(1000) NULL,
-    eta                  VARCHAR(64)   NULL,
     shipped_at           DATETIME      NULL,
     delivered_at         DATETIME      NULL,
     cancelled_at         DATETIME      NULL,
@@ -338,9 +335,10 @@ class MySQLStorageTests(unittest.TestCase):
         context = service.context('42')
         self.assertEqual(context['limits']['sample_max_per_deal'], '4')
         sample_id = context['samples'][0]['id']
-        self.assertTrue(service.record_update('42', {'sample_id': sample_id, 'status': 'shipped',
-                                                     'tracking_number': '1Z9'})['updated'])
-        self.assertEqual(service.context('42')['samples'][0]['tracking_number'], '1Z9')
+        self.assertTrue(service.record_update('42', {'sample_id': sample_id, 'status': 'shipped'})['updated'])
+        sample = service.context('42')['samples'][0]
+        self.assertEqual(sample['status'], 'shipped')
+        self.assertIsNotNone(sample['shipped_at'])
         from deal_manager_agent.deal_queries import sasha_user_id
         with patch('sasha_database.settings.DatabaseSettings.from_environment', return_value=self.settings):
             self.assertEqual(sasha_user_id(), 42)

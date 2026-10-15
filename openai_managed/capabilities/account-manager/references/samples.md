@@ -16,6 +16,7 @@ Do not offer a sample when it would not help, and do not offer one proactively a
 
 - Free and blank only. Never quote a price, shipping cost or fee for a sample, and never promise the design printed on it.
 - One style, one color and one size per sample.
+- Never offer or place a sample in a made-to-order color (a color whose name ends in `mto`; see [Workplace](workplace.md)). Made-to-order colors are produced for an order, so they cannot be sent as a sample. If the client wants that color, offer the same style in a regular color, or another style with a close regular color, and say only that this color isn't available as a sample.
 - The garment's unit price, read on the proof or in the quoter during this run, must be below `followup_sample_max_unit_value`. Never guess a price.
 - At most `sample_max_per_deal` different styles per deal, and never the same style twice. Cancelled samples do not count.
 - Finish arranging one sample before starting another.
@@ -48,7 +49,7 @@ Your reply then says the sample request is in and that you will share shipping d
 
 Logistics replies about samples by email (for example logistics@). When an internal message is about one of this deal's samples:
 
-- Set `sample_update` with that sample's `id` as `sample_id`, the new `status` (`shipped`, `delivered` or `cancelled`), and any `tracking_number`, `tracking_url`, `eta` or `cancel_reason` it gives. Use empty text for anything not given.
+- Set `sample_update` with that sample's `id` as `sample_id`, the new `status` (`shipped`, `delivered` or `cancelled`), and a `cancel_reason` when it was cancelled (empty text otherwise). Tracking details stay in the email and your message; find them in the conversation if the client asks later.
 - Shipped: tell the client it is on its way, with tracking, and invite them to reply when it arrives.
 - Delivered: ask how it landed, and move toward the real order (quantity and details).
 - A sample only moves forward: placed, then shipped, then delivered. Never set an earlier status than the one it has.

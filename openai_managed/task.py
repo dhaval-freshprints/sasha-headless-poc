@@ -52,7 +52,7 @@ SAMPLE_REQUEST_SCHEMA = _object({
 SAMPLE_UPDATE_SCHEMA = _object({
     "sample_id": {"type": "integer"},
     "status": {"type": "string", "enum": ["shipped", "delivered", "cancelled"]},
-    "tracking_number": TEXT, "tracking_url": TEXT, "eta": TEXT, "cancel_reason": TEXT,
+    "cancel_reason": TEXT,
 })
 
 SASHA_RESULT_JSON_SCHEMA = {
