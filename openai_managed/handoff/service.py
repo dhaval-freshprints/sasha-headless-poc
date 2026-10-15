@@ -3,6 +3,9 @@
 Port of Sasha v3 nodes/handoff (offer creation), handoff/expire_offers + advance (timeouts),
 handoff/isa_reply (applying the decision) and handoff/client_notify (client transition).
 Account Manager reads the ISA's reply and decides; this module only applies that decision.
+Everything lives in the Sasha database: offers in sasha_handoff_offers, the reason in
+sasha_deal_status, and the client transition as a generated message in
+sasha_conversation_history. The ISA offer email is rebuilt from those rows when shown.
 """
 
 from __future__ import annotations
@@ -14,7 +17,6 @@ from typing import Callable
 from sasha_database.handoff import HandoffOffers, Isa, Offer
 from sasha_database.storage import SashaStorage
 
-from .notify import Notifier, OutgoingEmail
 from .selection import select_next_isa
 from .working_hours import is_offer_timed_out, is_working_time
 
@@ -44,29 +46,22 @@ def client_transition_body(person_name: str) -> str:
 
 
 class HandoffService:
-    def __init__(self, storage=None, offers=None, notifier: Notifier | None = None,
-                 crm_factory: Callable | None = None):
+    def __init__(self, storage=None, offers=None, crm_factory: Callable | None = None):
         self.storage = storage or SashaStorage()
         self.offers = offers or HandoffOffers(self.storage.settings)
-        self.notifier = notifier or Notifier.from_environment()
         self.crm_factory = crm_factory or _crm_from_environment
 
     # --- offers ---
 
     def offer_next(self, deal_id) -> dict:
-        """Offer the deal to the next ISA and email them. Never raises."""
+        """Offer the deal to the next ISA. Never raises."""
         try:
-            status, reason = self.storage.deal_status(str(deal_id))
-            if status != "handoff_needed":
+            if self.storage.deal_status(str(deal_id))[0] != "handoff_needed":
                 return {"outcome": "not_handed_off"}
             outcome, offer, isa = self.offers.create_offer(deal_id, select_next_isa)
             if outcome != "created":
                 return {"outcome": outcome}
-            email = self.notifier.send(OutgoingEmail(
-                kind="isa_offer", deal_id=str(deal_id), to=isa.email, subject=offer_subject(deal_id),
-                html=offer_body(isa, deal_id, reason), offer_id=offer.id))
-            return {"outcome": "created", "offer_id": offer.id, "isa_email": isa.email,
-                    "isa_name": isa.full_name, "delivery": email.delivery}
+            return {"outcome": "created", "offer_id": offer.id, "isa_email": isa.email, "isa_name": isa.full_name}
         except Exception as error:
             return {"outcome": "error", "error": type(error).__name__}
 
@@ -85,6 +80,11 @@ class HandoffService:
             if result["outcome"] == "created":
                 results.append({"deal_id": deal_id, **result})
         return results
+
+    def offer_email(self, offer: Offer, isa: Isa | None, reason: str) -> dict:
+        """The ISA offer email, rebuilt from the database rows."""
+        return {"to": isa.email if isa else None, "subject": offer_subject(offer.deal_id),
+                "html": offer_body(isa, offer.deal_id, reason) if isa else ""}
 
     def handoff_context(self, deal_id) -> dict:
         """What the agent needs on a handed-off deal: the reason and the current ISA offer, if any."""
@@ -134,15 +134,10 @@ class HandoffService:
         subject = thread["subject"] or "Following up on your Fresh Prints order"
         if thread["subject"] and not subject.lower().startswith("re:"):
             subject = f"Re: {subject}"
-        body = client_transition_body(isa.full_name)
-        email = self.notifier.send(OutgoingEmail(
-            kind="client_transition", deal_id=deal_id, to=client["email"], cc=[isa.email],
-            subject=subject, html=body, offer_id=offer.id, thread_id=thread["external_thread_id"]))
         self.storage.record_outbound(
-            deal_id, f"handoff-{offer.id}", "client_response", body, subject=subject,
-            delivery_status="generated",
-            external_thread_id=thread["external_thread_id"])
-        result["client_transition"] = email.delivery
+            deal_id, f"handoff-{offer.id}", "client_response", client_transition_body(isa.full_name),
+            subject=subject, delivery_status="generated", external_thread_id=thread["external_thread_id"])
+        result["client_transition"] = "saved"
         return result
 
 

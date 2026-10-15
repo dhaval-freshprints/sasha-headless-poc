@@ -32,11 +32,6 @@ class FakeHandoffs:
         def offers_for_deal(deal_id):
             return []
 
-    class notifier:
-        class outbox:
-            @staticmethod
-            def list(deal_id):
-                return [{"kind": "isa_offer", "to": "isa@freshprints.com"}]
 
 
 class HandoffWebTests(unittest.TestCase):
@@ -79,8 +74,8 @@ class HandoffWebTests(unittest.TestCase):
         self.assertEqual(response.status_code, 202)
         self.finish(response.json()["run_id"])
         state = self.client.get("/api/handoffs/300").json()
-        self.assertEqual((state["status"], state["handoff_reason"], state["emails"][0]["kind"]),
-                         ("handoff_needed", "Asked for a manager.", "isa_offer"))
+        self.assertEqual((state["status"], state["handoff_reason"], state["offers"]),
+                         ("handoff_needed", "Asked for a manager.", []))
 
 
 if __name__ == "__main__":

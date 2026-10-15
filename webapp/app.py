@@ -322,14 +322,16 @@ def create_app(
         except ValueError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
         status, reason = manager.storage_factory().deal_status(deal_id)
+        offers, offers_error = [], ""
         try:
-            offers = [{**vars(offer), "isa": vars(handoffs.offers.isa(offer.isa_id) or {})}
-                      for offer in handoffs.offers.offers_for_deal(deal_id)]
-            offers_error = ""
+            for offer in handoffs.offers.offers_for_deal(deal_id):
+                isa = handoffs.offers.isa(offer.isa_id)
+                offers.append({**vars(offer), "isa": vars(isa) if isa else {},
+                               "email": handoffs.offer_email(offer, isa, reason)})
         except Exception as error:  # Handoff tables missing or not reachable.
             offers, offers_error = [], f"Offers unavailable ({type(error).__name__})"
         return {"deal_id": deal_id, "status": status, "handoff_reason": reason, "offers": offers,
-                "offers_error": offers_error, "emails": handoffs.notifier.outbox.list(deal_id)}
+                "offers_error": offers_error}
 
     @app.post("/api/handoffs/check-timeouts")
     def check_handoff_timeouts(force: bool = False) -> dict:
