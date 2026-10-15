@@ -11,7 +11,7 @@ Fresh Prints sends free, blank samples (the garment only, no print) so a client 
 
 The task includes this deal's samples (style, color, size, status and dates) and the limits from Sasha's settings. Use them as the record of what was already sent. You are responsible for applying the limits: nothing checks them after you.
 
-A **background job** polls Freshdesk for open sample tickets and updates `samples` status in the database. Every run, including follow-ups, reads that record in the sample context. Do not assume this turn refreshed Freshdesk.
+A **background job** polls Freshdesk for open sample tickets and updates `samples` status in the database. Every run, including follow-ups, reads that record in the sample context. When the client asks about tracking, delivery, or a change to an open sample, run `python /opt/sasha/sample_freshdesk.py sync SAMPLE_ID` (and `show` if needed) before you answer; see [sample Freshdesk tool](references/sample_freshdesk.md). Use `reply` and `amend` during the turn when logistics must act on the ticket.
 
 ## When to offer one
 
@@ -53,6 +53,8 @@ Only when every detail is confirmed, set `sample_request` in your result:
 - `ship_to_name`, `ship_to_address`, `contact_email`, `contact_phone`, `organization`.
 
 Your reply then says the sample request is in and that you will share shipping details once you have them. Never say "ticket" or "Freshdesk", or describe internal steps. The system saves the sample and creates the request for the logistics team. If that fails, the whole turn is not saved, and you will see on the next turn that no sample went out.
+
+When the client changes color, size, or style on a sample that is still open (`placed` or `shipped` without delivery), use `amend` on that sample's id instead of placing a second sample for the same style.
 
 ## Shipping updates
 

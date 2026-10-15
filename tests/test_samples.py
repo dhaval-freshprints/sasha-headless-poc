@@ -51,6 +51,12 @@ class FakeSamples:
             if row["id"] == sample_id:
                 row["freshdesk_ticket_url"] = url
 
+    def patch_details(self, deal_id, sample_id, **fields):
+        row = next(row for row in self.rows if row["id"] == sample_id)
+        for key, value in fields.items():
+            if value:
+                row[key] = value
+
     def update(self, deal_id, sample_id, status, details):
         row = next(row for row in self.rows if row["id"] == sample_id)
         row.update(status=status, cancel_reason=details.get("cancel_reason"))
@@ -106,6 +112,27 @@ class ServiceTests(unittest.TestCase):
         self.service.freshdesk_factory = lambda: None
         result = self.service.place("42", "run-1", REQUEST)
         self.assertEqual((result["placed"], result["ticket"]), (True, "not sent: Freshdesk is not configured"))
+
+    def test_freshdesk_reply_and_amend_call_the_api(self):
+        self.service.place("42", "run-1", REQUEST)
+        self.samples.set_ticket(1, "https://fp.freshdesk.com/a/tickets/9001")
+        calls = []
+
+        def opener(request, timeout=30):
+            calls.append((request.full_url, request.method, request.data))
+            from io import BytesIO
+            return BytesIO(b'{"id": 55}')
+
+        client = FreshdeskClient("fp.freshdesk.com", "key", "sasha@freshprints.com", opener=opener)
+        self.service.freshdesk_factory = lambda: client
+        reply = self.service.freshdesk_reply("42", 1, "Please ship soon.")
+        self.assertTrue(reply["ok"])
+        amend = self.service.freshdesk_amend("42", 1, color="Purple White", message="Client changed color.")
+        self.assertTrue(amend["ok"])
+        self.assertEqual(self.samples.rows[0]["color"], "Purple White")
+        methods = [item[1] for item in calls]
+        self.assertIn("POST", methods)
+        self.assertIn("PUT", methods)
 
     def test_followup_sync_advances_sample_status_from_freshdesk_thread(self):
         self.service.place("42", "run-1", REQUEST)

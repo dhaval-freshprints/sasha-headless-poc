@@ -23,7 +23,15 @@ AUTHENTICATION_SCRIPT = Path(__file__).with_name("setup_auth.js")
 BROWSER_KEEPER_SCRIPT = Path(__file__).with_name("browser_keeper.js")
 START_BROWSER_SCRIPT = Path(__file__).with_name("start_browser.js")
 CUSTOMER_LINK_SCRIPT = Path(__file__).with_name("customer_links.py")
+SAMPLE_FRESHDESK_SCRIPT = Path(__file__).with_name("sample_freshdesk_tool.py")
+ACCOUNT_MANAGER_PACKAGE = Path(__file__).resolve().parent
 DATABASE_SCRIPT = Path(__file__).resolve().parents[1] / "deal_manager_agent/skills/deal-manager-database/scripts/database.py"
+FRESHDESK_ENVIRONMENT_VARIABLES = (
+    "FRESHDESK_DOMAIN",
+    "FRESHDESK_API_KEY",
+    "FRESHDESK_REQUESTER_EMAIL",
+    "FRESHDESK_SAMPLE_GROUP_ID",
+)
 BROWSER_READY_STATUSES = {"started", "running"}
 
 
@@ -122,6 +130,10 @@ class DockerSandbox:
         handle = self._require_handle()
         database = DatabaseSettings.from_environment()
         database_options, process_environment = container_database_options(database)
+        for name in FRESHDESK_ENVIRONMENT_VARIABLES:
+            value = os.environ.get(name, "").strip()
+            if value:
+                database_options.extend(["--env", f"{name}={value}"])
         subprocess.run(
             [
                 "docker",
@@ -140,6 +152,10 @@ class DockerSandbox:
                 "/browser-profile:rw,nosuid,nodev,noexec,size=512m",
                 "--mount",
                 f"type=bind,src={CUSTOMER_LINK_SCRIPT},dst=/opt/sasha/customer_links.py,readonly",
+                "--mount",
+                f"type=bind,src={SAMPLE_FRESHDESK_SCRIPT},dst=/opt/sasha/sample_freshdesk.py,readonly",
+                "--mount",
+                f"type=bind,src={ACCOUNT_MANAGER_PACKAGE},dst=/opt/account_manager_agent,readonly",
                 "--mount",
                 f"type=bind,src={DATABASE_SCRIPT},dst=/opt/sasha/database.py,readonly",
                 "--mount",

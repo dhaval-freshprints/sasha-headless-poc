@@ -7,6 +7,7 @@ because those need database writes and the Freshdesk key, which stay outside the
 
 from __future__ import annotations
 
+import html
 from typing import Callable
 
 from sasha_database.samples import SampleRequests
@@ -104,3 +105,143 @@ class SampleService:
         except Exception as error:
             return {"updated": False, "sample_id": update.get("sample_id"),
                     "reason": f"could not update the sample ({type(error).__name__})"}
+
+    def _sample_row(self, deal_id, sample_id: int) -> dict | None:
+        for row in self.samples.for_deal(deal_id):
+            if int(row["id"]) == int(sample_id):
+                return row
+        return None
+
+    def freshdesk_show(self, deal_id, sample_id: int) -> dict:
+        """Read ticket status and recent thread for one sample (agent tool)."""
+        row = self._sample_row(deal_id, sample_id)
+        if row is None:
+            return {"ok": False, "error": "sample_not_found"}
+        ticket_id = ticket_id_from_url(row.get("freshdesk_ticket_url"))
+        if ticket_id is None:
+            return {"ok": False, "error": "no_freshdesk_ticket", "sample": row}
+        client = self.freshdesk_factory()
+        if client is None:
+            return {"ok": False, "error": "freshdesk_not_configured", "sample": row}
+        try:
+            ticket = client.get_ticket(ticket_id)
+            conversations = client.get_conversations(ticket_id)
+        except Exception as error:
+            return {"ok": False, "error": str(error), "sample": row}
+        return {
+            "ok": True,
+            "sample": row,
+            "ticket_id": ticket_id,
+            "freshdesk_status": ticket.get("status"),
+            "recent_thread": summarize_conversations(conversations, limit=8),
+        }
+
+    def freshdesk_sync_sample(self, deal_id, sample_id: int) -> dict:
+        """Pull Freshdesk thread for one sample and advance stored status when the thread shows it."""
+        row = self._sample_row(deal_id, sample_id)
+        if row is None:
+            return {"ok": False, "error": "sample_not_found"}
+        sync = self.sync_freshdesk_for_deal(deal_id)
+        entry = next(
+            (item for item in sync.get("tickets", []) if int(item.get("sample_id", 0)) == int(sample_id)),
+            None,
+        )
+        show = self.freshdesk_show(deal_id, sample_id)
+        return {
+            "ok": True,
+            "configured": sync.get("configured"),
+            "updates_applied": sync.get("updates_applied", []),
+            "ticket": entry,
+            "show": show,
+        }
+
+    def freshdesk_reply(self, deal_id, sample_id: int, body: str, private: bool = False) -> dict:
+        row = self._sample_row(deal_id, sample_id)
+        if row is None:
+            return {"ok": False, "error": "sample_not_found"}
+        ticket_id = ticket_id_from_url(row.get("freshdesk_ticket_url"))
+        if ticket_id is None:
+            return {"ok": False, "error": "no_freshdesk_ticket"}
+        client = self.freshdesk_factory()
+        if client is None:
+            return {"ok": False, "error": "freshdesk_not_configured"}
+        if "<" in body:
+            body_html = body
+        else:
+            paragraphs = [html.escape(part.strip()) for part in body.split("\n") if part.strip()]
+            body_html = "".join(f"<p>{part}</p>" for part in paragraphs) or "<p></p>"
+        try:
+            if private:
+                result = client.add_private_note(ticket_id, body_html)
+            else:
+                result = client.reply_to_ticket(ticket_id, body_html)
+        except Exception as error:
+            return {"ok": False, "error": str(error)}
+        return {"ok": True, "ticket_id": ticket_id, "conversation_id": result.get("id")}
+
+    def freshdesk_amend(
+        self,
+        deal_id,
+        sample_id: int,
+        *,
+        style_code: str | None = None,
+        color: str | None = None,
+        size: str | None = None,
+        message: str | None = None,
+    ) -> dict:
+        """Update sample garment fields on the Freshdesk ticket, reply to logistics, and patch the DB row."""
+        row = self._sample_row(deal_id, sample_id)
+        if row is None:
+            return {"ok": False, "error": "sample_not_found"}
+        if str(row.get("status")) in ("delivered", "cancelled"):
+            return {"ok": False, "error": "sample_not_open", "status": row.get("status")}
+        ticket_id = ticket_id_from_url(row.get("freshdesk_ticket_url"))
+        if ticket_id is None:
+            return {"ok": False, "error": "no_freshdesk_ticket"}
+        client = self.freshdesk_factory()
+        if client is None:
+            return {"ok": False, "error": "freshdesk_not_configured"}
+        new_style = (style_code or row.get("style_code") or "").strip()
+        new_color = (color or row.get("color") or "").strip()
+        new_size = (size or row.get("size") or "").strip()
+        custom = {
+            "cf_style_code": new_style,
+            "cf_product_code": new_style,
+            "cf_product_codes": new_style,
+            "cf_garment_color": new_color,
+        }
+        try:
+            client.update_ticket(ticket_id, {"custom_fields": custom})
+        except Exception as error:
+            return {"ok": False, "error": str(error)}
+        lines = []
+        if style_code and style_code.strip() != str(row.get("style_code") or "").strip():
+            lines.append(f"Style code: {html.escape(style_code.strip())}")
+        if color and color.strip() != str(row.get("color") or "").strip():
+            lines.append(f"Color: {html.escape(color.strip())}")
+        if size and size.strip() != str(row.get("size") or "").strip():
+            lines.append(f"Size: {html.escape(size.strip())}")
+        default_message = (
+            "Please update this blank sample request with the following change(s) for the client:"
+            if lines
+            else "Following up on this blank sample request."
+        )
+        reply_body = message.strip() if message and message.strip() else default_message
+        if lines:
+            reply_body = f"{reply_body}\n" + "\n".join(f"- {line}" for line in lines)
+        reply = self.freshdesk_reply(deal_id, sample_id, reply_body, private=False)
+        if not reply.get("ok"):
+            return reply
+        self.samples.patch_details(
+            deal_id,
+            sample_id,
+            style_code=new_style if style_code else None,
+            color=new_color if color else None,
+            size=new_size if size else None,
+        )
+        return {
+            "ok": True,
+            "ticket_id": ticket_id,
+            "reply": reply,
+            "patched": {"style_code": new_style, "color": new_color, "size": new_size},
+        }

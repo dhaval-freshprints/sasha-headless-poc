@@ -59,3 +59,15 @@ class SampleRequests:
         assignments = ",".join(f"{name}=%s" for name in values)
         self._write(f"UPDATE sasha_sample_requests SET {assignments} WHERE id=%s AND deal_id=%s",
                     (*values.values(), sample_id, validate_deal_id(deal_id)))
+
+    def patch_details(self, deal_id, sample_id: int, **fields) -> None:
+        """Update style, color, or size on an open sample row (after logistics agrees on Freshdesk)."""
+        allowed = ("style_code", "color", "size")
+        values = {name: fields[name] for name in allowed if fields.get(name)}
+        if not values:
+            return
+        assignments = ",".join(f"{name}=%s" for name in values)
+        self._write(
+            f"UPDATE sasha_sample_requests SET {assignments} WHERE id=%s AND deal_id=%s AND deleted_at IS NULL",
+            (*values.values(), sample_id, validate_deal_id(deal_id)),
+        )

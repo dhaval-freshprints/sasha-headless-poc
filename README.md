@@ -561,6 +561,10 @@ the web app polls Freshdesk for deals with open sample tickets (`placed` / `ship
 not call Freshdesk. `POST /api/samples/sync-freshdesk` runs the poll now. Set the interval to `0` to
 disable the background worker.
 
+**Freshdesk during a run.** Account Manager can call `python /opt/sasha/sample_freshdesk.py` inside
+the sandbox (`show`, `sync`, `reply`, `amend`) to read the logistics thread, post updates, and amend
+open samples. See [sample Freshdesk reference](account_manager_agent/capabilities/samples/references/sample_freshdesk.md).
+
 Not ported from v3: the Freshdesk webhook, the stale-shipment nudge and Slack alert, and cancelling
 open samples on opt-out.
 

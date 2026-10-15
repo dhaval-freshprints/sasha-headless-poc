@@ -175,3 +175,21 @@ class FreshdeskClient:
     def get_conversations(self, ticket_id: int) -> list[dict]:
         payload = self._authorized_request(f"/tickets/{ticket_id}/conversations")
         return list(payload if isinstance(payload, list) else payload.get("conversations", []))
+
+    def reply_to_ticket(self, ticket_id: int, body_html: str) -> dict:
+        """Public reply on the ticket thread (visible to Sample Orders / logistics)."""
+        return self._authorized_request(
+            f"/tickets/{ticket_id}/reply",
+            method="POST",
+            payload={"body": body_html},
+        )
+
+    def add_private_note(self, ticket_id: int, body_html: str) -> dict:
+        return self._authorized_request(
+            f"/tickets/{ticket_id}/notes",
+            method="POST",
+            payload={"body": body_html, "private": True},
+        )
+
+    def update_ticket(self, ticket_id: int, fields: dict) -> dict:
+        return self._authorized_request(f"/tickets/{ticket_id}", method="PUT", payload=fields)

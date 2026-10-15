@@ -198,6 +198,8 @@ class DockerSandboxTests(unittest.TestCase):
         container_command = " ".join(run.call_args.args[0])
         self.assertIn("dst=/opt/sasha/browser_keeper.js,readonly", container_command)
         self.assertIn("dst=/opt/sasha/start_browser.js,readonly", container_command)
+        self.assertIn("dst=/opt/sasha/sample_freshdesk.py,readonly", container_command)
+        self.assertIn("dst=/opt/account_manager_agent,readonly", container_command)
 
     @patch("account_manager_agent.sandbox.subprocess.run")
     def test_start_browser_runs_start_script_in_the_container(self, run):
