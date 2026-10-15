@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import threading
+from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
@@ -78,13 +79,12 @@ class RunRequest(BaseModel):
     incoming_message: MessageInput | None = None
 
     turn_type: Literal["follow_up"] | None = None
-    follow_up_stage: int | None = Field(default=None, strict=True, ge=1, le=5)
     as_of_date: str | None = None
     days_since_client_reply: int | None = Field(default=None, strict=True, ge=0)
 
     @model_validator(mode="after")
     def validate_turn(self):
-        validate_follow_up(self.turn_type, self.follow_up_stage, self.as_of_date,
+        validate_follow_up(self.turn_type, self.as_of_date,
                            self.days_since_client_reply,
                            self.incoming_message.body if self.incoming_message else self.client_message, self.file_urls)
         return self
@@ -94,6 +94,8 @@ class RunRequest(BaseModel):
     def reject_workflow(cls, value):
         if isinstance(value, dict) and "workflow" in value:
             raise ValueError("Remove workflow; Account Manager chooses its work from the conversation")
+        if isinstance(value, dict) and "follow_up_stage" in value:
+            raise ValueError("Remove follow_up_stage; Account Manager works out the follow-up phase itself")
         return value
 
     @field_validator("client_message")
@@ -144,6 +146,7 @@ def create_app(
     inbound_manager: InboundJobs | None = None,
     deal_resolver: DealResolver | None = None,
     handoff_service=None,
+    followup_settings=None,
 ) -> FastAPI:
     load_dotenv(ROOT / ".env")
     manager = job_manager or JobManager(_jobs_directory())
@@ -169,6 +172,8 @@ def create_app(
     async def lifespan(_: FastAPI):
         if handoff_service is None:
             _start_timeout_worker(handoffs, stop_worker)
+        if followup_settings is None:
+            _start_followup_worker(lambda: run_due_followups(manager, deals, None), stop_worker)
         yield
         stop_worker.set()
         manager.shutdown()
@@ -309,7 +314,6 @@ def create_app(
             incoming_messages=(message,) if message else (),
             deal_check=check.to_dict(),
             turn_type=request.turn_type,
-            follow_up_stage=request.follow_up_stage,
             as_of_date=request.as_of_date,
             days_since_client_reply=request.days_since_client_reply,
         )
@@ -330,12 +334,16 @@ def create_app(
                                "email": handoffs.offer_email(offer, isa, reason)})
         except Exception as error:  # Handoff tables missing or not reachable.
             offers, offers_error = [], f"Offers unavailable ({type(error).__name__})"
-        return {"deal_id": deal_id, "status": status, "handoff_reason": reason, "offers": offers,
+        return {"deal_id": deal_id, "status": status, "status_reason": reason, "offers": offers,
                 "offers_error": offers_error}
 
     @app.post("/api/handoffs/check-timeouts")
     def check_handoff_timeouts(force: bool = False) -> dict:
         return {"results": handoffs.check_timeouts(force=force)}
+
+    @app.post("/api/followups/run-due")
+    def run_followups_now(force: bool = False) -> dict:
+        return run_due_followups(manager, deals, followup_settings, force=force)
 
     @app.get("/api/runs/{run_id}")
     def get_run(run_id: str) -> dict:
@@ -420,6 +428,51 @@ def _start_timeout_worker(handoffs, stop: threading.Event) -> None:
                 pass
 
     threading.Thread(target=loop, daemon=True, name="handoff-timeouts").start()
+
+
+def run_due_followups(manager: JobManager, deals: DealStore, settings=None, force: bool = False,
+                      now: datetime | None = None) -> dict:
+    """Start a follow-up run for every deal whose follow-up day has arrived (as v3's hourly cron).
+
+    Runs only when sasha_settings enable Sasha and automatic follow-ups, and, unless forced,
+    during client hours (Mon–Fri 8:00–17:00 New York). Account Manager decides what to send.
+    """
+    from openai_managed.handoff.working_hours import ISA_TZ, is_working_time
+
+    now = now or datetime.now(timezone.utc)
+    if settings is None:
+        from sasha_database.settings import SashaSettings
+
+        settings = SashaSettings()
+    values = settings.values("sasha_master_key", "auto_followup_enabled")
+    if values.get("sasha_master_key", "").lower() != "enabled" or \
+            values.get("auto_followup_enabled", "").lower() != "true":
+        return {"started": [], "skipped": "Sasha or automatic follow-ups are disabled in sasha_settings"}
+    if not force and not is_working_time(now):
+        return {"started": [], "skipped": "outside client hours (Mon–Fri 8:00–17:00 New York)"}
+    today = now.astimezone(ISA_TZ).date().isoformat()
+    started = []
+    for deal_id in manager.storage_factory().claim_due_followups(now.astimezone(timezone.utc).replace(tzinfo=None)):
+        deals.touch(str(deal_id))
+        run = manager.submit(str(deal_id), None, [], turn_type="follow_up", as_of_date=today)
+        started.append({"deal_id": str(deal_id), "run_id": run.run_id})
+    return {"started": started}
+
+
+def _start_followup_worker(run_due, stop: threading.Event) -> None:
+    """Every FOLLOWUP_CHECK_SECONDS (default 3600), run due follow-ups. 0 disables it."""
+    interval = float(os.environ.get("FOLLOWUP_CHECK_SECONDS") or 3600)
+    if interval <= 0:
+        return
+
+    def loop():
+        while not stop.wait(interval):
+            try:
+                run_due()
+            except Exception:  # Missing configuration or a database outage: try again later.
+                pass
+
+    threading.Thread(target=loop, daemon=True, name="followups").start()
 
 
 def _deal_payload(

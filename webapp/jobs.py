@@ -36,7 +36,7 @@ class WebRun:
     client_message: str | None
     file_urls: list[str]
     turn_type: str | None = None
-    follow_up_stage: int | None = None
+    follow_up_stage: int | None = None  # Older runs only; follow-ups no longer take a stage.
     as_of_date: str | None = None
     days_since_client_reply: int | None = None
     workflow: str | None = None  # Historical runs retain their caller-selected label.
@@ -57,6 +57,7 @@ class WebRun:
     deal_check: dict[str, Any] | None = None  # Validation/consolidation before this run.
     handoff: dict[str, Any] | None = None  # What this run did about handing the deal to a person.
     sample: dict[str, Any] | None = None  # The free sample this run placed or updated.
+    deal_state: dict[str, Any] | None = None  # Status change Account Manager decided, with its reason.
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -95,14 +96,13 @@ class JobManager:
         *,
         incoming_messages: tuple[IncomingMessage, ...] = (),
         turn_type: str | None = None,
-        follow_up_stage: int | None = None,
         as_of_date: str | None = None,
         days_since_client_reply: int | None = None,
     ) -> WebRun:
         if not deal_id.isdigit():
             raise ValueError("deal_id must contain only digits")
 
-        validate_follow_up(turn_type, follow_up_stage, as_of_date,
+        validate_follow_up(turn_type, as_of_date,
                            days_since_client_reply, client_message, file_urls)
         run = WebRun(
             run_id=uuid.uuid4().hex,
@@ -111,7 +111,6 @@ class JobManager:
             file_urls=list(file_urls),
             deal_check=deal_check,
             turn_type=turn_type,
-            follow_up_stage=follow_up_stage,
             as_of_date=as_of_date,
             days_since_client_reply=days_since_client_reply,
         )
@@ -232,7 +231,6 @@ class JobManager:
             client_message=run.client_message,
             file_urls=tuple(run.file_urls),
             turn_type=run.turn_type if run.turn_type == "follow_up" else None,
-            follow_up_stage=run.follow_up_stage,
             as_of_date=run.as_of_date,
             days_since_client_reply=run.days_since_client_reply,
         )
@@ -266,7 +264,8 @@ class JobManager:
             pricing=pricing.to_dict() if pricing is not None else None,
         )
         self._change(run_id, handoff=getattr(runner, "last_handoff", None),
-                     sample=getattr(runner, "last_sample", None))
+                     sample=getattr(runner, "last_sample", None),
+                     deal_state=getattr(runner, "last_deal_state", None))
 
     def _fail(self, run_id: str, message: str, started: float) -> None:
         self._change(

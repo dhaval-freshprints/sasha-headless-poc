@@ -18,6 +18,7 @@ from sasha_database.connection import DatabaseError
 from sasha_database.messages import IncomingMessage, incoming_message, join_messages
 from .additional_messages import AdditionalMessageInbox, additional_message_prompt
 from .environment import ApplicationEnvironment
+from .followup_signals import describe_signals, follow_up_signals
 from .notes import prepare_notes, saved_attachment_urls
 from .pricing import CostEstimate, CostReporter, estimate_cost
 from .progress import ProgressReporter
@@ -267,6 +268,8 @@ class OpenAIManagedRunner:
         self.last_handoff: dict | None = None
         self.sample_service_factory = sample_service_factory
         self.last_sample: dict | None = None
+        self.last_deal_state: dict | None = None
+        self.crm_factory: Callable[[], Any] | None = None
         self.storage = None
         self.current_task = None
         self.persistence_error = None
@@ -293,6 +296,41 @@ class OpenAIManagedRunner:
         except Exception as error:
             return {"status": status, "reason": reason, "offer": None,
                     "offer_error": f"Offers unavailable ({type(error).__name__})"}
+
+    def _finish_followup(self, deal_id: str, drafted: bool) -> None:
+        """Count a drafted follow-up; if Sasha chose no next follow-up day, pause the schedule."""
+        try:
+            if drafted:
+                self.storage.record_followup_sent(deal_id)
+            self.storage.pause_followups(deal_id, "No next follow-up chosen after this check")
+        except Exception as error:
+            self.progress.report(f"[follow-up] schedule not updated ({type(error).__name__})")
+
+    def _apply_deal_state(self, deal_id: str, state: dict) -> dict:
+        """The deal state is saved with the turn; mark the deal lost in the CRM when the agent asked."""
+        outcome = {**state}
+        try:
+            outcome["followup"] = self.storage.apply_followup_schedule(deal_id, state)
+        except Exception as error:
+            outcome["followup"] = f"follow-up schedule not updated ({type(error).__name__})"
+        reason = str(state.get("crm_lost_reason") or "").strip()
+        if reason:
+            try:
+                if self.crm_factory is not None:
+                    crm = self.crm_factory()
+                else:
+                    from deal_manager_agent.v3_api import V3Api
+
+                    crm = V3Api.from_environment()
+                if crm is None:
+                    outcome["crm"] = "not configured: deal not marked lost"
+                else:
+                    ok, message = crm.edit_deal(int(deal_id), {"stage": "lost", "lostReason": reason})
+                    outcome["crm"] = "marked lost" if ok else f"not marked lost: {message}"
+            except Exception as error:
+                outcome["crm"] = f"not marked lost ({type(error).__name__})"
+        self.progress.report(f"[deal state] {outcome}")
+        return outcome
 
     def _sample_service(self):
         if self.sample_service_factory is not None:
@@ -395,6 +433,7 @@ class OpenAIManagedRunner:
         self.last_cost_estimate = None
         self.last_handoff = None
         self.last_sample = None
+        self.last_deal_state = None
         try:
             self.settings.application.validate_deal_url(task.deal_url)
         except ValueError as error:
@@ -409,6 +448,7 @@ class OpenAIManagedRunner:
             if not messages and task.client_message:
                 messages = (incoming_message(task.client_message, task.file_urls),)
             messages = self.storage.prepare_run(task.deal_id, task.run_id, messages)
+            deal_state = self.storage.deal_state(task.deal_id)
             handoff_context = self._handoff_context(task.deal_id)
             sample_context = self._sample_context(task.deal_id)
             notes, history = self.storage.load_context(task.deal_id)
@@ -417,13 +457,18 @@ class OpenAIManagedRunner:
             history = [entry for entry in history if entry["id"] not in current_ids]
             task = replace(task, incoming_messages=messages, client_message=join_messages(messages),
                            conversation_history=tuple(history), deal_notes=notes,
-                           handoff_context=handoff_context, sample_context=sample_context)
+                           handoff_context=handoff_context, sample_context=sample_context,
+                           deal_state=deal_state)
             self.current_task = task
             result = self._run_turn(task)
             if self.persistence_error is not None:
                 raise self.persistence_error
             if handoff_context and result.status != "failed":
                 # A person owns this deal: Sasha never writes to the client or hands off again.
+                result = replace(result, status="completed", message_html="", convo_type=None, deal_state=None)
+            opted_out = deal_state["status"] == "opt_out" or (result.deal_state or {}).get("status") == "opt_out"
+            if opted_out and result.status != "failed":
+                # Safety net for consent: nothing is ever drafted to a client who opted out.
                 result = replace(result, status="completed", message_html="", convo_type=None)
             if result.sample_request and result.status != "failed":
                 result = self._place_sample(task, result, handoff_context)
@@ -436,8 +481,13 @@ class OpenAIManagedRunner:
                                         result.convo_type == "followup" and not handoff)
                 self.storage.complete_run(task.deal_id, task.run_id, notes, updated,
                                           result.message_html, result.convo_type,
-                                          handoff_reason=result.handoff_reason if handoff else None)
+                                          handoff_reason=result.handoff_reason if handoff else None,
+                                          deal_state=None if handoff else result.deal_state)
                 result = replace(result, notes=updated)
+                if result.deal_state and not handoff:
+                    self.last_deal_state = self._apply_deal_state(task.deal_id, result.deal_state)
+                if task.turn_type == "follow_up" and not handoff:
+                    self._finish_followup(task.deal_id, bool(result.message_html.strip()))
                 self.last_handoff = self._act_on_handoff(task, result, handoff_context)
                 if result.sample_update:
                     self.last_sample = {"update": self._sample_service().record_update(
@@ -795,6 +845,13 @@ class OpenAIManagedRunner:
                 "--- END CLIENT MESSAGE ---"
             )
 
+        deal_state_data = ""
+        if task.deal_state is not None:
+            deal_state_data = (
+                "This deal's Sasha status, with the reasoning saved earlier (follow the account-manager "
+                "conversation judgement and win-back guides):\n"
+                f"{json.dumps(task.deal_state, indent=2, default=str)}\n\n"
+            )
         sample_data = ""
         if task.sample_context is not None:
             sample_data = (
@@ -811,14 +868,18 @@ class OpenAIManagedRunner:
             )
         follow_up_context = ""
         if task.turn_type == "follow_up":
+            signals = follow_up_signals(task.conversation_history, task.deal_notes, task.as_of_date,
+                                        task.days_since_client_reply)
+            planned = ((task.deal_state or {}).get("followup") or {}).get("scheduled_followup_reason")
             follow_up_context = (
-                "Requested check: explicit follow-up. Account Manager still selects the final action.\n"
-                f"Manually selected follow_up_stage: {task.follow_up_stage} (authoritative).\n"
-                f"Business as_of_date: {task.as_of_date}.\n"
-                f"days_since_client_reply: {task.days_since_client_reply} (context only).\n"
-                "Empty database history means no reply only while no incoming client message exists. "
+                "Requested check: follow-up. Account Manager still selects the final action.\n"
+                "Follow-up signals computed from the dated conversation and deal notes:\n"
+                f"{describe_signals(signals)}\n"
+                + (f"Why this follow-up was planned: {planned}\n" if planned else "")
+                + "Empty database history means no reply only while no incoming client message exists. "
                 "An incoming message or unanswered client request in the database history takes priority. "
-                "Otherwise evaluate one supported unused tactic from the requested stage.\n\n"
+                "Otherwise use the followup skill: read the situation, choose one unused tactic that "
+                "gives the client new value or return no reply, and choose the next follow-up.\n\n"
             )
 
         file_data = ""
@@ -873,6 +934,7 @@ class OpenAIManagedRunner:
             "--- END PREVIOUS CONVERSATION JSON ---\n\n"
             f"{follow_up_context}"
             f"{isa_reply_context}"
+            f"{deal_state_data}"
             f"{sample_data}"
             f"{message_data}\n\n"
             f"{file_data}"
@@ -901,6 +963,8 @@ class OpenAIManagedRunner:
             "isa_decision only when the handoff guide asks you to read an ISA's reply. "
             "Set sample_request or sample_update only as the samples guide describes; "
             "otherwise leave them null. "
+            "Set deal_state, with your own reason, whenever this turn changes how Sasha should treat "
+            "the deal (opt-out, win-back, pause, a later check date, reactivation); otherwise null. "
             "Return only the required Sasha result JSON object."
         )
 

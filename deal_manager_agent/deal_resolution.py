@@ -33,7 +33,7 @@ from typing import Literal
 
 from .deal_queries import (
     CLOSED_STAGES, active_deals, database_session, deal_by_id, latest_outbound_by_deal,
-    pick_canonical_deal_id, positive_int, proof_ids_for_deal, sasha_user_id,
+    pick_canonical_deal_id, positive_int, proof_ids_for_deal, sasha_status, sasha_user_id,
 )
 
 Workflow = Literal["client_response", "outreach", "internal_email"]
@@ -47,6 +47,7 @@ REASON_LABELS = {
     "consolidated_canonical_already_outreached":
         "Merged the client's active deals; the kept deal already had Sasha outreach, so outreach is skipped.",
     "incoming_deal_won_client_response": "Won deal: replies after an order are allowed.",
+    "incoming_deal_lost_winback_reply": "Lost after a win-back question: the client's answer goes to Account Manager.",
     "internal_email_active_deal": "Active deal for Sasha; internal mail does not merge deals.",
     "incoming_deal_won_internal_email": "Won deal: internal updates after an order are allowed.",
     "incoming_deal_not_active": "The deal is not active for Sasha (won, lost, deleted, or managed by someone else).",
@@ -223,7 +224,7 @@ class DealResolver:
             with _lock_for(client_id):
                 active = [int(row["deal_id"]) for row in active_deals(db, [client_id], self._manager)["rows"]]
                 if incoming not in active:
-                    return _not_active(incoming, deal, workflow)
+                    return _not_active(db, incoming, deal, workflow)
                 if workflow == "internal_email":  # Team mail never merges deals or writes to the CRM.
                     return Resolution("proceed", "internal_email_active_deal", str(incoming))
                 if len(active) == 1:
@@ -279,9 +280,14 @@ class DealResolver:
         return crm.edit_deal(deal_id, {"stage": "lost", "lostReason": reason})
 
 
-def _not_active(incoming: int, deal: dict, workflow: Workflow) -> Resolution:
-    if workflow != "outreach" and str(deal["stage"] or "").strip().lower() == "won":
+def _not_active(db, incoming: int, deal: dict, workflow: Workflow) -> Resolution:
+    stage = str(deal["stage"] or "").strip().lower()
+    if workflow != "outreach" and stage == "won":
         return Resolution("proceed", f"incoming_deal_won_{workflow}", str(incoming))
+    # As in v3: after a win-back question the deal is lost in the CRM and paused for Sasha;
+    # the client's answer still reaches Account Manager (reply only, the deal is not reopened).
+    if workflow == "client_response" and stage == "lost" and sasha_status(db, incoming) == "paused":
+        return Resolution("proceed", "incoming_deal_lost_winback_reply", str(incoming))
     return Resolution("handoff", "incoming_deal_not_active")
 
 

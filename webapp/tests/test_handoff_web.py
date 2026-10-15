@@ -74,7 +74,7 @@ class HandoffWebTests(unittest.TestCase):
         self.assertEqual(response.status_code, 202)
         self.finish(response.json()["run_id"])
         state = self.client.get("/api/handoffs/300").json()
-        self.assertEqual((state["status"], state["handoff_reason"], state["offers"]),
+        self.assertEqual((state["status"], state["status_reason"], state["offers"]),
                          ("handoff_needed", "Asked for a manager.", []))
 
 

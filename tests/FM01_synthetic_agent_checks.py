@@ -143,7 +143,7 @@ for name, history, message, additional, expected, follow_up, notes_text, sample_
     errors = []
     def execute():
         try:
-            outputs.append(runner.run(SashaTask(DEAL, 'FM01_' + name, application.deal_url(DEAL), message, turn_type='follow_up' if follow_up else None, follow_up_stage=1 if follow_up else None, as_of_date=as_of_date, days_since_client_reply=days_since_reply)))
+            outputs.append(runner.run(SashaTask(DEAL, 'FM01_' + name, application.deal_url(DEAL), message, turn_type='follow_up' if follow_up else None, as_of_date=as_of_date, days_since_client_reply=days_since_reply)))
         except Exception as error:
             errors.append(type(error).__name__ + ': ' + str(error))
     worker = threading.Thread(target=execute)

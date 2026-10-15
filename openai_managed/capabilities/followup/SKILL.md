@@ -24,6 +24,8 @@ Then start at the exact deal URL and inspect the deal, its full activity history
 
 If the conversation holds an unanswered client request, stop: Account Manager handles it through client-response-orchestrator.
 
+
+**The deal's Sasha status comes first.** If the deal is opted out, return no reply. If it is paused, or its follow-up schedule is stopped or set for a later day, return no reply unless something new needs the client's attention. When the check day has arrived, the status reason tells you why: a client who asked to be contacted later, an out-of-office, or the one gentle re-engagement after a declined order (use a Re-engage tactic, and set `deal_state` back to `active` or clear the date as fits).
 ## 2. Place the deal in a phase
 
 The phases run in order from gentle to final. Choose the phase from the whole brief, not from the day count alone:
@@ -67,3 +69,16 @@ Gather the facts the tactic needs in the browser: catalog, quoter, stock checker
 ## 5. Record the tactic
 
 Only when the final result is a nonblank follow-up draft, append exactly one bullet to Current decisions in the deal notes: `- Follow-up generated: tactic_id`. Keep every earlier entry, including older `Stage N follow-up …` entries. Never record a tactic for no reply, failure, handoff, client response, or work superseded by an additional message.
+
+## 6. Choose the next follow-up
+
+Every turn ends with a decision about when Sasha should look at this deal again, in `deal_state`, with your own reason. Use judgement, not a fixed calendar; this rhythm (from Sasha v3) is a sensible default:
+
+- Early in the conversation, or right after a new draft, mockup or answer: a few days out (v3 touched on days 1, 3, 5 and 7, then about every 2 days).
+- Sooner when a real deadline or order-due date is close and the client still has to act.
+- Later when the client asked for space, is clearly busy, or is mid-decision with others.
+- A date the client gave ("after spring break", back from vacation on the 20th) always wins.
+- Stop after about six weeks of silence, after `close_the_loop` and `offer_someone_else`, or when no useful tactic is left: set `paused` with your reason instead of a date.
+- If nothing is open on the client's side (they just replied and you answered, and the next move is theirs), pause until they write again.
+
+Set `next_check_on` to the day (YYYY-MM-DD) and explain in `reason` what you will check and why, for example "Sent two hoodie options; check in 2 days if no reply". Leave `deal_state` null only when the existing plan still stands. If a follow-up check ends without a next day, the schedule pauses.

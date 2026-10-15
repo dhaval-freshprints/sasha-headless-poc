@@ -1,5 +1,7 @@
 """Host-owned persistence for Sasha status, notes, and conversations."""
 
+from datetime import datetime
+
 from dataclasses import replace
 import json
 
@@ -14,6 +16,25 @@ def validate_handoff_reason(reason: str) -> str:
     if not reason:
         raise ValueError("A handoff needs the agent's reason")
     return reason
+
+
+AGENT_STATUSES = {"active", "paused", "opt_out", "completed"}
+
+
+def validate_deal_state(state: dict) -> dict:
+    """The Account Manager's decision about the deal: status, its reasoning, and the next check day."""
+    status = str(state.get("status") or "").strip()
+    reason = str(state.get("reason") or "").strip()
+    next_check = str(state.get("next_check_on") or "").strip() or None
+    if status not in AGENT_STATUSES:
+        raise ValueError(f"deal_state.status must be one of {', '.join(sorted(AGENT_STATUSES))}")
+    if not reason:
+        raise ValueError("deal_state needs the Account Manager's reason")
+    if next_check is not None:
+        from datetime import date
+        date.fromisoformat(next_check)
+    return {"status": status, "reason": reason, "next_check_on": next_check,
+            "crm_lost_reason": str(state.get("crm_lost_reason") or "").strip()}
 
 
 def validate_deal_id(deal_id: str) -> int:
@@ -132,20 +153,118 @@ class SashaStorage:
         return email
 
     def deal_status(self, deal_id: str) -> tuple[str, str]:
-        """(status, handoff_reason); a deal without a status row is active."""
+        """(status, status_reason); a deal without a status row is active."""
         with self.transaction(self.settings, readonly=True) as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
-                    "SELECT status,handoff_reason FROM sasha_deal_status "
+                    "SELECT status,status_reason FROM sasha_deal_status "
                     "WHERE deal_id=%s AND deleted_at IS NULL", (validate_deal_id(deal_id),))
                 row = cursor.fetchone()
-        return (row["status"], row["handoff_reason"] or "") if row else ("active", "")
+        return (row["status"], row["status_reason"] or "") if row else ("active", "")
+
+    def deal_state(self, deal_id: str) -> dict:
+        """The deal's Sasha status with its reasons, plus its row in v3's follow-up schedule."""
+        deal_id = validate_deal_id(deal_id)
+        with self.transaction(self.settings, readonly=True) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT status,status_reason FROM sasha_deal_status "
+                    "WHERE deal_id=%s AND deleted_at IS NULL", (deal_id,))
+                row = cursor.fetchone() or {}
+                cursor.execute(
+                    "SELECT status,next_followup_date,scheduled_followup_reason,stop_reason,followup_count "
+                    "FROM sasha_followup_schedule WHERE deal_id=%s", (deal_id,))
+                followup = cursor.fetchone()
+        return {"status": row.get("status") or "active", "status_reason": row.get("status_reason") or "",
+                "followup": {key: (value.isoformat() if hasattr(value, "isoformat") else value)
+                             for key, value in followup.items()} if followup else None}
+
+    def apply_followup_schedule(self, deal_id: str, state: dict) -> str:
+        """Record Account Manager's decision in v3's sasha_followup_schedule, as v3 does:
+        a check date schedules the follow-up; opt-out, win-back and completion stop it."""
+        deal_id = validate_deal_id(deal_id)
+        status, reason = state["status"], state["reason"][:65535]
+        stop = ("opted_out" if status == "opt_out" else "completed" if status == "completed"
+                else "opt_out_winback" if state.get("crm_lost_reason") else None)
+        now = utc_now()
+        with self.transaction(self.settings) as connection:
+            with connection.cursor() as cursor:
+                if stop:
+                    cursor.execute(
+                        "INSERT INTO sasha_followup_schedule (deal_id,status,stop_reason,first_message_timestamp) "
+                        "VALUES (%s,'stopped',%s,%s) ON DUPLICATE KEY UPDATE status='stopped',"
+                        "stop_reason=VALUES(stop_reason),next_followup_date=NULL,scheduled_followup_reason=NULL",
+                        (deal_id, stop, now))
+                    return f"stopped ({stop})"
+                if state.get("next_check_on"):
+                    # The cron matches the hour; 14:00 UTC is mid-morning in US time zones.
+                    when = datetime.fromisoformat(state["next_check_on"]).replace(hour=14)
+                    cursor.execute(
+                        "INSERT INTO sasha_followup_schedule (deal_id,status,first_message_timestamp,"
+                        "next_followup_date,scheduled_followup_reason) VALUES (%s,'active',%s,%s,%s) "
+                        "ON DUPLICATE KEY UPDATE status='active',stop_reason=NULL,"
+                        "next_followup_date=VALUES(next_followup_date),"
+                        "scheduled_followup_reason=VALUES(scheduled_followup_reason)",
+                        (deal_id, now, when, reason))
+                    return f"scheduled for {state['next_check_on']}"
+                if status == "paused":
+                    cursor.execute(
+                        "INSERT INTO sasha_followup_schedule (deal_id,status,first_message_timestamp) "
+                        "VALUES (%s,'paused',%s) ON DUPLICATE KEY UPDATE "
+                        # MySQL applies these left to right, so status is changed last.
+                        "next_followup_date=IF(status IN ('stopped','completed'),next_followup_date,NULL),"
+                        "scheduled_followup_reason=IF(status IN ('stopped','completed'),scheduled_followup_reason,NULL),"
+                        "status=IF(status IN ('stopped','completed'),status,'paused')",
+                        (deal_id, now))
+                    return "paused"
+        return "unchanged"
 
     @staticmethod
     def _set_handoff(cursor, deal_id, reason):
         cursor.execute(
-            "UPDATE sasha_deal_status SET status='handoff_needed',handoff_reason=%s WHERE deal_id=%s",
+            "UPDATE sasha_deal_status SET status='handoff_needed',status_reason=%s WHERE deal_id=%s",
             (reason, deal_id))
+        # A person owns the deal now: Sasha's follow-ups stop, as in v3.
+        cursor.execute(
+            "UPDATE sasha_followup_schedule SET status='stopped',stop_reason='handoff',"
+            "next_followup_date=NULL WHERE deal_id=%s", (deal_id,))
+
+    def claim_due_followups(self, now=None, limit: int = 50) -> list[int]:
+        """Deals whose follow-up day has arrived and that Sasha may contact. Claimed in the same
+        transaction (the date is cleared, the planned reason kept) so a follow-up never starts twice."""
+        now = now or utc_now()
+        with self.transaction(self.settings) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT f.deal_id FROM sasha_followup_schedule f "
+                    "LEFT JOIN sasha_deal_status s ON s.deal_id=f.deal_id AND s.deleted_at IS NULL "
+                    "WHERE f.status='active' AND f.next_followup_date<=%s "
+                    "AND COALESCE(s.status,'active') NOT IN ('opt_out','handoff_needed') "
+                    "ORDER BY f.next_followup_date LIMIT %s FOR UPDATE", (now, limit))
+                deal_ids = [int(row["deal_id"]) for row in cursor.fetchall()]
+                if deal_ids:
+                    placeholders = ",".join(["%s"] * len(deal_ids))
+                    cursor.execute(f"UPDATE sasha_followup_schedule SET next_followup_date=NULL "
+                                   f"WHERE deal_id IN ({placeholders})", deal_ids)
+        return deal_ids
+
+    def record_followup_sent(self, deal_id: str) -> None:
+        """A follow-up draft was generated (v3 update_after_send)."""
+        with self.transaction(self.settings) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "UPDATE sasha_followup_schedule SET followup_count=followup_count+1,"
+                    "last_followup_timestamp=%s,last_channel_used='email' WHERE deal_id=%s",
+                    (utc_now(), validate_deal_id(deal_id)))
+
+    def pause_followups(self, deal_id: str, reason: str) -> None:
+        """No next follow-up was chosen: pause, keeping the reason, unless already stopped."""
+        with self.transaction(self.settings) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "UPDATE sasha_followup_schedule SET next_followup_date=NULL,scheduled_followup_reason=%s,"
+                    "status='paused' WHERE deal_id=%s AND status='active' AND next_followup_date IS NULL",
+                    (reason, validate_deal_id(deal_id)))
 
     def client_contact(self, deal_id: str) -> dict:
         """The deal's client id and email, for assigning a manager and the transition email."""
@@ -194,11 +313,13 @@ class SashaStorage:
                      delivery_status, external_thread_id, utc_now()))
 
     def complete_run(self, deal_id, run_id, previous_notes, notes, message_html, convo_type,
-                     handoff_reason=None):
+                     handoff_reason=None, deal_state=None):
         deal_id = validate_deal_id(deal_id)
         validate_message_body(message_html)
         if handoff_reason is not None:
             handoff_reason = validate_handoff_reason(handoff_reason)
+        if deal_state is not None:
+            deal_state = validate_deal_state(deal_state)
         if message_html.strip() and convo_type not in CONVERSATION_TYPES:
             raise ValueError("A generated draft requires a valid convo_type")
         sender = self.sender_email() if message_html.strip() else None
@@ -223,6 +344,11 @@ class SashaStorage:
                     "ON DUPLICATE KEY UPDATE notes=VALUES(notes),deleted_at=NULL", (deal_id, notes))
                 if handoff_reason is not None:
                     self._set_handoff(cursor, deal_id, handoff_reason)
+                elif deal_state is not None:
+                    cursor.execute(
+                        "UPDATE sasha_deal_status SET status=%s,status_reason=%s "
+                        "WHERE deal_id=%s AND status<>'handoff_needed'",
+                        (deal_state["status"], deal_state["reason"], deal_id))
                 if message_html.strip():
                     cursor.execute(
                         "INSERT INTO sasha_conversation_history "
