@@ -450,7 +450,7 @@ The code only carries out decisions, ported from Sasha v3:
    `handoff_needed` with `handoff_reason`.
 2. The deal is offered to the next active ISA in `sasha_handoff_isas`, round-robin by
    `rank_order`, never twice to the same ISA and with at most one open offer per deal. The ISA
-   gets "Handoff request — Deal N" with the reason.
+   is offered "Handoff request — Deal N" with the reason.
 3. Every `HANDOFF_TIMEOUT_CHECK_SECONDS` during ISA working hours (Mon–Fri 08:00–17:00 New York),
    an offer older than `HANDOFF_OFFER_TIMEOUT_MINUTES` working minutes (default 20) times out and
    goes to the next ISA. `POST /api/handoffs/check-timeouts?force=true` runs the check now. When
@@ -464,9 +464,11 @@ The code only carries out decisions, ported from Sasha v3:
    - `rejected`: the next ISA gets the offer. `unclear`: nothing changes.
    A person owns a handed-off deal, so any client draft Sasha writes on it is discarded.
 
-Handoff emails are saved to the outbox under `runs/handoff/outbox/<environment>/`; nothing is
-sent from this host. `GET /api/handoffs/<deal-id>` shows the deal's status, reason, offers and
-emails; the run page shows the handoff panel.
+Everything is stored in the Sasha database: the offers in `sasha_handoff_offers`, the reason in
+`sasha_deal_status`, and the client transition as a generated message in
+`sasha_conversation_history`. The ISA offer email is rebuilt from those rows, so nothing is kept in
+files and nothing is sent from this host. `GET /api/handoffs/<deal-id>` shows the deal's status,
+reason and offers with their emails; the run page shows the handoff panel.
 
 Database setup: apply `sql/20261015_0001_sasha_deal_status_handoff_reason.sql` to the operations
 schema. If `sasha_handoff_isas` and `sasha_handoff_offers` are not there yet, apply v3 migrations

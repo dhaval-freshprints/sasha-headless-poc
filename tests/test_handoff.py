@@ -1,11 +1,8 @@
 """Handoff to a person: result rules, ISA selection, timeouts, failure policy, offers and replies."""
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
-import tempfile
-from pathlib import Path
 import unittest
 
-from openai_managed.handoff.notify import Notifier, OutgoingEmail, Outbox
 from openai_managed.handoff.selection import select_next_isa
 from openai_managed.handoff.service import HandoffService, offer_body
 from openai_managed.handoff.working_hours import is_offer_timed_out, is_working_time, working_minutes_elapsed
@@ -168,24 +165,18 @@ class FakeCrm:
 
 class ServiceTests(unittest.TestCase):
     def setUp(self):
-        self.directory = tempfile.TemporaryDirectory()
-        self.addCleanup(self.directory.cleanup)
         self.storage = FakeStorage()
         self.storage.mark_handoff("42", REASON)
         self.offers = FakeOffers([isa(1), isa(2)])
         self.offers.handed_off.append(42)
-        self.outbox = Outbox(Path(self.directory.name))
         self.crm = FakeCrm()
-        self.service = HandoffService(storage=self.storage, offers=self.offers, notifier=Notifier(self.outbox),
-                                      crm_factory=lambda: self.crm)
+        self.service = HandoffService(storage=self.storage, offers=self.offers, crm_factory=lambda: self.crm)
 
-    def test_offer_emails_the_next_isa_with_the_reason(self):
+    def test_offer_goes_to_the_next_isa_and_its_email_is_rebuilt_from_the_rows(self):
         result = self.service.offer_next("42")
-        self.assertEqual((result["outcome"], result["isa_email"], result["delivery"]),
-                         ("created", "isa1@freshprints.com", "outbox"))
-        [email] = self.outbox.list("42")
-        self.assertEqual((email["kind"], email["to"], email["subject"]),
-                         ("isa_offer", "isa1@freshprints.com", "Handoff request — Deal 42"))
+        self.assertEqual((result["outcome"], result["isa_email"]), ("created", "isa1@freshprints.com"))
+        email = self.service.offer_email(self.offers.rows[0], isa(1), REASON)
+        self.assertEqual((email["to"], email["subject"]), ("isa1@freshprints.com", "Handoff request — Deal 42"))
         self.assertIn("asked for a person", email["html"])
         self.assertEqual(self.service.offer_next("42")["outcome"], "skipped_existing")
 
@@ -221,13 +212,12 @@ class ServiceTests(unittest.TestCase):
         self.service.offer_next("42")
         result = self.service.apply_isa_decision(1, "accepted")
         self.assertEqual((result["decision"], result["accepted"], result["assign_manager"],
-                          result["client_transition"]), ("accepted", True, "assigned", "outbox"))
+                          result["client_transition"]), ("accepted", True, "assigned", "saved"))
         self.assertEqual(self.crm.calls, [(7, 1001, "rita@example.com")])
-        transition = next(email for email in self.outbox.list("42") if email["kind"] == "client_transition")
-        self.assertEqual((transition["to"], transition["cc"], transition["subject"], transition["thread_id"]),
-                         ("rita@example.com", ["isa1@freshprints.com"], "Re: Your proof", "thread-1"))
-        self.assertIn("I've looped in Isa1 Test", transition["html"])
-        self.assertEqual(self.storage.outbound[0][2], "client_response")
+        [(deal_id, run_id, convo_type, body, values)] = self.storage.outbound
+        self.assertEqual((deal_id, run_id, convo_type, values["subject"], values["external_thread_id"]),
+                         ("42", "handoff-1", "client_response", "Re: Your proof", "thread-1"))
+        self.assertIn("I've looped in Isa1 Test", body)
         self.assertEqual(self.service.handoff_context("42")["offer"]["status"], "ACCEPTED")
 
     def test_rejected_decision_offers_the_next_isa_and_unclear_waits(self):
@@ -244,14 +234,7 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(self.service.apply_isa_decision(1, "accepted")["assign_manager"], "not configured")
 
 
-class NotifierTests(unittest.TestCase):
-    def test_emails_are_saved_to_the_outbox_only(self):
-        with tempfile.TemporaryDirectory() as directory:
-            email = Notifier(Outbox(Path(directory))).send(
-                OutgoingEmail("isa_offer", "42", "isa@freshprints.com", "Subject", "<p>Hi</p>"))
-            self.assertEqual(email.delivery, "outbox")
-            self.assertEqual(Outbox(Path(directory)).list("42")[0]["to"], "isa@freshprints.com")
-
+class EmailTextTests(unittest.TestCase):
     def test_offer_body_escapes_the_reason(self):
         body = offer_body(isa(1), 42, "Wants printing on <b>own shirts</b>")
         self.assertIn("Wants printing on &lt;b&gt;own shirts&lt;/b&gt;", body)

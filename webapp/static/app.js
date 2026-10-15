@@ -494,7 +494,7 @@ async function renderDealHandoff(run) {
     const reply = handoff.isa_reply || {};
     setText("#handoff-reason", `${ISA_DECISIONS[reply.decision] || "ISA reply"}.`);
     setText("#handoff-offer", reply.error || (reply.accepted
-      ? `Manager: ${reply.assign_manager}; client message ${reply.client_transition}.`
+      ? `Manager: ${reply.assign_manager}; client message ${reply.client_transition} in the conversation.`
       : ""));
   } else if (handoff.source === "error") {
     setText("#handoff-reason", "The handoff step could not be completed.");
@@ -504,7 +504,7 @@ async function renderDealHandoff(run) {
     const offer = handoff.offer || {};
     const outcome = OFFER_OUTCOMES[offer.outcome] || `ISA offer: ${offer.outcome || "unknown"}`;
     setText("#handoff-offer", offer.outcome === "created"
-      ? `${outcome} ${offer.isa_name || offer.isa_email} (${offer.isa_email}); email saved to the outbox.`
+      ? `${outcome} ${offer.isa_name || offer.isa_email} (${offer.isa_email}).`
       : outcome);
   }
   const list = document.querySelector("#handoff-offers");
