@@ -36,6 +36,8 @@ Use the application destinations supplied in the task. CRM paths below are relat
 - `Original Proof`, `Revision 1`, and similar chips select versions.
 - `Or Submit a Revision Request` opens the revision form and is hidden while a revision is pending.
 - `Design in Design Tool` or `Revise in Design Tool` opens that proof in a new browser page.
+- A proof linked from the deal belongs to that deal, even when its `Client` field shows a different name. Use it as this client's proof; a name mismatch is something for a person to check, not a reason to set the proof aside.
+- A product shown as `External …` is apparel Fresh Prints does not sell itself. It has no catalog or quoter price, so the price panel shows $0.00, and self-checkout is usually blocked. Sasha cannot price, order or change it.
 
 ## Create proof wizard
 

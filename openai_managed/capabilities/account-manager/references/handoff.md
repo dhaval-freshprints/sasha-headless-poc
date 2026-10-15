@@ -6,12 +6,12 @@ A handoff passes the deal to a Fresh Prints teammate (an ISA), who takes over th
 
 Consider a handoff while handling a client message or a follow-up check, never during initial outreach or an internal team update. Hand off when you judge that the client is better served by a person than by you, for example:
 
-- the client wants something Fresh Prints does not carry, or a product you cannot find, price or verify;
+- the client wants something Fresh Prints does not carry, or a product you cannot find, price or verify, including any price, order or change for an external product on the deal's proof (see the proof page in [Workplace](workplace.md));
 - the client wants a group order, where members order or pay separately;
 - the client is frustrated or angry with you, asks for a person, or is ready to walk away;
 - you have not been able to resolve the same request after repeated attempts, or your own work keeps failing.
 
-Ground the decision in the conversation and what you verified on the deal. Ordinary questions and mild impatience are yours to handle well.
+Ground the decision in the conversation and what you verified on the deal, including the proofs linked from it. Ordinary questions and mild impatience are yours to handle well.
 
 ## How to hand off
 
