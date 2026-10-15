@@ -240,8 +240,10 @@ SASHA_SENDER_EMAIL=your-sasha-mailbox@example.com
 
 The sender must be the actual outbound mailbox. Missing configuration prevents AM from
 starting. Existing CRM/V3 credential aliases and `NON_PROD_SASHA_DB` remain supported.
-The operations schema must already contain `sasha_deal_status`, `sasha_deal_notes`, and
-`sasha_conversation_history` (column `convo_type`). This change creates no deployment tables.
+The operations schema must already contain `sasha_deal_status` (with `handoff_reason`, added by
+`sql/20261015_0001_sasha_deal_status_handoff_reason.sql`), `sasha_deal_notes`, and
+`sasha_conversation_history` (column `convo_type`). Handoff offers also need v3's
+`sasha_handoff_isas` and `sasha_handoff_offers` there; see [Handoff to a person](#handoff-to-a-person).
 The account needs SELECT on lookup schemas and SELECT/INSERT/UPDATE on these three Sasha
 tables. Agent tools still use read-only transactions; only host orchestration performs
 persistence writes. Read-only transactions are a tool guard, not separate DB credentials.
@@ -431,6 +433,49 @@ For behavioral acceptance, use isolated test database fixtures and read-only
 requests to exercise every row above, including CRM history that differs from the
 database history. Mocked tests verify plumbing, not the model's routing decisions.
 Report real-agent checks separately.
+
+## Handoff to a person
+
+Sasha hands a deal to a Fresh Prints teammate (an ISA) when it judges that a person should take
+over. There are no keyword rules or fixed categories: Account Manager decides, following
+[the handoff guide](openai_managed/capabilities/account-manager/references/handoff.md), which
+describes the kinds of situations (an item Fresh Prints does not carry, a group order, a client
+upset with Sasha, work that keeps failing or a request it cannot resolve) and leaves the call to
+the agent. It returns `status: "handoff"` with `handoff_reason` in its own words for the ISA, and
+may include a short holding message for the client.
+
+The code only carries out decisions, ported from Sasha v3:
+
+1. In the same transaction as the notes and any holding draft, `sasha_deal_status` becomes
+   `handoff_needed` with `handoff_reason`.
+2. The deal is offered to the next active ISA in `sasha_handoff_isas`, round-robin by
+   `rank_order`, never twice to the same ISA and with at most one open offer per deal. The ISA
+   gets "Handoff request — Deal N" with the reason.
+3. Every `HANDOFF_TIMEOUT_CHECK_SECONDS` during ISA working hours (Mon–Fri 08:00–17:00 New York),
+   an offer older than `HANDOFF_OFFER_TIMEOUT_MINUTES` working minutes (default 20) times out and
+   goes to the next ISA. `POST /api/handoffs/check-timeouts?force=true` runs the check now. When
+   every ISA has been tried, the deal stays handed off with no owner.
+4. Later messages on a handed-off deal still run Account Manager, which now gets the handoff state
+   (reason and current ISA offer). The agent works out what the message is. When it is the ISA
+   answering the offer, it returns `isa_decision`, and the code applies it:
+   - `accepted`: other open offers are closed, the ISA becomes the client's manager through the
+     v3 assign-manager API (`V3_API_BASE_URL`, `JWT_AUTH_KEY`, `SASHA_ADMIN_USER`), and the client
+     gets "I've looped in {ISA} to help you from here", with the ISA in CC.
+   - `rejected`: the next ISA gets the offer. `unclear`: nothing changes.
+   A person owns a handed-off deal, so any client draft Sasha writes on it is discarded.
+
+Handoff emails are saved to the outbox under `runs/handoff/outbox/<environment>/`; nothing is
+sent from this host. `GET /api/handoffs/<deal-id>` shows the deal's status, reason, offers and
+emails; the run page shows the handoff panel.
+
+Database setup: apply `sql/20261015_0001_sasha_deal_status_handoff_reason.sql` to the operations
+schema. If `sasha_handoff_isas` and `sasha_handoff_offers` are not there yet, apply v3 migrations
+`20260710_0001_create_sasha_handoff_tables` and `20260710_0003_add_handoff_offer_thread_id`, then
+add the ISAs to offer to.
+
+Not ported from v3: email sending (v3's SQS queue), the ISA-reply judge prompt, Slack alerts, the
+code-only external-apparel, promo-goods, MTO and order-history checks, and handing a deal back to
+Sasha.
 
 ## Explicit follow-up checks
 

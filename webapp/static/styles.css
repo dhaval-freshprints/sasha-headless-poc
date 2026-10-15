@@ -445,6 +445,36 @@ button.secondary {
   background: var(--green);
 }
 
+.status-handoff {
+  color: #7a4b00;
+  background: #fff1d6;
+}
+
+.handoff-panel {
+  margin: 0 0 18px;
+  border: 1px solid #f0c36d;
+  border-radius: 14px;
+  padding: 14px 16px;
+  background: #fffaf0;
+}
+
+.handoff-panel h2 {
+  margin: 0 0 6px;
+  font-size: 1rem;
+}
+
+.handoff-panel .step-detail {
+  margin: 4px 0;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.handoff-offers {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  font-size: 0.92rem;
+}
+
 .status-failed {
   color: var(--red);
   background: var(--red-soft);
@@ -641,7 +671,7 @@ pre {
   opacity: 0.6;
 }
 
-.handoff-banner {
+.source-banner {
   margin: 0 0 18px;
   border: 1px solid rgba(20, 108, 67, 0.22);
   border-radius: 14px;
@@ -650,17 +680,17 @@ pre {
   background: var(--green-soft);
 }
 
-.handoff-banner strong {
+.source-banner strong {
   display: block;
   margin-bottom: 4px;
 }
 
-.handoff-banner .step-detail {
+.source-banner .step-detail {
   margin: 0;
   color: var(--ink);
 }
 
-.handoff-message {
+.source-message {
   margin: 10px 0 0;
   white-space: pre-wrap;
   overflow-wrap: anywhere;

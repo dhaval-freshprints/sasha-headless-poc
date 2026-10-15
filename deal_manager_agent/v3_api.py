@@ -15,6 +15,7 @@ import urllib.parse
 import urllib.request
 
 EDIT_DEAL_PATH = "/api/v4/sales-pipeline/deals/edit-deal-card"
+ASSIGN_MANAGER_PATH = "/api/v4/user/assign-manager"
 TOKEN_TTL_SECONDS = 600
 
 
@@ -65,16 +66,25 @@ class V3Api:
 
     def edit_deal(self, deal_id: int, payload: dict) -> tuple[bool, str]:
         """PUT the edit-deal card. Returns (success, message); never raises for HTTP errors."""
+        return self._put(EDIT_DEAL_PATH, {**payload, "id": deal_id}, "Deal updated successfully")
+
+    def assign_manager(self, client_id: int, manager_id: int, client_email: str) -> tuple[bool, str]:
+        """Make the ISA who accepted a handoff the client's manager (v3 call_assign_manager_api)."""
+        return self._put(ASSIGN_MANAGER_PATH, {"clientId": client_id, "managerId": manager_id,
+                                               "clientEmail": (client_email or "").strip()},
+                         "Manager assigned")
+
+    def _put(self, path: str, payload: dict, success_message: str) -> tuple[bool, str]:
         token = sign_token(self.jwt_key, self.admin_user_id)
-        url = f"{self.base_url}{EDIT_DEAL_PATH}?{urllib.parse.urlencode({'authToken': token})}"
-        body = json.dumps({**payload, "id": deal_id}).encode()
+        url = f"{self.base_url}{path}?{urllib.parse.urlencode({'authToken': token})}"
+        body = json.dumps(payload).encode()
         request = urllib.request.Request(url, data=body, method="PUT",
                                          headers={"Content-Type": "application/json"})
         try:
             with self.opener(request, timeout=self.timeout) as response:
                 raw = self._json(response.read())
                 message = raw.get("message") if isinstance(raw, dict) else None
-                return True, str(message or "Deal updated successfully")
+                return True, str(message or success_message)
         except urllib.error.HTTPError as error:
             with error:
                 return False, _error_message(self._json(error.read()), error.code)

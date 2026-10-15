@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
@@ -142,6 +143,7 @@ def create_app(
     lookup_manager: DealManagerJobs | None = None,
     inbound_manager: InboundJobs | None = None,
     deal_resolver: DealResolver | None = None,
+    handoff_service=None,
 ) -> FastAPI:
     load_dotenv(ROOT / ".env")
     manager = job_manager or JobManager(_jobs_directory())
@@ -150,6 +152,7 @@ def create_app(
     _backfill_deals(deals, manager.list_all())
 
     resolver = deal_resolver or DealResolver()
+    handoffs = handoff_service or LazyHandoffService()
 
     def start_account_manager(deal_id: str, client_message: str, deal_check: dict | None = None, incoming_messages=()) -> dict:
         deals.touch(deal_id)
@@ -160,10 +163,14 @@ def create_app(
         send_message=manager.submit_message,
         run_state=lambda run_id: manager.get(run_id).to_dict(),
     )
+    stop_worker = threading.Event()
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
+        if handoff_service is None:
+            _start_timeout_worker(handoffs, stop_worker)
         yield
+        stop_worker.set()
         manager.shutdown()
         lookups.shutdown()
         inbound.shutdown()
@@ -308,6 +315,26 @@ def create_app(
         )
         return run.to_dict()
 
+    @app.get("/api/handoffs/{deal_id}")
+    def get_handoff(deal_id: str) -> dict:
+        try:
+            validate_deal_id(deal_id)
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        status, reason = manager.storage_factory().deal_status(deal_id)
+        try:
+            offers = [{**vars(offer), "isa": vars(handoffs.offers.isa(offer.isa_id) or {})}
+                      for offer in handoffs.offers.offers_for_deal(deal_id)]
+            offers_error = ""
+        except Exception as error:  # Handoff tables missing or not reachable.
+            offers, offers_error = [], f"Offers unavailable ({type(error).__name__})"
+        return {"deal_id": deal_id, "status": status, "handoff_reason": reason, "offers": offers,
+                "offers_error": offers_error, "emails": handoffs.notifier.outbox.list(deal_id)}
+
+    @app.post("/api/handoffs/check-timeouts")
+    def check_handoff_timeouts(force: bool = False) -> dict:
+        return {"results": handoffs.check_timeouts(force=force)}
+
     @app.get("/api/runs/{run_id}")
     def get_run(run_id: str) -> dict:
         try:
@@ -358,6 +385,39 @@ def _backfill_deals(deals: DealStore, runs: list[WebRun]) -> None:
             deals.get(run.deal_id)
         except KeyError:
             deals.add(run.deal_id)
+
+
+class LazyHandoffService:
+    """Creates the HandoffService (which needs database settings) on first use."""
+
+    def __init__(self):
+        self._service = None
+        self._lock = threading.Lock()
+
+    def __getattr__(self, name):
+        with self._lock:
+            if self._service is None:
+                from openai_managed.handoff.service import HandoffService
+
+                self._service = HandoffService()
+        return getattr(self._service, name)
+
+
+def _start_timeout_worker(handoffs, stop: threading.Event) -> None:
+    """Every HANDOFF_TIMEOUT_CHECK_SECONDS (default 300), time out stale ISA offers during working
+    hours and offer the next ISA, as v3's cron does. HANDOFF_TIMEOUT_CHECK_SECONDS=0 disables it."""
+    interval = float(os.environ.get("HANDOFF_TIMEOUT_CHECK_SECONDS") or 300)
+    if interval <= 0:
+        return
+
+    def loop():
+        while not stop.wait(interval):
+            try:
+                handoffs.check_timeouts()
+            except Exception:  # Missing configuration or a database outage: try again later.
+                pass
+
+    threading.Thread(target=loop, daemon=True, name="handoff-timeouts").start()
 
 
 def _deal_payload(

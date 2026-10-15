@@ -45,15 +45,19 @@ SASHA_RESULT_JSON_SCHEMA = {
         "message_html",
         "notes",
         "convo_type",
+        "handoff_reason",
+        "isa_decision",
         "failure_code",
         "failure_message",
     ],
     "properties": {
         "deal_id": {"type": "string"},
-        "status": {"type": "string", "enum": ["completed", "failed"]},
+        "status": {"type": "string", "enum": ["completed", "handoff", "failed"]},
         "message_html": {"type": "string"},
         "notes": {"type": "string"},
         "convo_type": {"type": ["string", "null"], "enum": ["client_response", "followup", "internal_mail", "outreach", None]},
+        "handoff_reason": {"type": "string"},
+        "isa_decision": {"type": "string", "enum": ["", "accepted", "rejected", "unclear"]},
         "failure_code": {"type": "string"},
         "failure_message": {"type": "string"},
     },
@@ -75,6 +79,7 @@ class SashaTask:
     follow_up_stage: int | None = None
     as_of_date: str | None = None
     days_since_client_reply: int | None = None
+    handoff_context: dict | None = None  # Set by the runner when the deal is already handed off.
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "client_message", normalize_client_message(self.client_message))
@@ -85,12 +90,14 @@ class SashaTask:
 @dataclass(frozen=True)
 class SashaResult:
     deal_id: str
-    status: Literal["completed", "failed"]
+    status: Literal["completed", "handoff", "failed"]
     message_html: str = ""
     failure_code: str = ""
     failure_message: str = ""
     notes: str = ""
     convo_type: str | None = None
+    handoff_reason: str = ""
+    isa_decision: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -98,9 +105,11 @@ class SashaResult:
     @classmethod
     def from_json(cls, value: str) -> "SashaResult":
         result = cls(**json.loads(value))
-        if result.status not in {"completed", "failed"}:
+        if result.status not in {"completed", "handoff", "failed"}:
             raise ValueError("Invalid result status")
-        for name in ("deal_id", "message_html", "notes", "failure_code", "failure_message"):
+        if result.isa_decision not in {"", "accepted", "rejected", "unclear"}:
+            raise ValueError("Invalid isa_decision")
+        for name in ("deal_id", "message_html", "notes", "handoff_reason", "failure_code", "failure_message"):
             if not isinstance(getattr(result, name), str):
                 raise ValueError(f"Result {name} must be text")
         if result.status == "completed" and result.message_html.strip() and result.convo_type not in CONVERSATION_TYPES:

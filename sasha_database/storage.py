@@ -8,6 +8,14 @@ from .connection import transaction
 from .messages import CONVERSATION_TYPES, IncomingMessage, utc_now, valid_email, validate_message_body
 
 
+def validate_handoff_reason(reason: str) -> str:
+    """The agent's own words for why a person should take over; only emptiness is refused."""
+    reason = str(reason or "").strip()
+    if not reason:
+        raise ValueError("A handoff needs the agent's reason")
+    return reason
+
+
 def validate_deal_id(deal_id: str) -> int:
     if not str(deal_id).isascii() or not str(deal_id).isdigit() or not 0 < int(deal_id) <= 2147483647:
         raise ValueError("deal_id must be a positive database INT")
@@ -123,9 +131,74 @@ class SashaStorage:
             raise ValueError("SASHA_SENDER_EMAIL must be a valid email address")
         return email
 
-    def complete_run(self, deal_id, run_id, previous_notes, notes, message_html, convo_type):
+    def deal_status(self, deal_id: str) -> tuple[str, str]:
+        """(status, handoff_reason); a deal without a status row is active."""
+        with self.transaction(self.settings, readonly=True) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT status,handoff_reason FROM sasha_deal_status "
+                    "WHERE deal_id=%s AND deleted_at IS NULL", (validate_deal_id(deal_id),))
+                row = cursor.fetchone()
+        return (row["status"], row["handoff_reason"] or "") if row else ("active", "")
+
+    @staticmethod
+    def _set_handoff(cursor, deal_id, reason):
+        cursor.execute(
+            "UPDATE sasha_deal_status SET status='handoff_needed',handoff_reason=%s WHERE deal_id=%s",
+            (reason, deal_id))
+
+    def client_contact(self, deal_id: str) -> dict:
+        """The deal's client id and email, for assigning a manager and the transition email."""
+        main = quote_schema(self.settings.values["DEAL_MANAGER_MAIN_SCHEMA"])
+        with self.transaction(self.settings, readonly=True) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"SELECT u.id AS client_id,u.email FROM {main}.deals d JOIN {main}.user u "
+                    "ON u.id=d.client_id WHERE d.id=%s AND d.deleted_at IS NULL AND u.deleted_at IS NULL",
+                    (validate_deal_id(deal_id),))
+                row = cursor.fetchone()
+        if not row:
+            raise ValueError("The deal or its client was not found")
+        return {"client_id": int(row["client_id"]), "email": str(row["email"] or "").strip()}
+
+    def latest_thread(self, deal_id: str) -> dict:
+        """The client's latest email thread on this deal: {external_thread_id, subject}."""
+        with self.transaction(self.settings, readonly=True) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT external_thread_id,subject FROM sasha_conversation_history "
+                    "WHERE deal_id=%s AND message_type='EMAIL' AND convo_type<>'internal_mail' "
+                    "AND deleted_at IS NULL AND (external_thread_id IS NOT NULL OR subject IS NOT NULL) "
+                    "ORDER BY COALESCE(message_timestamp,created_at) DESC,id DESC LIMIT 1",
+                    (validate_deal_id(deal_id),))
+                row = cursor.fetchone()
+        return {"external_thread_id": row["external_thread_id"], "subject": row["subject"]} if row \
+            else {"external_thread_id": None, "subject": None}
+
+    def record_outbound(self, deal_id: str, run_id: str, convo_type: str, body_html: str,
+                        subject: str | None = None, delivery_status: str = "generated",
+                        external_thread_id: str | None = None) -> None:
+        """An outbound message produced outside an agent turn, such as the handoff transition."""
+        deal_id = validate_deal_id(deal_id)
+        validate_message_body(body_html)
+        if convo_type not in CONVERSATION_TYPES or delivery_status not in {"generated", "sent", "failed"}:
+            raise ValueError("Invalid outbound message metadata")
+        with self.transaction(self.settings) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "INSERT INTO sasha_conversation_history "
+                    "(deal_id,run_id,convo_type,direction,sender_name,message_type,subject,body,"
+                    "content_type,delivery_status,external_thread_id,message_timestamp) "
+                    "VALUES (%s,%s,%s,'OUTBOUND',%s,'EMAIL',%s,%s,'text/html',%s,%s,%s)",
+                    (deal_id, run_id, convo_type, self.sender_email(), subject, body_html,
+                     delivery_status, external_thread_id, utc_now()))
+
+    def complete_run(self, deal_id, run_id, previous_notes, notes, message_html, convo_type,
+                     handoff_reason=None):
         deal_id = validate_deal_id(deal_id)
         validate_message_body(message_html)
+        if handoff_reason is not None:
+            handoff_reason = validate_handoff_reason(handoff_reason)
         if message_html.strip() and convo_type not in CONVERSATION_TYPES:
             raise ValueError("A generated draft requires a valid convo_type")
         sender = self.sender_email() if message_html.strip() else None
@@ -148,6 +221,8 @@ class SashaStorage:
                 cursor.execute(
                     "INSERT INTO sasha_deal_notes (deal_id,notes) VALUES (%s,%s) "
                     "ON DUPLICATE KEY UPDATE notes=VALUES(notes),deleted_at=NULL", (deal_id, notes))
+                if handoff_reason is not None:
+                    self._set_handoff(cursor, deal_id, handoff_reason)
                 if message_html.strip():
                     cursor.execute(
                         "INSERT INTO sasha_conversation_history "

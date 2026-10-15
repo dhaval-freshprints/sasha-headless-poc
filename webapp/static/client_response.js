@@ -196,11 +196,11 @@ function accountManagerStep(record) {
   return step(title, "stopped", "Not started.");
 }
 
-function handoffKey(runId) {
-  return `am-handoff-${runId}`;
+function sourceKey(runId) {
+  return `am-source-${runId}`;
 }
 
-function saveHandoff(record) {
+function saveSource(record) {
   const input = record.input || {};
   const from = input.phone || input.email || "";
   const subject = input.subject || "";
@@ -209,7 +209,7 @@ function saveHandoff(record) {
     : record.deal_search?.outcome === "found"
       ? "Found by email or phone"
       : "Deal resolved";
-  sessionStorage.setItem(handoffKey(record.run_id), JSON.stringify({
+  sessionStorage.setItem(sourceKey(record.run_id), JSON.stringify({
     deal_id: record.deal_id,
     from,
     subject,
@@ -223,10 +223,10 @@ function saveHandoff(record) {
 function openAccountManagerRun(record) {
   if (redirectedToRun || !record.run_id) return;
   redirectedToRun = true;
-  saveHandoff(record);
-  const handoff = document.querySelector("#inbound-handoff");
-  handoff.textContent = `Deal ${record.deal_id} found. Opening Account Manager…`;
-  handoff.classList.remove("hidden");
+  saveSource(record);
+  const banner = document.querySelector("#inbound-source");
+  banner.textContent = `Deal ${record.deal_id} found. Opening Account Manager…`;
+  banner.classList.remove("hidden");
   window.location.href = `/runs/${record.run_id}`;
 }
 
@@ -309,14 +309,14 @@ function render(record) {
         ? STATUS_LABELS[record.status]
         : record.error || record.reason,
   );
-  const handoff = document.querySelector("#inbound-handoff");
+  const banner = document.querySelector("#inbound-source");
   if (opening) {
     const from = record.input?.phone || record.input?.email || "client";
     const kind = record.source === "internal" ? "team mail from" : "";
-    handoff.textContent = `Matched deal ${record.deal_id} for ${kind ? `${kind} ` : ""}${from}. Opening the normal Account Manager flow…`;
-    handoff.classList.remove("hidden");
+    banner.textContent = `Matched deal ${record.deal_id} for ${kind ? `${kind} ` : ""}${from}. Opening the normal Account Manager flow…`;
+    banner.classList.remove("hidden");
   } else {
-    handoff.classList.add("hidden");
+    banner.classList.add("hidden");
   }
   submit.disabled = pending || opening;
   submit.textContent = pending || opening ? `${STATUS_LABELS[record.status]}…` : SUBMIT_LABEL;

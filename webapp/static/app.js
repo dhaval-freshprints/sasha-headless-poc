@@ -309,8 +309,8 @@ function renderDealCheck(check) {
   element.textContent = `Deal check (${kind}): ${check.summary}${changes ? ` ${changes}` : ""}`;
 }
 
-function readHandoff(runId) {
-  const raw = sessionStorage.getItem(`am-handoff-${runId}`);
+function readSource(runId) {
+  const raw = sessionStorage.getItem(`am-source-${runId}`);
   if (!raw) return null;
   try {
     return JSON.parse(raw);
@@ -319,22 +319,22 @@ function readHandoff(runId) {
   }
 }
 
-function renderHandoff(run) {
-  const banner = document.querySelector("#run-handoff");
-  const handoff = readHandoff(run.run_id);
-  if (!handoff) {
+function renderSource(run) {
+  const banner = document.querySelector("#run-source");
+  const source = readSource(run.run_id);
+  if (!source) {
     banner.classList.add("hidden");
     return;
   }
-  const from = handoff.from || "client";
-  const channel = handoff.channel || "Email";
-  const subject = handoff.subject ? ` · ${handoff.subject}` : "";
-  setText("#run-handoff-title", `Came from New client message · Deal ${handoff.deal_id || run.deal_id}`);
+  const from = source.from || "client";
+  const channel = source.channel || "Email";
+  const subject = source.subject ? ` · ${source.subject}` : "";
+  setText("#run-source-title", `Came from New client message · Deal ${source.deal_id || run.deal_id}`);
   setText(
-    "#run-handoff-detail",
-    `${handoff.how || "Deal found"} for ${channel} from ${from}${subject}. Account Manager is handling this message on the normal run page.`,
+    "#run-source-detail",
+    `${source.how || "Deal found"} for ${channel} from ${from}${subject}. Account Manager is handling this message on the normal run page.`,
   );
-  const messageBox = document.querySelector("#run-handoff-message");
+  const messageBox = document.querySelector("#run-source-message");
   const preview = (run.client_message || "").trim();
   messageBox.classList.toggle("hidden", !preview);
   messageBox.textContent = preview ? `Client message:\n${preview}` : "";
@@ -355,7 +355,7 @@ function renderRun(run) {
   document.querySelector("#back-to-deal").href = `/deals/${run.deal_id}`;
   setText("#run-id", shortId(run.run_id));
   setText("#run-deal-id", run.deal_id);
-  renderHandoff(run);
+  renderSource(run);
   renderDealCheck(run.deal_check);
   setText("#elapsed", formatDuration(currentElapsedSeconds(run)));
   setText("#started-at", formatDate(run.started_at));
@@ -366,6 +366,7 @@ function renderRun(run) {
   badge.className = `status status-${run.status}`;
 
   renderProgress(run.progress);
+  renderDealHandoff(run);
   renderResult(run);
   renderArtifacts(run);
   renderAdditionalMessages(run);
@@ -463,6 +464,62 @@ function renderProgress(messages) {
     const item = document.createElement("li");
     item.textContent = message;
     list.append(item);
+  }
+}
+
+const OFFER_OUTCOMES = {
+  created: "Offered to",
+  skipped_existing: "An ISA already has this deal",
+  roster_exhausted: "Every active ISA was already offered this deal; it needs a person to assign it",
+  empty_roster: "No active ISAs are configured; it needs a person to assign it",
+  not_handed_off: "The deal is not handed off",
+  error: "The ISA offer could not be created",
+};
+
+const ISA_DECISIONS = {
+  accepted: "The ISA accepted the deal",
+  rejected: "The ISA declined; the deal goes to the next ISA",
+  unclear: "The ISA's reply was unclear; the offer stays open",
+};
+
+async function renderDealHandoff(run) {
+  const section = document.querySelector("#handoff-section");
+  if (!run.handoff) {
+    section.classList.add("hidden");
+    return;
+  }
+  section.classList.remove("hidden");
+  const handoff = run.handoff;
+  if (handoff.source === "isa_reply") {
+    const reply = handoff.isa_reply || {};
+    setText("#handoff-reason", `${ISA_DECISIONS[reply.decision] || "ISA reply"}.`);
+    setText("#handoff-offer", reply.error || (reply.accepted
+      ? `Manager: ${reply.assign_manager}; client message ${reply.client_transition}.`
+      : ""));
+  } else if (handoff.source === "error") {
+    setText("#handoff-reason", "The handoff step could not be completed.");
+    setText("#handoff-offer", handoff.error || "");
+  } else {
+    setText("#handoff-reason", `Handed off by Sasha. ${handoff.reason || ""}`);
+    const offer = handoff.offer || {};
+    const outcome = OFFER_OUTCOMES[offer.outcome] || `ISA offer: ${offer.outcome || "unknown"}`;
+    setText("#handoff-offer", offer.outcome === "created"
+      ? `${outcome} ${offer.isa_name || offer.isa_email} (${offer.isa_email}); email saved to the outbox.`
+      : outcome);
+  }
+  const list = document.querySelector("#handoff-offers");
+  try {
+    const response = await fetch(`/api/handoffs/${encodeURIComponent(run.deal_id)}`);
+    const state = await readResponse(response);
+    list.replaceChildren(...state.offers.map((item) => {
+      const entry = document.createElement("li");
+      const who = item.isa?.email || `ISA ${item.isa_id}`;
+      entry.textContent = `${item.status} · ${who} · offered ${formatDate(item.offered_at)}`;
+      return entry;
+    }));
+    if (state.offers_error) list.replaceChildren(Object.assign(document.createElement("li"), {textContent: state.offers_error}));
+  } catch (error) {
+    list.replaceChildren(Object.assign(document.createElement("li"), {textContent: `Could not load offers: ${error.message}`}));
   }
 }
 
@@ -596,7 +653,7 @@ function stopPolling() {
 }
 
 function isFinished(status) {
-  return status === "completed" || status === "failed";
+  return status === "completed" || status === "handoff" || status === "failed";
 }
 
 function showError(element, message) {

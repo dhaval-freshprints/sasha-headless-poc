@@ -253,6 +253,7 @@ class OpenAIManagedRunner:
         progress: ProgressReporter | None = None,
         cost_reporter: CostReporter | None = None,
         storage_factory=SashaStorage,
+        handoff_service_factory: Callable[[Any], Any] | None = None,
     ) -> None:
         self.client = client
         self.settings = settings
@@ -261,6 +262,8 @@ class OpenAIManagedRunner:
         self.cost_reporter = cost_reporter
         self.last_run_directory: Path | None = None
         self.storage_factory = storage_factory
+        self.handoff_service_factory = handoff_service_factory
+        self.last_handoff: dict | None = None
         self.storage = None
         self.current_task = None
         self.persistence_error = None
@@ -269,6 +272,40 @@ class OpenAIManagedRunner:
         self.session_id = ""
         self.additional_messages: AdditionalMessageInbox | None = None
         self.final_turn_id = ""
+
+    def _handoff_service(self):
+        if self.handoff_service_factory is not None:
+            return self.handoff_service_factory(self.storage)
+        from .handoff.service import HandoffService
+
+        return HandoffService(storage=self.storage)
+
+    def _handoff_context(self, deal_id: str) -> dict:
+        """The deal's handoff state for the agent: status, reason and the current ISA offer."""
+        status, reason = self.storage.deal_status(deal_id)
+        if status != "handoff_needed":
+            return {}
+        try:
+            return self._handoff_service().handoff_context(deal_id)
+        except Exception as error:
+            return {"status": status, "reason": reason, "offer": None,
+                    "offer_error": f"Offers unavailable ({type(error).__name__})"}
+
+    def _act_on_handoff(self, task: SashaTask, result: SashaResult, context: dict) -> dict | None:
+        """Carry out what the agent decided: offer a new handoff, or apply an ISA's answer."""
+        try:
+            service = self._handoff_service()
+            if result.status == "handoff" and not context:
+                outcome = {"source": "agent", "reason": result.handoff_reason, "offer": service.offer_next(task.deal_id)}
+            elif result.isa_decision and (context.get("offer") or {}).get("status") == "OFFERED":
+                outcome = {"source": "isa_reply", "isa_reply": service.apply_isa_decision(
+                    context["offer"]["id"], result.isa_decision)}
+            else:
+                return None
+        except Exception as error:
+            outcome = {"source": "error", "error": type(error).__name__}
+        self.progress.report(f"[handoff] {outcome}")
+        return outcome
 
     def enable_additional_messages(self, report: Callable[[dict], None]) -> None:
         self.additional_messages = AdditionalMessageInbox(report)
@@ -326,6 +363,7 @@ class OpenAIManagedRunner:
         self.additional_attachment_urls = []
         self.current_task = None
         self.last_cost_estimate = None
+        self.last_handoff = None
         try:
             self.settings.application.validate_deal_url(task.deal_url)
         except ValueError as error:
@@ -340,24 +378,33 @@ class OpenAIManagedRunner:
             if not messages and task.client_message:
                 messages = (incoming_message(task.client_message, task.file_urls),)
             messages = self.storage.prepare_run(task.deal_id, task.run_id, messages)
+            handoff_context = self._handoff_context(task.deal_id)
             notes, history = self.storage.load_context(task.deal_id)
             self.progress.report("[context] Loaded notes and conversation from database")
             current_ids = {message.row_id for message in messages}
             history = [entry for entry in history if entry["id"] not in current_ids]
             task = replace(task, incoming_messages=messages, client_message=join_messages(messages),
-                           conversation_history=tuple(history), deal_notes=notes)
+                           conversation_history=tuple(history), deal_notes=notes,
+                           handoff_context=handoff_context)
             self.current_task = task
             result = self._run_turn(task)
             if self.persistence_error is not None:
                 raise self.persistence_error
-            if result.status == "completed":
+            if handoff_context and result.status != "failed":
+                # A person owns this deal: Sasha never writes to the client or hands off again.
+                result = replace(result, status="completed", message_html="", convo_type=None)
+            if result.status in {"completed", "handoff"}:
+                handoff = result.status == "handoff"
                 urls = list(dict.fromkeys([
                     *saved_attachment_urls(notes), *task.file_urls, *self.additional_attachment_urls,
                 ]))
-                updated = prepare_notes(notes, result.notes, urls, result.convo_type == "followup")
+                updated = prepare_notes(notes, result.notes, urls,
+                                        result.convo_type == "followup" and not handoff)
                 self.storage.complete_run(task.deal_id, task.run_id, notes, updated,
-                                          result.message_html, result.convo_type)
+                                          result.message_html, result.convo_type,
+                                          handoff_reason=result.handoff_reason if handoff else None)
                 result = replace(result, notes=updated)
+                self.last_handoff = self._act_on_handoff(task, result, handoff_context)
         except (DatabaseError, ValueError, OSError) as error:
             result = SashaResult(task.deal_id, "failed", failure_code="persistence_error",
                                  failure_message=str(error))
@@ -710,6 +757,13 @@ class OpenAIManagedRunner:
                 "--- END CLIENT MESSAGE ---"
             )
 
+        isa_reply_context = ""
+        if task.handoff_context:
+            isa_reply_context = (
+                "This deal is handed off to a person; follow the account-manager handoff guide for "
+                "handed-off deals. Current handoff state:\n"
+                f"{json.dumps(task.handoff_context, indent=2, default=str)}\n\n"
+            )
         follow_up_context = ""
         if task.turn_type == "follow_up":
             follow_up_context = (
@@ -773,6 +827,7 @@ class OpenAIManagedRunner:
             f"{previous_conversation}\n"
             "--- END PREVIOUS CONVERSATION JSON ---\n\n"
             f"{follow_up_context}"
+            f"{isa_reply_context}"
             f"{message_data}\n\n"
             f"{file_data}"
             "A signed-in headless Chrome is already running for this turn. In every "
@@ -795,6 +850,9 @@ class OpenAIManagedRunner:
             "Keep it within 16 KiB; do not write notes files. "
             "Set convo_type to the final action: outreach, client_response, internal_mail, "
             "or followup. For no reply, set convo_type to null. "
+            "When the account-manager handoff guide says a person should take over, set status "
+            "to handoff and explain why in handoff_reason; otherwise leave it empty. Set "
+            "isa_decision only when the handoff guide asks you to read an ISA's reply. "
             "Return only the required Sasha result JSON object."
         )
 
@@ -1052,7 +1110,7 @@ def _is_conflict(error: Exception) -> bool:
 def _append_cleanup_errors(
     result: SashaResult, cleanup_errors: list[str]
 ) -> SashaResult:
-    if not cleanup_errors or result.status == "completed":
+    if not cleanup_errors or result.status in {"completed", "handoff"}:
         return result
     cleanup_message = "Cleanup errors: " + "; ".join(cleanup_errors)
     return replace(
