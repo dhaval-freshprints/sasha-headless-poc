@@ -75,6 +75,7 @@ class DockerSandboxTests(unittest.TestCase):
                 "client-response-orchestrator",
                 "internal-email",
                 "followup",
+                "promo-codes",
             },
         )
         self.assertNotIn("workflow", json.loads((handle.workspace_directory / "task.json").read_text()))
@@ -100,6 +101,9 @@ class DockerSandboxTests(unittest.TestCase):
         followup_directory = source_directory / "followup"
         followup_directory.mkdir()
         (followup_directory / "SKILL.md").write_text("Follow-up tactics.")
+        promo_directory = source_directory / "promo-codes"
+        promo_directory.mkdir()
+        (promo_directory / "SKILL.md").write_text("Regular-order promo offers.")
         source_file = outreach_directory / "SKILL.md"
         source_file.write_text("Ask about quantity.")
         task = SashaTask("303839", "outreach-303839", "https://qa.example/deal?id=303839")

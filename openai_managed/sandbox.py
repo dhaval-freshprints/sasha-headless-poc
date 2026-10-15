@@ -68,6 +68,7 @@ class DockerSandbox:
                 "client-response-orchestrator",
                 "internal-email",
                 "followup",
+                "promo-codes",
             ):
                 shutil.copytree(
                     CAPABILITIES_DIRECTORY / skill_name,

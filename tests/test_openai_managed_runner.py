@@ -586,7 +586,7 @@ class ManagedRunnerTests(unittest.TestCase):
         )
         message = OpenAIManagedRunner._build_task_message(task, application_environment())
         self.assertIn("Use the `account-manager` skill", message)
-        self.assertIn("client-response-orchestrator, internal-email, and followup skills are available", message)
+        self.assertIn("client-response-orchestrator, internal-email, followup, and promo-codes skills are available", message)
         self.assertNotIn("Follow-up signals", message)
         self.assertIn("CRM activity supplies deal facts, not the routing conversation", message)
         self.assertNotIn("Selected workflow:", message)

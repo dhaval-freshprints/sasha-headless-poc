@@ -26,5 +26,6 @@ This skill owns client-response sales strategy and actions. Reply wording belong
 - Never ask for a shipping address, phone number, or size breakdown, except the address, phone and single sample size while arranging a free sample (see the samples guide). Record it if volunteered.
 - If the client only says thanks and nothing is open, no reply is needed.
 - The client checks out. Sasha must not place orders.
+- For a regular-order price objection or promo question, read [Promo Codes](../promo-codes/SKILL.md) to verify and reuse this deal's current offer or create a replacement when permitted. Follow its database operations and Workplace's V4 controls; do not invent a separate discount policy here.
 
 Read the [shared sales rules](../account-manager/references/sales_rules.md) for pricing, stock, delivery, proofs, and samples.

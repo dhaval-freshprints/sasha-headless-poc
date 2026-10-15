@@ -16,6 +16,8 @@ Use the application destinations supplied in the task. CRM paths below are relat
 | Quoter | `/dashboard/quoter` | Price a product, print method, and quantity without changing a proof |
 | Stock checker | `/dashboard/stock-checker` | Live stock by style, color, and size |
 | Proofs list | `/dashboard/proofs` | All proofs, newest first; search accepts proof ID, proof name, or client name, not deal ID |
+| Promo Codes | `/dashboard/promo-codes` | Search codes and open their saved offer details |
+| Create Promo Code | `/dashboard/promo-code/new` | Configure a new offer after the promo skill establishes its terms |
 | Product catalog | Supplied Product catalog URL | product search by type, color, and brand |
 | Designs gallery | Supplied Designs gallery URL | design inspiration by search, organization, event, style, and print type |
 | Help center | Supplied Help center URL | client-facing policies |
@@ -137,6 +139,50 @@ The quoter calculates without saving.
 - Delivery contains Order On, Need By, a date, and shipping cards. A card can display values while disabled. Individual Shipping is internal.
 - After quantity, style, color, and print method are selected, Unit Price and Item Total replace their placeholder dashes.
 - Wait for recalculation, then reread the exact style, color, quantity, print configuration, price, tax, shipping, and delivery values before drafting the answer.
+
+## Promo Codes
+
+Use [Promo Codes](../../promo-codes/SKILL.md) for when to offer a promo, discount limits, and permitted actions. This section documents the interface. The controls below were observed in V4 QA; inspect the current supplied environment before relying on them. Creation and checkout redemption have not been verified by the exploratory walkthrough.
+
+### Find and inspect a code
+
+- Open Promo Codes from the CRM sidebar. The list has `All`, `Active`, and `Disabled` views, pagination, and a search field labeled `Search by promo code, order #, value`. Search matching behavior is not established; inspect the actual results.
+- Use the list only to locate and open a code, never to verify its terms. Its value, status, restrictions, usage limit, and dates are not verification evidence; a usage limit is not a verified remaining-use counter.
+- Always click the code and wait for its detail dialog to load. Confirm the dialog names the intended code, then read its account or order restrictions, offer, eligibility, and usage limit. Use the [promo database operations](../../promo-codes/references/check_promo_expiry_and_usage.md) to verify expiry, status, and actual usage before offering it. Database timestamps and usage evidence take precedence over UI displays. If a required term is absent from both sources, report it as unverified rather than filling the gap from the list.
+- The observed dialogs have `Close` and `Disable Code`. The disable action is outside the promo skill's scope; edit and re-enable workflows have not been established.
+
+### Configure an offer
+
+1. Use `Create Promo Code` on the list to open the new-code form. The Promo Code field contains the code the customer enters at checkout. A fresh form does not establish a default discount percentage.
+2. Select `Regular Order` under `Applies To`, open `Select Account(s)`, and always select `All Accounts`. Do not search for a client name, organization, or individual account in this dropdown. Confirm `All Accounts` remains selected before submitting and verify that targeting in the saved code.
+3. Select the intended promo type and fill its conditional fields. Read the current controls after each type change; changing type or targeting can clear selections or remove choices.
+
+| Regular-order type observed | Controls and displayed meaning |
+|---|---|
+| Percentage | `Discount` input; the UI describes a percentage off the order subtotal |
+| Fixed Amount | `Amount` input; the UI describes an amount off the order subtotal |
+| Free Decoration | Decorating-method choices and displayed minimum quantities; `Add Decorating Method` requires the current method inputs to be complete |
+| Free Print Type | Print categories and their options; screen printing exposes a `Limit to # of colors` control |
+| No Guarantee Fee | Common eligibility, targeting, and validity controls; the exact fee value must be established separately |
+
+In the observed fresh form, selecting Regular Order removed Free Shipping and Organizer Pays. Use the current available controls; a historical regular-order shipping code does not prove that the new form supports creating one. Do not switch to a group order to make a type available.
+
+For Free Decoration, observed choices included Custom Names, Custom Numbers, Cover Stitches, Hood Stitch, Studs, Lace, Bows, and Rosettes. For Free Print Type, observed categories included Screen Print, Embroidery, Digital, Applique, Transfers, Patches, Rhinestones, Vinyl, Foil, and Sublimation. Inspect the relevant options and displayed minimums rather than assuming all methods have the same requirements. The actual waived charges and enforcement of those minimums were not tested.
+
+4. Under `Conditions`, inspect `All Products` and the `Style Code(s)`, `Brand(s)`, and `Type(s)` pickers. Search and select actual options when a product restriction is intended. How multiple restriction categories combine, and how mixed-product orders receive the discount, have not been verified; do not invent AND/OR or whole-order semantics.
+5. Under `Eligible If`, choose either `Minimum Item Qty.` or `Minimum Order Value`, then enter the threshold chosen by AM. Selecting one replaces the other's input. The latter's helper text refers to subtotal. Exact threshold inclusivity has not been verified; preserve the displayed condition rather than asserting `>` or `>=` behavior.
+6. Under `Limit`, choose `Set Total Usage Limit` and enter the limit required by the promo skill. `1x per person` is a different choice; switching to it removes the total-usage input. Do not confuse one use per person with one use total.
+7. Inspect the separate `Corporate Website` and `Corporate Campaign` checkboxes under `Shows On` and set them according to the promo skill. Their downstream display behavior has not been tested.
+8. Fill `Start Date`, `Start Time (EST)`, `End Date`, and `End Time (EST)` with the chosen validity period. Time inputs are comboboxes. Although the form labels them EST, the creation code handles Eastern daylight-saving offsets and stores UTC. Verify the resulting database instant after saving; follow the database reference for timezone-aware customer wording rather than assuming a fixed offset.
+
+### Submit and verify saved terms
+
+- After changing controls, inspect the settled form and summary. Exploration sometimes showed an old summary immediately after a type change. Confirm the code, type-specific values, product conditions, minimum purchase, account, usage limit, visibility, and dates together.
+- An incomplete form showed a disabled `Create Promo Code` button. That does not establish the full required-field set. If disabled or rejected, inspect current field guidance; do not guess numeric limits or repeatedly submit unchanged values.
+- When the skill permits creation and the form matches the intended terms, click `Create Promo Code` once. Then return to the list, find the newly created code, and click it to open its saved details. Verify the saved offer in that dialog and run the database expiry/usage check against the client's requirements and promo policy; do not use list values, a toast, or the pre-submit summary as proof of saved terms. If a critical field is not exposed in either verified source, report that verification gap rather than claiming it was checked.
+- If saving is uncertain, search for the attempted code before any retry. If a saved code has incorrect terms, follow the skill's unresolved-result rules; do not disable or edit it as an improvised repair.
+- If list and detail dates differ, use the database UTC timestamps to establish validity and the database reference's timezone conversion for the client-facing deadline. Do not choose either UI date over the database, fail solely because the two UI dates differ, or claim the display bug is fixed. Confirm that the verified expiry still fits the client's requirements.
+- The form tells customers to enter the code at checkout. This is not proof of successful redemption. Stacking, tax/shipping treatment, redemption counting, and cancellation/refund effects remain unverified.
 
 ## General interface behavior
 

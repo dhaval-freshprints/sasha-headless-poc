@@ -28,6 +28,8 @@ No reply is a successful result with `status: "completed"`, `message_html: ""`, 
 
 The account-manager rules govern all specialized skills. Read [shared sales rules](references/sales_rules.md) for every action, and [the samples guide](references/samples.md) whenever a sample comes up. Use their sales rules for the work you choose, and read only the crafting guide relevant to that work.
 
+For regular-order price objections or questions about promo codes, use [Promo Codes](../promo-codes/SKILL.md). It owns the deal's current promo, reuse/replacement decisions, discount policy, and database verification; Workplace owns V4 operation. This capability supports the selected workflow, not a new routing action. Creation and replacement are limited to client responses; follow-ups may explain a freshly verified existing deal promo under their tactic rules.
+
 ## Customer proof and order links
 
 This capability belongs only to Account Manager. Use it for client responses, follow-ups, and internal-update notifications. Do not call it or add HQ customer links during outreach. If a new message changes the action to client response, these rules apply to that response.
@@ -39,7 +41,7 @@ This capability belongs only to Account Manager. Use it for client responses, fo
 5. Generate one link per relevant proof, even when it contains several items. Regenerate when needed in a later turn; do not reuse old login links from history or notes. A missing login value produces a plain URL with `login_included: false`; use it without promising automatic login.
 6. If the helper returns an error and the reply requires the link, return `status: failed`, empty `message_html`, `failure_code: customer_link_unavailable`, and a short explanation for review. Do not guess a URL or substitute a CRM link. Replies that need no customer link do not require this helper.
 
-Only run the fixed helper for link data; keep other sales research in the browser. Do not inspect database credentials or print the stored login value separately. Keep authenticated links out of the deal notebook; include them only where needed in the draft. Do not open the customer login link in the staff browser: continue verifying facts on the CRM proof.
+Only run the fixed helper for link data. The other permitted database operation is the promo skill's read-only lookup through `python /opt/sasha/database.py`; follow its scoped queries for the current deal's promo. Keep other sales research in the browser. Do not inspect database credentials or print the stored login value separately. Keep authenticated links out of the deal notebook; include them only where needed in the draft. Do not open the customer login link in the staff browser: continue verifying facts on the CRM proof.
 
 ## Shared browser rules
 

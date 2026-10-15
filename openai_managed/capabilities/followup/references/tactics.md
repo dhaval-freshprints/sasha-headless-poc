@@ -25,7 +25,7 @@ Each tactic is used at most once per deal. "Needs" lists the evidence you must v
 | Tactic | Fits when | Needs | Adds |
 |---|---|---|---|
 | `check_on_product` | The client may doubt fit, feel or quality | A real product observed this run; a free blank sample only when [the samples guide](../../account-manager/references/samples.md) allows it | A direct, easy way to resolve product doubt |
-| `check_on_price` | The client seems price sensitive | At least one cheaper product or print option priced in the quoter this run | A lower verified price |
+| `check_on_price` | The client seems price sensitive | A cheaper product or print option priced this run, or this deal's current promo freshly verified under [Promo Codes](../../promo-codes/SKILL.md), including database expiry and usage | A lower verified price or a newly useful existing deal offer; never create or replace a code during follow-up, or repeat an unchanged offer |
 | `decision_simplification` | Many proofs or options look overwhelming | The proofs and options already shared | One recommended path, plus a new design link when one helps |
 | `offer_alternative` | The current path is stuck on budget, minimum, stock, design or timing | A verified replacement product, design or timeline | A way around the blocker; prefer this over closing when one exists |
 

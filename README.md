@@ -407,13 +407,15 @@ A successful no-reply result has `status: "completed"` and `message_html: ""`;
 the console displays **No reply needed**. Client messages are saved before AM starts, including when the run fails or returns no reply.
 No-reply turns do not append an empty Sasha entry.
 
-Every run copies all eight skills:
+Every run copies these six skills:
 
 - [Account Manager](openai_managed/capabilities/account-manager/SKILL.md) owns action selection, no-reply rules, and shared browser/evidence boundaries.
 - [Outreach](openai_managed/capabilities/outreach/SKILL.md) owns read-only initial outreach inspection.
 - [Client response](openai_managed/capabilities/client-response-orchestrator/SKILL.md) owns sales actions for client requests.
 
-- Follow-up stages [1](openai_managed/capabilities/followup-stage-1/SKILL.md), [2](openai_managed/capabilities/followup-stage-2/SKILL.md), [3](openai_managed/capabilities/followup-stage-3/SKILL.md), [4](openai_managed/capabilities/followup-stage-4/SKILL.md), and [5](openai_managed/capabilities/followup-stage-5/SKILL.md) provide tactic pools and tone rules.
+- [Internal email](openai_managed/capabilities/internal-email/SKILL.md) handles internal updates and decides whether the client needs a draft.
+- [Follow-up](openai_managed/capabilities/followup/SKILL.md) selects a phase and one unused, evidence-backed tactic for explicit follow-up checks.
+- [Promo Codes](openai_managed/capabilities/promo-codes/SKILL.md) owns one current regular-order promo per deal, discount policy, database verification, and customer explanation. Reuse the deal's valid unused code; client responses may create a first code or replace a verified expired/used one. Follow-ups may explain a freshly verified existing deal code but cannot create or replace it.
 
 Account Manager's routing and no-reply rules govern the specialized skills.
 All actions use [shared sales rules](openai_managed/capabilities/account-manager/references/sales_rules.md), including pricing, proofs, stock, delivery, and samples.
@@ -422,6 +424,22 @@ and the relevant [outreach](openai_managed/capabilities/outreach/references/outr
 or [client response](openai_managed/capabilities/client-response-orchestrator/references/client_response_crafting.md)
 crafting guide. The [Workplace reference](openai_managed/capabilities/account-manager/references/workplace.md)
 describes application pages and controls. Sasha remains the client-facing name.
+
+The Promo Codes section in Workplace documents V4 navigation, conditional form
+fields, and verification after saving. The promo skill holds the sales policy:
+a 15% maximum saving, a 5% default without a known budget, and `All Accounts`
+targeting without individual account searches, with one total use and corporate
+visibility off. The notebook keeps the current code and database ID. New codes use
+`SASHA<deal_id>-` names for recovery if notebook persistence fails. Always open the
+saved code's detail dialog for its terms; use the list only to locate it. The
+[database operations](openai_managed/capabilities/promo-codes/references/check_promo_expiry_and_usage.md)
+use the existing read-only `python /opt/sasha/database.py --role main` command for
+UTC validity, status, total usage, and completed redemptions before each offer.
+Database timestamps take precedence over conflicting UI dates. AM chooses expiry and minimum
+purchase from the order context. These are written agent instructions, not new
+API checks. No promo API wrapper or schema change is required. Creation and
+redemption were not tested during the UI exploration; each actual save must be
+verified in V4 before Sasha presents the offer as ready.
 
 Restart the web app after deploying the Python and UI changes. Skill edits apply to
 newly prepared containers; active runs retain their copies. Historical jobs remain
