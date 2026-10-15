@@ -24,7 +24,7 @@ Each tactic is used at most once per deal. "Needs" lists the evidence you must v
 
 | Tactic | Fits when | Needs | Adds |
 |---|---|---|---|
-| `check_on_product` | The client may doubt fit, feel or quality | A real product observed this run; a blank sample only when the sales rules allow it | A direct, easy way to resolve product doubt |
+| `check_on_product` | The client may doubt fit, feel or quality | A real product observed this run; a free blank sample only when [the samples guide](../../account-manager/references/samples.md) allows it | A direct, easy way to resolve product doubt |
 | `check_on_price` | The client seems price sensitive | At least one cheaper product or print option priced in the quoter this run | A lower verified price |
 | `decision_simplification` | Many proofs or options look overwhelming | The proofs and options already shared | One recommended path, plus a new design link when one helps |
 | `offer_alternative` | The current path is stuck on budget, minimum, stock, design or timing | A verified replacement product, design or timeline | A way around the blocker; prefer this over closing when one exists |

@@ -24,7 +24,7 @@ When handling a client message or a follow-up check, also judge whether a person
 
 No reply is a successful result with `status: "completed"`, `message_html: ""`, and empty failure fields. Update the deal notebook as instructed, but do not invent a message or perform unnecessary browser actions. A real blocker is a failure, not a no-reply decision.
 
-The account-manager rules govern all specialized skills. Read [shared sales rules](references/sales_rules.md) for every action, including the sample approval policy. Use their sales rules for the work you choose, and read only the crafting guide relevant to that work.
+The account-manager rules govern all specialized skills. Read [shared sales rules](references/sales_rules.md) for every action, and [the samples guide](references/samples.md) whenever a sample comes up. Use their sales rules for the work you choose, and read only the crafting guide relevant to that work.
 
 ## Customer proof and order links
 

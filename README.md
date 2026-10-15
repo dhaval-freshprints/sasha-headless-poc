@@ -167,7 +167,7 @@ Client response without deal ID, in order:
 
 1. **Find deal by email or phone** (`deal_manager_agent/deal_lookup.py`, no LLM). The
    sender's user record -> its deals that are not deleted, not `won`/`lost` and managed
-   by Sasha (`SASHA_USER_ID`, default 297140). One deal -> use it.
+   by Sasha (the `sasha_user_id` value in `sasha_settings`). One deal -> use it.
    Several -> the one Sasha last wrote to.
 2. **Deal Manager** runs only when step 1 finds no single deal, and reads the message to
    find the deal. Only a `matched` decision continues.
@@ -479,6 +479,34 @@ Not ported from v3: email sending (v3's SQS queue), the ISA-reply judge prompt, 
 code-only external-apparel, promo-goods, MTO and order-history checks, and handing a deal back to
 Sasha.
 
+## Free samples
+
+Fresh Prints sends free, blank samples (no print) so a client can check fit and quality. Account
+Manager handles the selling and judgement, following
+[the samples guide](openai_managed/capabilities/account-manager/references/samples.md): it offers a
+sample when the client asks or doubts fit or quality (or as a follow-up tactic), checks the limits,
+collects style, color, size, shipping address and contact details, and places the sample only once
+everything is confirmed.
+
+Each run gets the deal's samples and the limits from Sasha v3's `sasha_settings` table
+(`followup_sample_max_unit_value`, `sample_max_per_deal`, `followup_sample_cooldown_days`). The
+agent applies them; there are no rule checks in code.
+
+The code only carries out what the agent decides, because it needs database writes and the
+Freshdesk key: when the agent returns a confirmed `sample_request`, the sample is saved in
+`sasha_sample_requests` and v3's Freshdesk ticket is created ("New Sample Requested for Fresh
+Prints", Sample Orders, "BLANK sample only"). Without `FRESHDESK_DOMAIN` and `FRESHDESK_API_KEY`
+the sample is saved without a ticket. If saving or the ticket fails, the turn fails with
+`sample_not_placed` and nothing from it is saved. Logistics emails arrive as internal mail; the
+agent returns `sample_update` (shipped, delivered or cancelled, with tracking) and the code stores
+it. The outcome is recorded on the run (`sample`).
+
+Database setup: apply `sql/20261015_0002_sasha_sample_requests.sql` to the operations schema, which
+also needs v3's `sasha_settings`. Sasha's CRM user for deal lookups is the `sasha_user_id` setting.
+
+Not ported from v3: the Freshdesk webhook and daily poller, the stale-shipment nudge and Slack alert,
+and cancelling open samples on opt-out.
+
 ## Explicit follow-up checks
 
 Open a deal and select **Follow-up check**. Choose a stage and a business date;
@@ -524,10 +552,7 @@ ordinary, or superseded work does not add a used tactic. Historical `sent` entri
 also count as used, but that wording does not prove delivery. Generated drafts
 count as used in this POC. No history migration is needed.
 
-Samples remain free and blank. Offering one without approval requires verified
-value below $50 and evidence that no sample was sent within the preceding 14 days.
-Exactly $50, a more recent sample, or missing evidence requires confirmation before
-promising one. Internal cost and approval details stay out of client drafts.
+Samples are covered in [Free samples](#free-samples).
 
 Real-agent verification uses synthetic conversations and container-local browser
 fixtures, separately from mocked unit tests. It reads only OpenAI credentials and

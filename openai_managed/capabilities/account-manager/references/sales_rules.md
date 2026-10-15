@@ -77,7 +77,4 @@ These rules apply to outreach, client response, and follow-ups. They do not sele
 
 ## Samples
 
-- Samples are free and blank. Do not quote a sample price or promise the design will be printed on it.
-- Offering a sample without manager approval requires verified sample value below $50 and verified evidence that no sample was sent in the previous 14 days. Exactly $50 requires approval; a sample sent fewer than 14 days ago requires approval. At 14 days the time requirement is satisfied.
-- Missing value or sample-history evidence requires confirmation before promising a sample. Do not treat a generated sample offer as verified shipment.
-- Keep internal sample costs and manager-approval details out of client-facing drafts. Never promise a sample while required confirmation is missing.
+- Samples are free and blank. Follow [the samples guide](samples.md) for when to offer one, what can be sent, collecting the details, placing it and shipping updates.

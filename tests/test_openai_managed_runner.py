@@ -1074,6 +1074,60 @@ class ManagedRunnerTests(unittest.TestCase):
         self.assertEqual(self.database.deal_status("303839"), ("handoff_needed", reason))
         self.assertEqual(self.database.completed[-1][3], holding)
 
+    def _sample_runner(self, placed=True):
+        runner, sessions, sandboxes = self._make_runner([])
+        calls = []
+
+        class Service:
+            def context(self, deal_id):
+                return {"samples": [{"id": 3, "style_code": "G500", "status": "placed"}], "limits": {"max_unit_price": 50}}
+
+            def place(self, deal_id, run_id, request):
+                calls.append(("place", request["style_code"]))
+                return {"placed": True, "sample_id": 4, "ticket": "url"} if placed else \
+                    {"placed": False, "reason": "style_already_sampled"}
+
+            def record_update(self, deal_id, update):
+                calls.append(("update", update["sample_id"], update["status"]))
+                return {"updated": True, "sample_id": update["sample_id"], "status": update["status"]}
+
+        runner.sample_service_factory = lambda storage: Service()
+        return runner, sessions, sandboxes, calls
+
+    def test_confirmed_sample_is_placed_and_the_turn_saved(self):
+        runner, sessions, sandboxes, calls = self._sample_runner()
+        request = {"trigger": "client_request", "style_code": "C1717", "product_link": "", "color": "White",
+                   "size": "M", "ship_to_name": "Rita", "ship_to_address": "1 Main St",
+                   "contact_email": "", "contact_phone": "", "organization": ""}
+        final = self._final_with(sessions, convo_type="client_response", sample_request=request)
+        with patch.object(sessions.items, "_final_item", return_value=final):
+            result = runner.run(SashaTask("303839", "task-1", TASK_URL, "M in white, 1 Main St"))
+        self.assertEqual((result.status, calls, runner.last_sample["sample_id"]), ("completed", [("place", "C1717")], 4))
+        self.assertIn('"style_code": "G500"', sandboxes[0].task_message)
+        self.assertEqual(len(self.database.completed), 1)
+
+    def test_sample_that_cannot_be_placed_saves_nothing(self):
+        runner, sessions, _, _ = self._sample_runner(placed=False)
+        request = {"trigger": "client_request", "style_code": "G500", "product_link": "", "color": "Black",
+                   "size": "L", "ship_to_name": "Rita", "ship_to_address": "1 Main St",
+                   "contact_email": "", "contact_phone": "", "organization": ""}
+        final = self._final_with(sessions, convo_type="client_response", sample_request=request)
+        with patch.object(sessions.items, "_final_item", return_value=final):
+            result = runner.run(SashaTask("303839", "task-1", TASK_URL, "Another G500 please"))
+        self.assertEqual((result.status, result.failure_code), ("failed", "sample_not_placed"))
+        self.assertIn("style_already_sampled", result.failure_message)
+        self.assertEqual(self.database.completed, [])
+
+    def test_logistics_update_is_recorded(self):
+        runner, sessions, _, calls = self._sample_runner()
+        update = {"sample_id": 3, "status": "shipped", "cancel_reason": ""}
+        final = self._final_with(sessions, convo_type="internal_mail", sample_update=update)
+        reply = "Channel: Email\nFrom: logistics@freshprints.com\n\nSample shipped, UPS 1Z9"
+        with patch.object(sessions.items, "_final_item", return_value=final):
+            result = runner.run(SashaTask("303839", "task-1", TASK_URL, reply))
+        self.assertEqual((result.status, calls), ("completed", [("update", 3, "shipped")]))
+        self.assertTrue(runner.last_sample["update"]["updated"])
+
     def test_handed_off_deal_gives_the_agent_the_state_and_applies_an_isa_decision(self):
         runner, sessions, sandboxes = self._make_runner([])
         self.database.mark_handoff("303839", "Asked for a manager.")

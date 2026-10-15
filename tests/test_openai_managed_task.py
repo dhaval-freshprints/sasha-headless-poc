@@ -68,6 +68,8 @@ class SashaResultTests(unittest.TestCase):
             "convo_type": "outreach",
             "handoff_reason": "",
             "isa_decision": "",
+            "sample_request": None,
+            "sample_update": None,
         }
 
         result = SashaResult.from_json(json.dumps(value))

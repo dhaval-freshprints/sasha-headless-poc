@@ -254,6 +254,7 @@ class OpenAIManagedRunner:
         cost_reporter: CostReporter | None = None,
         storage_factory=SashaStorage,
         handoff_service_factory: Callable[[Any], Any] | None = None,
+        sample_service_factory: Callable[[Any], Any] | None = None,
     ) -> None:
         self.client = client
         self.settings = settings
@@ -264,6 +265,8 @@ class OpenAIManagedRunner:
         self.storage_factory = storage_factory
         self.handoff_service_factory = handoff_service_factory
         self.last_handoff: dict | None = None
+        self.sample_service_factory = sample_service_factory
+        self.last_sample: dict | None = None
         self.storage = None
         self.current_task = None
         self.persistence_error = None
@@ -290,6 +293,33 @@ class OpenAIManagedRunner:
         except Exception as error:
             return {"status": status, "reason": reason, "offer": None,
                     "offer_error": f"Offers unavailable ({type(error).__name__})"}
+
+    def _sample_service(self):
+        if self.sample_service_factory is not None:
+            return self.sample_service_factory(self.storage)
+        from .samples.service import SampleService
+
+        return SampleService(storage=self.storage)
+
+    def _sample_context(self, deal_id: str) -> dict:
+        try:
+            return self._sample_service().context(deal_id)
+        except Exception as error:
+            return {"samples": None, "error": f"Samples unavailable ({type(error).__name__}); do not place one"}
+
+    def _place_sample(self, task: SashaTask, result: SashaResult, handoff_context: dict) -> SashaResult:
+        """Place the sample Account Manager confirmed. If it cannot be placed, nothing from this turn
+        is saved, so the next turn sees that no sample went out."""
+        if handoff_context:
+            outcome = {"placed": False, "reason": "the deal is handed off to a person"}
+        else:
+            outcome = self._sample_service().place(task.deal_id, task.run_id, result.sample_request)
+        self.last_sample = {"request": result.sample_request, **outcome}
+        self.progress.report(f"[sample] {outcome}")
+        if outcome["placed"]:
+            return result
+        return replace(result, status="failed", failure_code="sample_not_placed",
+                       failure_message=f"The sample was not placed: {outcome['reason']}")
 
     def _act_on_handoff(self, task: SashaTask, result: SashaResult, context: dict) -> dict | None:
         """Carry out what the agent decided: offer a new handoff, or apply an ISA's answer."""
@@ -364,6 +394,7 @@ class OpenAIManagedRunner:
         self.current_task = None
         self.last_cost_estimate = None
         self.last_handoff = None
+        self.last_sample = None
         try:
             self.settings.application.validate_deal_url(task.deal_url)
         except ValueError as error:
@@ -379,13 +410,14 @@ class OpenAIManagedRunner:
                 messages = (incoming_message(task.client_message, task.file_urls),)
             messages = self.storage.prepare_run(task.deal_id, task.run_id, messages)
             handoff_context = self._handoff_context(task.deal_id)
+            sample_context = self._sample_context(task.deal_id)
             notes, history = self.storage.load_context(task.deal_id)
             self.progress.report("[context] Loaded notes and conversation from database")
             current_ids = {message.row_id for message in messages}
             history = [entry for entry in history if entry["id"] not in current_ids]
             task = replace(task, incoming_messages=messages, client_message=join_messages(messages),
                            conversation_history=tuple(history), deal_notes=notes,
-                           handoff_context=handoff_context)
+                           handoff_context=handoff_context, sample_context=sample_context)
             self.current_task = task
             result = self._run_turn(task)
             if self.persistence_error is not None:
@@ -393,6 +425,8 @@ class OpenAIManagedRunner:
             if handoff_context and result.status != "failed":
                 # A person owns this deal: Sasha never writes to the client or hands off again.
                 result = replace(result, status="completed", message_html="", convo_type=None)
+            if result.sample_request and result.status != "failed":
+                result = self._place_sample(task, result, handoff_context)
             if result.status in {"completed", "handoff"}:
                 handoff = result.status == "handoff"
                 urls = list(dict.fromkeys([
@@ -405,6 +439,10 @@ class OpenAIManagedRunner:
                                           handoff_reason=result.handoff_reason if handoff else None)
                 result = replace(result, notes=updated)
                 self.last_handoff = self._act_on_handoff(task, result, handoff_context)
+                if result.sample_update:
+                    self.last_sample = {"update": self._sample_service().record_update(
+                        task.deal_id, result.sample_update)}
+                    self.progress.report(f"[sample] {self.last_sample}")
         except (DatabaseError, ValueError, OSError) as error:
             result = SashaResult(task.deal_id, "failed", failure_code="persistence_error",
                                  failure_message=str(error))
@@ -757,6 +795,13 @@ class OpenAIManagedRunner:
                 "--- END CLIENT MESSAGE ---"
             )
 
+        sample_data = ""
+        if task.sample_context is not None:
+            sample_data = (
+                "This deal's free samples and the sample limits (follow the account-manager "
+                "samples guide):\n"
+                f"{json.dumps(task.sample_context, indent=2, default=str)}\n\n"
+            )
         isa_reply_context = ""
         if task.handoff_context:
             isa_reply_context = (
@@ -828,6 +873,7 @@ class OpenAIManagedRunner:
             "--- END PREVIOUS CONVERSATION JSON ---\n\n"
             f"{follow_up_context}"
             f"{isa_reply_context}"
+            f"{sample_data}"
             f"{message_data}\n\n"
             f"{file_data}"
             "A signed-in headless Chrome is already running for this turn. In every "
@@ -853,6 +899,8 @@ class OpenAIManagedRunner:
             "When the account-manager handoff guide says a person should take over, set status "
             "to handoff and explain why in handoff_reason; otherwise leave it empty. Set "
             "isa_decision only when the handoff guide asks you to read an ISA's reply. "
+            "Set sample_request or sample_update only as the samples guide describes; "
+            "otherwise leave them null. "
             "Return only the required Sasha result JSON object."
         )
 

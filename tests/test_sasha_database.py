@@ -159,6 +159,31 @@ TABLES = [
         open_deal_id INT AS (CASE WHEN status IN ('OFFERED','ACCEPTED') THEN deal_id ELSE NULL END) STORED,
         UNIQUE KEY uq_sasha_handoff_offers_one_open_per_deal (open_deal_id),
         CONSTRAINT fk_sasha_handoff_offers_isa_id FOREIGN KEY (isa_id) REFERENCES sasha_handoff_isas (id)) ENGINE=InnoDB''',
+    # v3's settings table, and the samples table from sql/20261015_0002_sasha_sample_requests.sql.
+    '''CREATE TABLE IF NOT EXISTS sasha_settings (
+        id INT NOT NULL AUTO_INCREMENT PRIMARY KEY, `key` VARCHAR(100) NOT NULL UNIQUE, `value` TEXT NOT NULL,
+        description VARCHAR(500) NOT NULL DEFAULT '', status ENUM('ACTIVE','INACTIVE') NOT NULL DEFAULT 'ACTIVE',
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB''',
+    '''CREATE TABLE IF NOT EXISTS sasha_sample_requests (
+    id                   INT           NOT NULL AUTO_INCREMENT,
+    deal_id              INT           NOT NULL,
+    run_id               VARCHAR(64)   NULL     COMMENT 'Account Manager run that placed the sample',
+    status               ENUM('placed', 'shipped', 'delivered', 'cancelled') NOT NULL DEFAULT 'placed',
+    style_code           VARCHAR(64)   NOT NULL,
+    color                VARCHAR(128)  NOT NULL,
+    size                 VARCHAR(32)   NOT NULL,
+    freshdesk_ticket_url VARCHAR(500)  NULL     COMMENT 'NULL when Freshdesk is not configured',
+    shipped_at           DATETIME      NULL,
+    delivered_at         DATETIME      NULL,
+    cancelled_at         DATETIME      NULL,
+    cancel_reason        VARCHAR(255)  NULL,
+    created_at           DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'When the sample was placed',
+    updated_at           DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    deleted_at           DATETIME      NULL,
+    PRIMARY KEY (id),
+    KEY ix_sasha_sample_requests_deal_id (deal_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  COMMENT='Free blank samples Sasha placed for a deal' ''',
     'CREATE TABLE IF NOT EXISTS user (id INT PRIMARY KEY,email VARCHAR(255),deleted_at DATETIME)',
     'CREATE TABLE IF NOT EXISTS deals (id INT PRIMARY KEY,client_id INT,deleted_at DATETIME)',
 ]
@@ -191,7 +216,8 @@ class MySQLStorageTests(unittest.TestCase):
 
     def setUp(self):
         with self.admin.cursor() as cursor:
-            for table in ('sasha_handoff_offers','sasha_handoff_isas','sasha_conversation_history',
+            for table in ('sasha_sample_requests','sasha_settings','sasha_handoff_offers','sasha_handoff_isas',
+                          'sasha_conversation_history',
                           'sasha_deal_notes','sasha_deal_status','deals','user'):
                 cursor.execute(f'DELETE FROM {table}')
             cursor.execute("INSERT INTO user (id,email) VALUES (7,'client@example.com')")
@@ -295,6 +321,27 @@ class MySQLStorageTests(unittest.TestCase):
         self.assertEqual([item.status for item in offers.offers_for_deal('42')], ['TIMED_OUT', 'ACCEPTED'])
         self.assertEqual(offers.create_offer('42', select_next_isa)[0], 'skipped_existing')
         self.assertEqual(self.storage.client_contact('42'), {'client_id': 7, 'email': 'client@example.com'})
+
+    def test_samples_are_stored_updated_and_settings_read(self):
+        from openai_managed.samples.service import SampleService
+        with self.admin.cursor() as cursor:
+            cursor.execute("INSERT INTO sasha_settings (`key`,`value`) VALUES ('followup_sample_max_unit_value','50'),"
+                           "('sample_max_per_deal','4'),('followup_sample_cooldown_days','14'),('sasha_user_id','42')")
+        service = SampleService(storage=self.storage, freshdesk_factory=lambda: None)
+        request = {'trigger': 'client_request', 'style_code': 'C1717', 'product_link': '', 'color': 'White',
+                   'size': 'M', 'ship_to_name': 'Rita', 'ship_to_address': '1 Main St',
+                   'contact_email': '', 'contact_phone': '', 'organization': ''}
+        self.assertTrue(service.place('42', 'one', request)['placed'])
+        context = service.context('42')
+        self.assertEqual(context['limits']['sample_max_per_deal'], '4')
+        sample_id = context['samples'][0]['id']
+        self.assertTrue(service.record_update('42', {'sample_id': sample_id, 'status': 'shipped'})['updated'])
+        sample = service.context('42')['samples'][0]
+        self.assertEqual(sample['status'], 'shipped')
+        self.assertIsNotNone(sample['shipped_at'])
+        from deal_manager_agent.deal_queries import sasha_user_id
+        with patch('sasha_database.settings.DatabaseSettings.from_environment', return_value=self.settings):
+            self.assertEqual(sasha_user_id(), 42)
 
     def test_completion_commits_notes_and_generated_draft(self):
         self.storage.prepare_run('42', 'run')

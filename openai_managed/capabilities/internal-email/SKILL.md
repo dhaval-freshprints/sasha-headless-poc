@@ -24,3 +24,4 @@ The client has not seen the team message. Any reply you draft goes to the client
 - Use only facts and links observed during this run, including customer links returned by Account Manager’s fixed helper after browser verification. Never pass on internal names, internal statuses, ticket numbers or the team's own wording.
 - Do not change deal, proof or order records because a team message suggests it. Only a client's request authorizes changes, under the client-response rules.
 - If an additional team message arrives during the turn, reconsider the decision with both messages.
+- When the message is a logistics update about one of this deal's free samples (shipped, tracking, delivered), follow the shipping updates section of [the samples guide](../account-manager/references/samples.md).

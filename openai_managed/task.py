@@ -36,6 +36,25 @@ def validate_follow_up(
         raise ValueError("Initial follow-up checks cannot include client messages or artwork URLs")
 
 
+def _object(properties: dict) -> dict:
+    return {"type": "object", "additionalProperties": False, "required": list(properties), "properties": properties}
+
+
+TEXT = {"type": "string"}
+# A confirmed free blank sample to place: one style, color and size.
+SAMPLE_REQUEST_SCHEMA = _object({
+    "trigger": {"type": "string", "enum": ["client_request", "quality_doubt", "followup_offer"]},
+    "style_code": TEXT, "product_link": TEXT, "color": TEXT, "size": TEXT,
+    "ship_to_name": TEXT, "ship_to_address": TEXT, "contact_email": TEXT, "contact_phone": TEXT,
+    "organization": TEXT,
+})
+# What a logistics email said about one of this deal's samples.
+SAMPLE_UPDATE_SCHEMA = _object({
+    "sample_id": {"type": "integer"},
+    "status": {"type": "string", "enum": ["shipped", "delivered", "cancelled"]},
+    "cancel_reason": TEXT,
+})
+
 SASHA_RESULT_JSON_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
@@ -47,6 +66,8 @@ SASHA_RESULT_JSON_SCHEMA = {
         "convo_type",
         "handoff_reason",
         "isa_decision",
+        "sample_request",
+        "sample_update",
         "failure_code",
         "failure_message",
     ],
@@ -58,6 +79,8 @@ SASHA_RESULT_JSON_SCHEMA = {
         "convo_type": {"type": ["string", "null"], "enum": ["client_response", "followup", "internal_mail", "outreach", None]},
         "handoff_reason": {"type": "string"},
         "isa_decision": {"type": "string", "enum": ["", "accepted", "rejected", "unclear"]},
+        "sample_request": {"anyOf": [SAMPLE_REQUEST_SCHEMA, {"type": "null"}]},
+        "sample_update": {"anyOf": [SAMPLE_UPDATE_SCHEMA, {"type": "null"}]},
         "failure_code": {"type": "string"},
         "failure_message": {"type": "string"},
     },
@@ -80,6 +103,7 @@ class SashaTask:
     as_of_date: str | None = None
     days_since_client_reply: int | None = None
     handoff_context: dict | None = None  # Set by the runner when the deal is already handed off.
+    sample_context: dict | None = None  # This deal's samples and the sample limits, set by the runner.
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "client_message", normalize_client_message(self.client_message))
@@ -98,6 +122,8 @@ class SashaResult:
     convo_type: str | None = None
     handoff_reason: str = ""
     isa_decision: str = ""
+    sample_request: dict | None = None
+    sample_update: dict | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
