@@ -4,13 +4,11 @@ Mirrors sasha-ai-assistant-v3 `core/workflow/deal_resolution/queries.py` and
 `deal_consolidation.pick_canonical_deal_id`.
 """
 
-import os
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Callable
 
 CLOSED_STAGES = ("won", "lost")  # The only closed CRM stages (v3 CRM_DEAL_CLOSED_STAGES).
-DEFAULT_SASHA_USER_ID = 297140  # Sasha's CRM user for active deals; set SASHA_USER_ID to override.
 
 
 def load_database_helper():
@@ -19,7 +17,13 @@ def load_database_helper():
 
 
 def sasha_user_id() -> int:
-    return int(os.environ.get("SASHA_USER_ID") or DEFAULT_SASHA_USER_ID)
+    """Sasha's CRM user (deal manager of Sasha's deals), from sasha_settings key `sasha_user_id`."""
+    from sasha_database.settings import SashaSettings
+
+    value = SashaSettings().values("sasha_user_id").get("sasha_user_id", "")
+    if not value.isdigit():
+        raise ValueError("sasha_settings has no active numeric sasha_user_id")
+    return int(value)
 
 
 def positive_int(value) -> int | None:
