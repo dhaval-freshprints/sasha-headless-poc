@@ -43,6 +43,24 @@ Use the application destinations supplied in the task. CRM paths below are relat
 - A proof linked from the deal belongs to that deal, even when its `Client` field shows a different name. Use it as this client's proof; a name mismatch is something for a person to check, not a reason to set the proof aside.
 - A product shown as `External …` is apparel Fresh Prints does not sell itself. It has no catalog or quoter price, so the price panel shows $0.00, and self-checkout is usually blocked. Sasha cannot price, order or change it.
 
+### Product options, color options, and revisions
+
+Choose the workflow from what the client wants to keep or change:
+
+| Client request | Proof control | Save action |
+|---|---|---|
+| Add another product carrying the existing artwork | `+` under `Add Product Options`, then `Change Product`, choose the product, and `Switch to This` | `Save as Product Option` |
+| Add another garment color alongside the existing options | `+` under `Design Group Color Options` (also labeled `Add Color Options`), then choose the color | `Save as Color Option` |
+| Change an existing mockup's garment color or artwork | Select the intended product/color on the proof, then `Revise in Design Tool` | `Save as new revision` |
+
+The existing product cards and color pills select a saved option to inspect; their `+` controls start an addition. Selecting the White pill on the proof does not revise Bay. For a request such as "change all shirts to white," revise each affected existing mockup, preserving its artwork unless the client also requested an artwork change. Adding White alongside the old color does not complete that request.
+
+The option editors can look similar to the revision editor. In QA on 2026-10-16, the option links opened with `fromDesignGroup=proofPage`; the revision link opened with `proofItemId` without that parameter. Treat these as observed mode clues, not URLs to construct. Follow the proof's actual control and confirm the Save menu matches the intended operation. Changing the product inside an option editor changed its action from `Save as Color Option` to `Save as Product Option`.
+
+For a garment-color revision, select the requested swatch in the revision editor, inspect the rendered garment and artwork, open `Save`, and set `Send a Copy to Client` to No. The White preview on proof 652401 offered an enabled `Save as new revision` after that selection in the QA check. That check stopped before saving; after an actual save, reopen the proof and verify its new revision, garment color, and artwork before continuing to the next affected mockup.
+
+If a revision request instead shows `Save as Color Option` or `Save as Product Option`, correct the editor/tab selection before saving. Do not conclude that changing the garment color requires deleting old options or handing off merely because an option editor adds an alternative. If the correct revision editor still has a blocker, report the observed blocker and use the existing failure or handoff rules.
+
 ## Create proof wizard
 
 The three steps are Proof Details, Product Info, and Print Info & Price Estimate. Each next button remains disabled until required fields are complete.
@@ -56,6 +74,8 @@ The three steps are Proof Details, Product Info, and Print Info & Price Estimate
 ## Design Tool
 
 A proof's Design Tool link opens a new browser page. Existing proofs show their proof item and revision in the editor.
+
+Capture the browser's existing pages before clicking a proof control and identify the page opened by that click (for example, with the context's `page` event). Check its URL, proof item, and Save mode. Do not select the first page whose URL starts with the Design Tool host: an older product/color-option tab can match even after clicking `Revise in Design Tool`. Close superseded editor tabs once their work is no longer needed.
 
 For a design chosen from the gallery, open its detail page and inspect `Customize This`. Follow it only when its origin matches the supplied Design Tool URL. Verify that the selected design loaded, then inspect the canvas and its objects before editing. Do not assume a generic footer link uses the configured environment.
 
@@ -99,7 +119,7 @@ When the client needs an additional mockup on the same proof record and the CRM 
 - Set content first, then size, alignment, and Distance from Collar. Centering can reset vertical distance.
 - Arrow keys can nudge a selected object. Use small groups and inspect a fresh screenshot after each group.
 - To replace an image, first place and inspect the new one, then remove only the old canvas object. Preserve unrelated artwork.
-- Top `Save` opens a menu and does not itself persist. A new design requires title, deal, client, copy-to-client choice, estimate quantity, and the second Save control. An existing proof offers `Save as new revision`.
+- Top `Save` opens a menu and does not itself persist. A new design requires title, deal, client, copy-to-client choice, estimate quantity, and the second Save control. An existing proof opened through `Revise in Design Tool` offers `Save as new revision`; the option workflows offer `Save as Color Option` or `Save as Product Option` as described above.
 - Set `Send a Copy to Client` to No. A prior visual selection is not proof of the current state.
 - Saving can show an intermediate `Saving...` state or licensing dialog. Completion updates the proof item URL or revision label. Reopen the CRM proof to verify persistence.
 
