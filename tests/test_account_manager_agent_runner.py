@@ -539,19 +539,21 @@ class ManagedRunnerTests(unittest.TestCase):
         self.assertIn("tell the client the request is in for a proof or revision", crafting)
         self.assertIn("Do not expose Design Tool, editor, or internal tooling limits", crafting)
 
-    def test_needs_changes_proofs_share_checkout_links(self):
+    def test_needs_changes_blocks_checkout_and_requires_client_update(self):
         root = Path(__file__).resolve().parents[1] / "account_manager_agent" / "capabilities"
         account_manager = (root / "account-manager" / "SKILL.md").read_text()
         handoff = (root / "handoff" / "SKILL.md").read_text()
         crafting = (root / "account-manager" / "references" / "crafting_rules.md").read_text()
         workplace = (root / "account-manager" / "references" / "workplace.md").read_text()
-        self.assertIn("A saved proof in `Needs Changes` is checkout-ready", account_manager)
-        self.assertIn("Do not wait for full art or licensing approval", account_manager)
-        self.assertIn("Do not hand off solely because licensing shows `Approval Required`", handoff)
-        self.assertIn("saved proof is in `Needs Changes`", handoff)
-        self.assertIn("including a saved proof in `Needs Changes` with self-checkout enabled", crafting)
-        self.assertIn("proof status of `Needs Changes` is a saved, orderable state", workplace)
-        self.assertIn("Block Self-Checkout", workplace)
+        self.assertIn("`Needs Changes` is a checkout blocker", account_manager)
+        self.assertIn("Do not share an order link in that state", account_manager)
+        self.assertIn("design is not approved yet", account_manager)
+        self.assertIn("Do not hand off solely because a proof is in `Needs Changes`", handoff)
+        self.assertIn("Do not send a checkout or order link while the status is `Needs Changes`", handoff)
+        self.assertIn("When the proof is in `Needs Changes`, do not send an order link", crafting)
+        self.assertIn("design is not approved yet", crafting)
+        self.assertIn("client cannot check out until that is resolved", workplace)
+        self.assertIn("do not treat the proof as checkout-ready while the status is `Needs Changes`", workplace)
 
     def test_playbooks_use_natural_product_references(self):
         repository_root = Path(__file__).resolve().parents[1]

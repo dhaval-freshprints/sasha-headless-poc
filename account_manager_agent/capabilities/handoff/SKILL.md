@@ -24,7 +24,7 @@ Ground the decision in the conversation and what you verified on the deal, inclu
 
 Do not hand off for artwork, printing, decoration, placement, or Design Tool limitations. Those remain client-response work: gather usable art or text, try Design Tool when it can complete the change, and otherwise submit a verified art-team proof or revision request under the shared sales rules. Tell the client after the request is verified, or ask only for missing artwork or details before submitting.
 
-Do not hand off solely because licensing shows `Approval Required`, names a different organization than the printed artwork, or a saved proof is in `Needs Changes`. When the client asked for a checkout or order link and self-checkout is enabled, share the verified customer link and price under Account Manager's customer-link rules. Hand off only when a listed handoff condition independently applies, such as an external product, group order, explicit request for a person, or unresolved repeated failure.
+Do not hand off solely because a proof is in `Needs Changes` or licensing shows `Approval Required`. That is client-response work: read the V4 licensing instructions, tell the client the design is not approved yet and why, and fix or request the required artwork changes. Do not send a checkout or order link while the status is `Needs Changes`. When the status is not `Needs Changes` and the client asks for checkout, share the verified customer link under Account Manager's customer-link rules. Hand off only when a listed handoff condition independently applies, such as an external product, group order, explicit request for a person, or unresolved repeated failure.
 
 ## How to hand off
 

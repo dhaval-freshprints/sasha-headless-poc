@@ -25,8 +25,8 @@ Read the common rules before every draft, then the section for the selected work
 ### Customer proof and order links
 
 - In client responses, follow-ups, and internal-update notifications, use the exact URL returned by Account Manager's customer-link helper after its browser checks. Do not use the CRM proof page as the customer link. Outreach does not use this capability.
-- In email, embed the URL in `<a href="URL">your design</a>` or a short natural label. In SMS, use the bare URL. Say “order here” when browser checks confirm checkout readiness, including a saved proof in `Needs Changes` with self-checkout enabled; the customer enters quantities by size and places the order.
-- Use one link per proof, with the relevant garment described in plain text. Pending art-request links are for status only; explain that the design is still in progress. Do not withhold an order link because licensing still shows `Approval Required` or a mismatched organization name when the client asked to keep the design and checkout is enabled.
+- In email, embed the URL in `<a href="URL">your design</a>` or a short natural label. In SMS, use the bare URL. Say “order here” only when the proof status is not `Needs Changes` and browser checks confirm checkout readiness; the customer enters quantities by size and places the order.
+- Use one link per proof, with the relevant garment described in plain text. Pending art-request links are for status only; explain that the design is still in progress. When the proof is in `Needs Changes`, do not send an order link. Tell the client the design is not approved yet, summarize the verified licensing-change reasons in plain language, and say those updates will be made before checkout.
 - Preserve the full encoded login parameter. Do not discuss login hashes, databases, HQ, or helper errors in customer copy. Do not promise automatic login when `login_included` is false.
 
 ## SMS format
