@@ -1,12 +1,13 @@
 """Host-owned persistence for Sasha status, notes, and conversations."""
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from dataclasses import replace
 import json
 
 from .config import DatabaseSettings, quote_schema, required
 from .connection import transaction
+from . import followup_schedule as schedule_rules
 from .messages import (
     CONVERSATION_TYPES, IncomingMessage, read_sms_messages, sms_body, utc_now, valid_email,
     validate_message_body, validate_sms_messages,
@@ -25,7 +26,8 @@ AGENT_STATUSES = {"active", "paused", "opt_out", "completed"}
 
 
 def validate_deal_state(state: dict) -> dict:
-    """The Account Manager's decision about the deal: status, its reasoning, and the next check day."""
+    """The Account Manager's decision about the deal: status, its reasoning, and the next check
+    (a New York date and time it chose)."""
     status = str(state.get("status") or "").strip()
     reason = str(state.get("reason") or "").strip()
     next_check = str(state.get("next_check_on") or "").strip() or None
@@ -34,10 +36,15 @@ def validate_deal_state(state: dict) -> dict:
     if not reason:
         raise ValueError("deal_state needs the Account Manager's reason")
     if next_check is not None:
-        from datetime import date
-        date.fromisoformat(next_check)
+        schedule_rules.parse_check_time(next_check)
     return {"status": status, "reason": reason, "next_check_on": next_check,
             "crm_lost_reason": str(state.get("crm_lost_reason") or "").strip()}
+
+
+def describe_schedule(updates: dict) -> str:
+    if updates.get("status") == "paused":
+        return "paused (no next check chosen)"
+    return "recorded"
 
 
 def validate_deal_id(deal_id: str) -> int:
@@ -207,9 +214,15 @@ class SashaStorage:
                     "WHERE deal_id=%s AND deleted_at IS NULL", (deal_id,))
                 row = cursor.fetchone() or {}
                 cursor.execute(
-                    "SELECT status,next_followup_date,scheduled_followup_reason,stop_reason,followup_count,last_channel_used "
+                    "SELECT status,next_followup_date,scheduled_followup_reason,stop_reason,followup_count,last_channel_used,"
+                    "first_message_timestamp,last_followup_timestamp,followup_metadata "
                     "FROM sasha_followup_schedule WHERE deal_id=%s", (deal_id,))
                 followup = cursor.fetchone()
+                if followup:
+                    meta = followup.pop("followup_metadata")
+                    meta = json.loads(meta or "{}") if isinstance(meta, (str, bytes)) else dict(meta or {})
+                    # Shown to Account Manager so it can choose a time the client tends to answer.
+                    followup["client_reply_times_utc"] = meta.get(schedule_rules.INBOUND_TIMESTAMPS_KEY, [])
         return {"status": row.get("status") or "active", "status_reason": row.get("status_reason") or "",
                 "followup": {key: (value.isoformat() if hasattr(value, "isoformat") else value)
                              for key, value in followup.items()} if followup else None}
@@ -232,8 +245,8 @@ class SashaStorage:
                         (deal_id, stop, now))
                     return f"stopped ({stop})"
                 if state.get("next_check_on"):
-                    # The cron matches the hour; 14:00 UTC is mid-morning in US time zones.
-                    when = datetime.fromisoformat(state["next_check_on"]).replace(hour=14)
+                    # Account Manager chose the day and the hour; the hourly job runs it then.
+                    when = schedule_rules.parse_check_time(state["next_check_on"])
                     cursor.execute(
                         "INSERT INTO sasha_followup_schedule (deal_id,status,first_message_timestamp,"
                         "next_followup_date,scheduled_followup_reason) VALUES (%s,'active',%s,%s,%s) "
@@ -241,7 +254,7 @@ class SashaStorage:
                         "next_followup_date=VALUES(next_followup_date),"
                         "scheduled_followup_reason=VALUES(scheduled_followup_reason)",
                         (deal_id, now, when, reason))
-                    return f"scheduled for {state['next_check_on']}"
+                    return f"scheduled for {state['next_check_on']} New York"
                 if status == "paused":
                     cursor.execute(
                         "INSERT INTO sasha_followup_schedule (deal_id,status,first_message_timestamp) "
@@ -264,45 +277,90 @@ class SashaStorage:
             "UPDATE sasha_followup_schedule SET status='stopped',stop_reason='handoff',"
             "next_followup_date=NULL WHERE deal_id=%s", (deal_id,))
 
+    SCHEDULE_COLUMNS = ("status", "stop_reason", "first_message_timestamp", "last_followup_timestamp",
+                        "last_channel_used", "followup_count", "next_followup_date",
+                        "scheduled_followup_reason", "followup_metadata")
+
+    @classmethod
+    def _schedule_row(cls, cursor, deal_id, lock=True):
+        cursor.execute(f"SELECT {','.join(cls.SCHEDULE_COLUMNS)} FROM sasha_followup_schedule "
+                       f"WHERE deal_id=%s{' FOR UPDATE' if lock else ''}", (deal_id,))
+        row = cursor.fetchone()
+        if row and isinstance(row.get("followup_metadata"), (str, bytes)):
+            row = {**row, "followup_metadata": json.loads(row["followup_metadata"] or "{}")}
+        return row
+
+    def _write_schedule(self, cursor, deal_id, exists, updates):
+        updates = {**updates, "followup_metadata": json.dumps(updates.get("followup_metadata") or {})}
+        if exists:
+            assignments = ",".join(f"{column}=%s" for column in updates)
+            cursor.execute(f"UPDATE sasha_followup_schedule SET {assignments} WHERE deal_id=%s",
+                           (*updates.values(), deal_id))
+        else:
+            columns = ",".join(["deal_id", *updates])
+            cursor.execute(f"INSERT INTO sasha_followup_schedule ({columns}) "
+                           f"VALUES ({','.join(['%s'] * (len(updates) + 1))})", (deal_id, *updates.values()))
+
+    def schedule_followup(self, deal_id: str, event: str, **options) -> str:
+        """Record the turn in the schedule; pause it when a follow-up turn chose no next check."""
+        deal_id = validate_deal_id(deal_id)
+        now = utc_now()
+        with self.transaction(self.settings) as connection:
+            with connection.cursor() as cursor:
+                row = self._schedule_row(cursor, deal_id)
+                updates = schedule_rules.transition(row, event, now, **options)
+                if updates is None:
+                    return "unchanged"
+                self._write_schedule(cursor, deal_id, row is not None, updates)
+        return describe_schedule(updates)
+
+    def stop_followups(self, deal_id: str, reason: str) -> None:
+        """Stop follow-ups for good (won or lost deal, handoff)."""
+        with self.transaction(self.settings) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("UPDATE sasha_followup_schedule SET status='stopped',stop_reason=%s,"
+                               "next_followup_date=NULL WHERE deal_id=%s",
+                               (reason[:50], validate_deal_id(deal_id)))
+
     def claim_due_followups(self, now=None, limit: int = 50) -> list[int]:
-        """Deals whose follow-up day has arrived and that Sasha may contact. Claimed in the same
-        transaction (the date is cleared, the planned reason kept) so a follow-up never starts twice."""
+        """Deals due this hour that Sasha may contact. Claimed for the ET day in the
+        same transaction, keeping the date, so a follow-up never starts twice in a day."""
         now = now or utc_now()
+        now = now.astimezone(timezone.utc).replace(tzinfo=None) if now.tzinfo else now
+        today = schedule_rules.business_date(now)
+        end_of_day = datetime.combine(today + timedelta(days=1), datetime.min.time(),
+                                      tzinfo=schedule_rules.BUSINESS_TZ).astimezone(timezone.utc).replace(tzinfo=None)
+        claimed = []
         with self.transaction(self.settings) as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
-                    "SELECT f.deal_id FROM sasha_followup_schedule f "
+                    "SELECT f.deal_id,f.next_followup_date,f.last_followup_timestamp,f.followup_metadata "
+                    "FROM sasha_followup_schedule f "
                     "LEFT JOIN sasha_deal_status s ON s.deal_id=f.deal_id AND s.deleted_at IS NULL "
-                    "WHERE f.status='active' AND f.next_followup_date<=%s "
+                    "WHERE f.status='active' AND f.next_followup_date<%s "
                     "AND COALESCE(s.status,'active') NOT IN ('opt_out','handoff_needed') "
-                    "ORDER BY f.next_followup_date LIMIT %s FOR UPDATE", (now, limit))
-                deal_ids = [int(row["deal_id"]) for row in cursor.fetchall()]
-                if deal_ids:
-                    placeholders = ",".join(["%s"] * len(deal_ids))
-                    cursor.execute(f"UPDATE sasha_followup_schedule SET next_followup_date=NULL "
-                                   f"WHERE deal_id IN ({placeholders})", deal_ids)
-        return deal_ids
+                    "ORDER BY f.next_followup_date LIMIT %s FOR UPDATE", (end_of_day, limit))
+                for row in cursor.fetchall():
+                    meta = row["followup_metadata"]
+                    meta = json.loads(meta or "{}") if isinstance(meta, (str, bytes)) else dict(meta or {})
+                    if not schedule_rules.is_due(row["next_followup_date"], now, row["last_followup_timestamp"], meta):
+                        continue
+                    meta[schedule_rules.CLAIM_KEY] = today.isoformat()
+                    cursor.execute("UPDATE sasha_followup_schedule SET followup_metadata=%s WHERE deal_id=%s",
+                                   (json.dumps(meta), row["deal_id"]))
+                    claimed.append(int(row["deal_id"]))
+        return claimed
 
-    def record_followup_sent(self, deal_id: str, channel: str = "email") -> None:
-        """A follow-up draft was generated (v3 update_after_send)."""
-        if channel not in {"email", "sms", "both"}:
-            raise ValueError("Invalid follow-up channel")
-        last_channel = None if channel == "both" else channel
+    def release_followup_claim(self, deal_id: str) -> None:
+        """The run could not start: let the next hourly check claim the deal again."""
         with self.transaction(self.settings) as connection:
             with connection.cursor() as cursor:
-                cursor.execute(
-                    "UPDATE sasha_followup_schedule SET followup_count=followup_count+1,"
-                    "last_followup_timestamp=%s,last_channel_used=%s WHERE deal_id=%s",
-                    (utc_now(), last_channel, validate_deal_id(deal_id)))
-
-    def pause_followups(self, deal_id: str, reason: str) -> None:
-        """No next follow-up was chosen: pause, keeping the reason, unless already stopped."""
-        with self.transaction(self.settings) as connection:
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    "UPDATE sasha_followup_schedule SET next_followup_date=NULL,scheduled_followup_reason=%s,"
-                    "status='paused' WHERE deal_id=%s AND status='active' AND next_followup_date IS NULL",
-                    (reason, validate_deal_id(deal_id)))
+                row = self._schedule_row(cursor, validate_deal_id(deal_id))
+                if row:
+                    meta = dict(row.get("followup_metadata") or {})
+                    meta.pop(schedule_rules.CLAIM_KEY, None)
+                    cursor.execute("UPDATE sasha_followup_schedule SET followup_metadata=%s WHERE deal_id=%s",
+                                   (json.dumps(meta), validate_deal_id(deal_id)))
 
     def client_contact(self, deal_id: str) -> dict:
         """The deal's client id and email, for assigning a manager and the transition email."""

@@ -2,8 +2,10 @@
 from copy import deepcopy
 from dataclasses import replace
 from unittest.mock import patch
-from sasha_database.storage import validate_deal_id
-from sasha_database.messages import sms_body
+from datetime import datetime
+from sasha_database import followup_schedule as schedule_rules
+from sasha_database.storage import describe_schedule, validate_deal_id
+from sasha_database.messages import sms_body, utc_now
 
 
 class MemoryStorage:
@@ -47,25 +49,36 @@ class MemoryStorage:
                 'followup': self.followups.get(deal_id)}
 
     def claim_due_followups(self, now=None, limit=50):
-        due = [deal_id for deal_id, row in self.followups.items()
-               if row.get('status') == 'active' and row.get('next_followup_date')
-               and str(row['next_followup_date']) <= (now.isoformat() if now else '9999')
-               and self.statuses.get(deal_id, 'active') not in ('opt_out', 'handoff_needed')]
-        for deal_id in due:
-            self.followups[deal_id]['next_followup_date'] = None
-        return [int(deal_id) for deal_id in due]
+        now = now or datetime(9999, 1, 1)
+        due = []
+        for deal_id, row in self.followups.items():
+            when = row.get('next_followup_date')
+            when = datetime.fromisoformat(when) if isinstance(when, str) else when
+            if (row.get('status') == 'active'
+                    and self.statuses.get(deal_id, 'active') not in ('opt_out', 'handoff_needed')
+                    and schedule_rules.is_due(when, now, row.get('last_followup_timestamp'), row.get('followup_metadata'))):
+                meta = dict(row.get('followup_metadata') or {})
+                meta[schedule_rules.CLAIM_KEY] = schedule_rules.business_date(now).isoformat()
+                row['followup_metadata'] = meta
+                due.append(int(deal_id))
+        return due[:limit]
 
-    def record_followup_sent(self, deal_id, channel='email'):
-        if channel not in {'email', 'sms', 'both'}:
-            raise ValueError('Invalid follow-up channel')
-        row = self.followups.setdefault(deal_id, {'status': 'active'})
-        row['followup_count'] = row.get('followup_count', 0) + 1
-        row['last_channel_used'] = None if channel == 'both' else channel
+    def release_followup_claim(self, deal_id):
+        row = self.followups.get(str(deal_id))
+        if row:
+            (row.get('followup_metadata') or {}).pop(schedule_rules.CLAIM_KEY, None)
 
-    def pause_followups(self, deal_id, reason):
+    def schedule_followup(self, deal_id, event, **options):
         row = self.followups.get(deal_id)
-        if row and row.get('status') == 'active' and not row.get('next_followup_date'):
-            row.update(status='paused', scheduled_followup_reason=reason)
+        updates = schedule_rules.transition(row, event, utc_now(), **options)
+        if updates is None:
+            return 'unchanged'
+        self.followups[deal_id] = {**(row or {}), **updates}
+        return describe_schedule(updates)
+
+    def stop_followups(self, deal_id, reason):
+        if deal_id in self.followups:
+            self.followups[deal_id].update(status='stopped', stop_reason=reason, next_followup_date=None)
 
     def apply_followup_schedule(self, deal_id, state):
         stop = ('opted_out' if state['status'] == 'opt_out' else 'completed' if state['status'] == 'completed'
@@ -74,9 +87,11 @@ class MemoryStorage:
             self.followups[deal_id] = {'status': 'stopped', 'stop_reason': stop}
             return f'stopped ({stop})'
         if state.get('next_check_on'):
-            self.followups[deal_id] = {'status': 'active', 'next_followup_date': state['next_check_on'],
+            row = self.followups.get(deal_id) or {'first_message_timestamp': utc_now(), 'followup_count': 0}
+            self.followups[deal_id] = {**row, 'status': 'active', 'stop_reason': None,
+                                       'next_followup_date': schedule_rules.parse_check_time(state['next_check_on']),
                                        'scheduled_followup_reason': state['reason']}
-            return f"scheduled for {state['next_check_on']}"
+            return f"scheduled for {state['next_check_on']} New York"
         return 'unchanged'
 
     def deal_status(self, deal_id):

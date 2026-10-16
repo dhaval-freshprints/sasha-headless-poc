@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import logging
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
@@ -175,7 +175,8 @@ def create_app(
         if handoff_service is None:
             _start_timeout_worker(handoffs, stop_worker)
         if followup_settings is None:
-            _start_followup_worker(lambda: run_due_followups(manager, deals, None), stop_worker)
+            _start_followup_worker(lambda: run_due_followups(manager, deals, None, resolver=resolver),
+                                   stop_worker)
             _start_sample_freshdesk_worker(sync_open_sample_tickets, stop_worker)
         yield
         stop_worker.set()
@@ -305,6 +306,9 @@ def create_app(
         workflow = "client_response" if client_message else "outreach"
         if message and message.convo_type == "internal_mail":
             workflow = "internal_email"
+        if request.turn_type == "follow_up":
+            # No outreach duplicate guard; won or lost deals are skipped.
+            workflow = "follow_up"
         check = resolver.resolve(request.deal_id, workflow)
         if check.status != "proceed":
             verb = "skipped" if check.status == "skipped" else "not started"
@@ -438,13 +442,15 @@ def _start_timeout_worker(handoffs, stop: threading.Event) -> None:
 
 
 def run_due_followups(manager: JobManager, deals: DealStore, settings=None, force: bool = False,
-                      now: datetime | None = None) -> dict:
-    """Start a follow-up run for every deal whose follow-up day has arrived (as v3's hourly cron).
+                      now: datetime | None = None, resolver=None) -> dict:
+    """Start a follow-up run for every deal due this hour.
 
-    Runs only when sasha_settings enable Sasha and automatic follow-ups, and, unless forced,
-    during client hours (Mon–Fri 8:00–17:00 New York). Account Manager decides what to send.
+    Runs only when sasha_settings enable Sasha and automatic follow-ups, any day of the week:
+    Account Manager chose each check's day and time itself.
+    ``force`` claims every deal due today, whatever the hour. A won or lost deal stops its
+    follow-ups instead of running. Account Manager decides what to send.
     """
-    from account_manager_agent.handoff.working_hours import ISA_TZ, is_working_time
+    from account_manager_agent.handoff.working_hours import ISA_TZ
 
     now = now or datetime.now(timezone.utc)
     if settings is None:
@@ -455,25 +461,50 @@ def run_due_followups(manager: JobManager, deals: DealStore, settings=None, forc
     if values.get("sasha_master_key", "").lower() != "enabled" or \
             values.get("auto_followup_enabled", "").lower() != "true":
         return {"started": [], "skipped": "Sasha or automatic follow-ups are disabled in sasha_settings"}
-    if not force and not is_working_time(now):
-        return {"started": [], "skipped": "outside client hours (Mon–Fri 8:00–17:00 New York)"}
-    today = now.astimezone(ISA_TZ).date().isoformat()
-    started = []
-    for deal_id in manager.storage_factory().claim_due_followups(now.astimezone(timezone.utc).replace(tzinfo=None)):
-        deals.touch(str(deal_id))
-        run = manager.submit(str(deal_id), None, [], turn_type="follow_up", as_of_date=today)
-        started.append({"deal_id": str(deal_id), "run_id": run.run_id})
-    return {"started": started}
+    local = now.astimezone(ISA_TZ)
+    today = local.date().isoformat()
+    claim_at = local.replace(hour=23, minute=59) if force else now
+    storage = manager.storage_factory()
+    started, stopped, skipped = [], [], []
+    for deal_id in storage.claim_due_followups(claim_at.astimezone(timezone.utc).replace(tzinfo=None)):
+        deal_id = str(deal_id)
+        check = resolver.resolve(deal_id, "follow_up") if resolver is not None else None
+        if check is not None and check.status != "proceed":
+            if check.reason in {"deal_won", "deal_lost"}:
+                storage.stop_followups(deal_id, check.reason.removeprefix("deal_"))
+                stopped.append({"deal_id": deal_id, "reason": check.reason})
+            else:
+                skipped.append({"deal_id": deal_id, "reason": check.reason})
+            continue
+        try:
+            deals.touch(deal_id)
+            run = manager.submit(deal_id, None, [], turn_type="follow_up", as_of_date=today,
+                                 deal_check=check.to_dict() if check is not None else None)
+        except Exception:
+            storage.release_followup_claim(deal_id)
+            raise
+        started.append({"deal_id": deal_id, "run_id": run.run_id})
+    return {"started": started, "stopped": stopped, "skipped_deals": skipped}
+
+
+def _seconds_until_quarter_past(now: datetime) -> float:
+    """The follow-up job runs at :15 every hour."""
+    target = now.replace(minute=15, second=0, microsecond=0)
+    if target <= now:
+        target += timedelta(hours=1)
+    return (target - now).total_seconds()
 
 
 def _start_followup_worker(run_due, stop: threading.Event) -> None:
-    """Every FOLLOWUP_CHECK_SECONDS (default 3600), run due follow-ups. 0 disables it."""
-    interval = float(os.environ.get("FOLLOWUP_CHECK_SECONDS") or 3600)
-    if interval <= 0:
+    """Run due follow-ups at :15 every hour. FOLLOWUP_CHECK_SECONDS overrides the
+    rhythm with a fixed interval (handy locally); 0 disables it."""
+    configured = os.environ.get("FOLLOWUP_CHECK_SECONDS")
+    interval = float(configured) if configured else None
+    if interval is not None and interval <= 0:
         return
 
     def loop():
-        while not stop.wait(interval):
+        while not stop.wait(interval or _seconds_until_quarter_past(datetime.now(timezone.utc))):
             try:
                 run_due()
             except Exception:  # Missing configuration or a database outage: try again later.

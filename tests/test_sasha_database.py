@@ -288,9 +288,9 @@ class MySQLStorageTests(unittest.TestCase):
 
     def test_followup_channel_uses_original_enum_and_null_for_both(self):
         self.storage.prepare_run('42', 'followup')
-        self.storage.apply_followup_schedule('42', {'status': 'active', 'reason': 'Check in', 'next_check_on': '2026-10-20'})
+        self.storage.apply_followup_schedule('42', {'status': 'active', 'reason': 'Check in', 'next_check_on': '2026-10-20T10:00'})
         for count, (channel, expected) in enumerate((('email', 'email'), ('sms', 'sms'), ('both', None)), 1):
-            self.storage.record_followup_sent('42', channel)
+            self.storage.schedule_followup('42', 'followup_sent', channel=channel)
             followup = self.storage.deal_state('42')['followup']
             self.assertEqual((followup['last_channel_used'], followup['followup_count']), (expected, count))
 
@@ -408,14 +408,14 @@ class MySQLStorageTests(unittest.TestCase):
     def test_deal_state_is_saved_with_the_turn_and_never_overrides_a_handoff(self):
         self.storage.prepare_run('42', 'one')
         state = {'status': 'paused', 'reason': 'Asked to reconnect after spring break.',
-                 'next_check_on': '2027-03-22', 'crm_lost_reason': ''}
+                 'next_check_on': '2027-03-22T10:30', 'crm_lost_reason': ''}
         self.storage.complete_run('42', 'one', '', 'Paused.', '', None, deal_state=state)
         self.assertEqual(self.storage.apply_followup_schedule('42', {**state, 'status': 'paused'}),
-                         'scheduled for 2027-03-22')
+                         'scheduled for 2027-03-22T10:30 New York')
         saved = self.storage.deal_state('42')
         self.assertEqual((saved['status'], saved['status_reason']), ('paused', state['reason']))
-        self.assertEqual((saved['followup']['status'], saved['followup']['next_followup_date'][:10]),
-                         ('active', '2027-03-22'))
+        self.assertEqual((saved['followup']['status'], saved['followup']['next_followup_date']),
+                         ('active', '2027-03-22T14:30:00'))
         self.assertEqual(self.storage.apply_followup_schedule('42', {**state, 'status': 'opt_out'}),
                          'stopped (opted_out)')
         self.storage.apply_followup_schedule('42', {**state, 'status': 'paused', 'next_check_on': None})
@@ -427,20 +427,44 @@ class MySQLStorageTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'reason'):
             self.storage.complete_run('42', 'four', 'x', 'y', '', None, deal_state={**state, 'reason': ' '})
 
+    def test_schedule_records_turns_and_never_picks_a_date(self):
+        self.storage.prepare_run('42', 'one')
+        # Outreach with no chosen check: the schedule exists (anchor recorded) but is paused.
+        self.assertEqual(self.storage.schedule_followup('42', 'outreach'), 'paused (no next check chosen)')
+        followup = self.storage.deal_state('42')['followup']
+        self.assertEqual((followup['status'], followup['next_followup_date']), ('paused', None))
+        self.assertIsNotNone(followup['first_message_timestamp'])
+        self.storage.apply_followup_schedule('42', {'status': 'active', 'reason': 'Check if Alex picked a tee.',
+                                                    'next_check_on': '2026-10-20T11:00'})
+        self.assertEqual(self.storage.schedule_followup('42', 'client_reply_answered'), 'recorded')
+        followup = self.storage.deal_state('42')['followup']
+        self.assertEqual((followup['status'], followup['next_followup_date']), ('active', '2026-10-20T15:00:00'))
+        self.assertEqual(len(followup['client_reply_times_utc']), 1)
+        self.assertEqual(self.storage.schedule_followup('42', 'followup_sent', channel='sms', agent_set_date=True),
+                         'recorded')
+        self.assertEqual(self.storage.deal_state('42')['followup']['followup_count'], 1)
+        self.assertEqual(self.storage.schedule_followup('42', 'followup_unsent'), 'paused (no next check chosen)')
+        self.storage.stop_followups('42', 'won')
+        self.assertEqual(self.storage.schedule_followup('42', 'client_reply_answered'), 'unchanged')
+
     def test_due_followups_are_claimed_once_counted_paused_and_stopped_on_handoff(self):
         from datetime import datetime
         self.storage.prepare_run('42', 'one')
-        state = {'status': 'active', 'reason': 'Sent mockup; check in.', 'next_check_on': '2026-10-14',
+        state = {'status': 'active', 'reason': 'Sent mockup; check in.', 'next_check_on': '2026-10-14T10:00',
                  'crm_lost_reason': ''}
         self.storage.apply_followup_schedule('42', state)
-        self.assertEqual(self.storage.claim_due_followups(datetime(2026, 10, 13, 15)), [])
-        self.assertEqual(self.storage.claim_due_followups(datetime(2026, 10, 14, 15)), [42])
-        self.assertEqual(self.storage.claim_due_followups(datetime(2026, 10, 14, 15)), [])
-        self.storage.record_followup_sent('42')
-        self.storage.pause_followups('42', 'No next follow-up chosen after this check')
+        # Due once 10:00 New York (14:00 UTC) arrives; 21:30 UTC is after it.
+        self.assertEqual(self.storage.claim_due_followups(datetime(2026, 10, 13, 21, 30)), [])
+        self.assertEqual(self.storage.claim_due_followups(datetime(2026, 10, 14, 21, 30)), [42])
+        self.assertEqual(self.storage.claim_due_followups(datetime(2026, 10, 14, 21, 30)), [])
+        self.storage.release_followup_claim('42')
+        self.assertEqual(self.storage.claim_due_followups(datetime(2026, 10, 14, 21, 30)), [42])
+        self.assertEqual(self.storage.schedule_followup('42', 'followup_sent', channel='email'),
+                         'paused (no next check chosen)')
         followup = self.storage.deal_state('42')['followup']
         self.assertEqual((followup['status'], followup['followup_count']), ('paused', 1))
-        self.storage.apply_followup_schedule('42', {**state, 'next_check_on': '2026-10-20'})
+        self.assertEqual(self.storage.claim_due_followups(datetime(2026, 10, 14, 21, 30)), [])
+        self.storage.apply_followup_schedule('42', {**state, 'next_check_on': '2026-10-20T10:00'})
         self.storage.complete_run('42', 'two', '', 'Handed off.', '', None, handoff_reason='Wants a store.')
         followup = self.storage.deal_state('42')['followup']
         self.assertEqual((followup['status'], followup['stop_reason'], followup['next_followup_date']),

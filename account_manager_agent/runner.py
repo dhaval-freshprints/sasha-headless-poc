@@ -306,14 +306,41 @@ class AccountManagerAgent:
             return {"status": status, "reason": reason, "offer": None,
                     "offer_error": f"Offers unavailable ({type(error).__name__})"}
 
-    def _finish_followup(self, deal_id: str, channel: str) -> None:
-        """Count a drafted follow-up; if Sasha chose no next follow-up day, pause the schedule."""
+    @staticmethod
+    def _schedule_event(task: SashaTask, result: SashaResult) -> tuple[str | None, dict]:
+        """What this turn was, for the schedule's records."""
+        drafted = result.has_draft()
+        channel = result.communication_channel if result.communication_channel != "none" else "email"
+        team = [message for message in task.incoming_messages if message.convo_type == "internal_mail"]
+        clients = [message for message in task.incoming_messages if message.convo_type != "internal_mail"]
+        if clients:
+            return ("client_reply_answered" if drafted else "client_reply_unanswered",
+                    {"reply_at": clients[-1].timestamp()})
+        if team:
+            return ("internal_update_sent", {"channel": channel}) if drafted else (None, {})
+        if task.turn_type == "follow_up":
+            if drafted and result.convo_type == "client_response":
+                return "client_reply_answered", {}
+            return ("followup_sent", {"channel": channel}) if drafted else ("followup_unsent", {})
+        if drafted and result.convo_type == "outreach":
+            return "outreach", {}
+        return None, {}
+
+    def _record_schedule(self, task: SashaTask, result: SashaResult, applied: dict | None) -> dict | None:
+        """Record the turn in the follow-up schedule. Account Manager alone chooses the next
+        check; after outreach or a follow-up check without one, the schedule pauses."""
+        event, options = self._schedule_event(task, result)
+        if event is None:
+            return applied
+        chose = str((applied or {}).get("followup", "")).startswith("scheduled")
         try:
-            if channel != "none":
-                self.storage.record_followup_sent(deal_id, channel)
-            self.storage.pause_followups(deal_id, "No next follow-up chosen after this check")
+            outcome = self.storage.schedule_followup(task.deal_id, event, agent_set_date=chose, **options)
         except Exception as error:
-            self.progress.report(f"[follow-up] schedule not updated ({type(error).__name__})")
+            outcome = f"follow-up schedule not updated ({type(error).__name__})"
+        self.progress.report(f"[follow-up] {event}: {outcome}")
+        if outcome.startswith("paused") or outcome.startswith("follow-up schedule not updated"):
+            return {**(applied or {}), "followup": outcome}
+        return applied
 
     def _apply_deal_state(self, deal_id: str, state: dict) -> dict:
         """The deal state is saved with the turn; mark the deal lost in the CRM when the agent asked."""
@@ -499,17 +526,9 @@ class AccountManagerAgent:
                                           deal_state=None if handoff else result.deal_state,
                                           sms_messages=result.sms_messages)
                 result = replace(result, notes=updated)
-                if result.deal_state and not handoff:
-                    self.last_deal_state = self._apply_deal_state(task.deal_id, result.deal_state)
-                if task.turn_type == "follow_up" and not handoff:
-                    channel = "none"
-                    if result.convo_type == "followup" and result.has_draft():
-                        channel = (
-                            result.communication_channel
-                            if result.communication_channel != "none"
-                            else "email"
-                        )
-                    self._finish_followup(task.deal_id, channel)
+                if not handoff:
+                    applied = self._apply_deal_state(task.deal_id, result.deal_state) if result.deal_state else None
+                    self.last_deal_state = self._record_schedule(task, result, applied)
                 self.last_handoff = self._act_on_handoff(task, result, handoff_context)
                 if result.sample_update:
                     self.last_sample = {"update": self._sample_service().record_update(
@@ -1012,7 +1031,9 @@ class AccountManagerAgent:
             "`python /opt/sasha/sample_freshdesk.py` (show, sync, note, amend) per the samples "
             "skill before claiming tracking or updating logistics. "
             "Set deal_state, with your own reason, whenever this turn changes how Sasha should treat "
-            "the deal (opt-out, win-back, pause, a later check date, reactivation); otherwise null. "
+            "the deal (opt-out, win-back, pause, the next follow-up check, reactivation); otherwise null. "
+            "You alone schedule follow-ups: after outreach or a follow-up check, set next_check_on "
+            "(New York date and time, YYYY-MM-DDTHH:MM) or the schedule pauses. "
             "Return only the required Sasha result JSON object."
         )
 

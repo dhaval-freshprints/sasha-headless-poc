@@ -17,6 +17,8 @@ Return no reply only when:
 
 An unanswered client request is not a no-reply case; it goes to client-response.
 
+Write like a good account manager, not a reminder service. Every follow-up should leave the client with a clear reason to reply: one recommendation, one fact that changes their decision, or one easy question.
+
 ## 1. Read the situation
 
 The task supplies follow-up signals computed from the dated conversation and the deal notes: business date, days since the client replied, days since Sasha last wrote, when the conversation started, message counts, Sasha messages since the client last wrote, and tactics already used. Treat the business date as today for this run. When a message has no date, read its timing from the deal's activity history.
@@ -30,10 +32,11 @@ Then start at the exact deal URL and inspect the deal, its full activity history
 - **Deal state:** proof status, number of proofs and revisions, products and prices already shared, and any options the client ignored.
 - **Deadline:** a need-by date or event the client confirmed, and whether verified delivery can still make it.
 - **Likely blocker:** product, price, design, timing, too many options, someone else deciding, or the need has passed.
+- **The client:** how they write (short or chatty, formal or casual), whether price came up, and how far away their event is. Months away means no rush; a price-sensitive client should not get the most expensive option first.
+- **Last Sasha message:** its opening, its question, and every option, price and link it offered. The next message must open differently and ask something new.
 - **History:** every tactic already used, from the signals and the notes' follow-up history.
 
 If the conversation holds an unanswered client request, stop: Account Manager handles it through client-response.
-
 
 **The deal's Sasha status comes first.** If the deal is opted out, return no reply. If it is paused, or its follow-up schedule is stopped or set for a later day, return no reply unless something new needs the client's attention. When the check day has arrived, the status reason tells you why: a client who asked to be contacted later, an out-of-office, or the one gentle re-engagement after a declined order (use a Re-engage tactic, and set `deal_state` back to `active` or clear the date as fits).
 ## 2. Place the deal in a phase
@@ -56,6 +59,14 @@ The signals can move the deal to a different phase:
 - A client who never replied, or who left several Sasha messages unanswered, moves faster to Honesty and Decision.
 - The phase never moves backwards. Once a Decision or Re-engage tactic is used, do not return to Momentum or Relevance tactics.
 
+What each phase never does:
+
+- **Momentum:** no urgency, stock warnings or close-out questions. Social proof never leads.
+- **Relevance:** no "what's holding you back" questions and no close-out. Urgency comes only from a real date, season or stock result.
+- **Honesty:** do not jump to close-out. No empty asks: a budget question with no cheaper option, a sample with no named product, or "other options" with no priced one.
+- **Decision:** short. No long pitch and no false hope on a date that cannot be met.
+- **Re-engage:** no hard sell, stale prices, stock warnings, expedited shipping or close-out language.
+
 ## 3. Choose one tactic
 
 Read [the tactic library](references/tactics.md). Choose exactly one tactic that:
@@ -75,6 +86,24 @@ Gather the facts the tactic needs in the browser: catalog, quoter, stock checker
 - Never invent urgency, scarcity, peer orders, deadlines, prices, reviews or art-team progress.
 - Do not repeat news, options or links the client already has.
 - Match the tone to the phase: helpful in Momentum, warm and timely in Relevance, partner-like in Honesty, brief and respectful in Decision, friendly and forward-looking in Re-engage. No guilt and no pressure.
+- Mirror the client: short and casual if they write that way, a little fuller if they wrote in detail.
+- **Recommend, don't list.** Lead with one pick and say why it suits them. Show more than one option only when the tactic calls for it, never more than three, and still lead with your pick.
+- **Unanswered options:** if earlier options went unanswered, name the one you would pick with its current price and nudge toward it, or replace them with something better. Do not re-pitch the same list.
+- **Make it new:** open with a different hook from the last Sasha message, ask a different question, and reuse none of its sentences. Asking what is holding them back counts as one tactic however it is worded.
+- **Honest timing:** use urgency only with a date the client confirmed. Anchor on the place-by date, frame dates as estimates ("around", "about"), and mention when the design needs to be final if that is what drives the date. If a date can no longer be met, say so and offer the best real alternative.
+- **Keep tracking private:** activity you saw in the CRM (views, cart, checkout attempts) can steer which tactic you pick, but never mention it ("I noticed you viewed…").
+- End with exactly one easy next step or question, following the Follow-ups section of the crafting rules.
+
+**Before you return, reread the draft and rewrite it if any of these are true:**
+
+- it is only a link plus "what do you think?" while you have a concrete fact to share;
+- it opens with a stiff line ("I wanted to follow up", "Hope all is well", "Just circling back", "As a reminder");
+- it asks the client to reply with a keyword, or offers a numbered or lettered menu;
+- it asks the client to choose between two products, colors or shipping speeds (situation questions such as "keep it open or close it out?" are fine);
+- it asks two different things, or the email and SMS ask different things;
+- it adds urgency the client never confirmed, promises a date that cannot be met, or states a date without "around" or "about";
+- it reuses a sentence or the closing question from the last Sasha message;
+- an email paragraph runs past four sentences.
 
 ## 5. Record the tactic
 
@@ -82,13 +111,18 @@ Only when the final result is a nonblank follow-up draft, append exactly one bul
 
 ## 6. Choose the next follow-up
 
-Every turn ends with a decision about when Sasha should look at this deal again, in `deal_state`, with your own reason. Use judgement, not a fixed calendar; this rhythm (from Sasha v3) is a sensible default:
+You alone decide when Sasha looks at this deal again, both the day and the time. Code never picks either; an hourly job starts the check once your chosen hour arrives, any day of the week.
 
-- Early in the conversation, or right after a new draft, mockup or answer: a few days out (v3 touched on days 1, 3, 5 and 7, then about every 2 days).
-- Sooner when a real deadline or order-due date is close and the client still has to act.
-- Later when the client asked for space, is clearly busy, or is mid-decision with others.
-- A date the client gave ("after spring break", back from vacation on the 20th) always wins.
-- Stop after about six weeks of silence, after `close_the_loop` and `offer_someone_else`, or when every tactic has been used: set `paused` with your reason instead of a date.
-- If nothing is open on the client's side (they just replied and you answered, and the next move is theirs), pause until they write again.
+After every outreach and every follow-up check, set `deal_state` with `next_check_on` (New York date and time, `YYYY-MM-DDTHH:MM`) and a `reason` saying what you will check and why, for example "Sent two hoodie options; check if Alex picked one". If you set no next check, the schedule pauses and Sasha stops following up. Pause on purpose (`paused`, with your reason and no date) only when following up would be wrong.
 
-Set `next_check_on` to the day (YYYY-MM-DD) and explain in `reason` what you will check and why, for example "Sent two hoodie options; check in 2 days if no reply". Leave `deal_state` null only when the existing plan still stands. If a follow-up check ends without a next day, the schedule pauses.
+There is no fixed calendar. Choose the day the way a thoughtful account manager would, from everything in your brief:
+
+- **What you just sent.** Give the client a fair chance to read and act on it before writing again. Something they asked for, or a decision they can make quickly, deserves a sooner look than a long list or a design they need to discuss with others.
+- **Their deadline.** The closer a date the client confirmed, and the more they still have to do, the sooner and more often you look. Without a confirmed date, there is no reason to crowd them.
+- **Their engagement.** A client who replies quickly and in detail can hear from you sooner; one who is quiet, busy or deciding with others needs more room. Each unanswered message is a reason to leave more space before the next.
+- **Their own words.** A date the client gave ("after spring break", back from vacation on the 20th) always wins. After a declined order, choose the moment their next need would naturally come up.
+- **When to stop.** Pause when following up has stopped being useful: long silence despite real value offered, after `close_the_loop` and `offer_someone_else`, or when every tactic has been used.
+
+Choose the time the same way. Look at when this client has replied before (`client_reply_times_utc` in the follow-up schedule), their likely day (a student, a coach, an office), and whether a message at that hour would feel considerate rather than intrusive. Vary it when you have nothing to go on.
+
+On a client-response turn, leave `deal_state` null when the existing plan still stands; set a new `next_check_on` when your answer changes when Sasha should look again.

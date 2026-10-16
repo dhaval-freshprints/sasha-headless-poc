@@ -531,7 +531,8 @@ contacted later, one gentle re-engagement after a declined order, and v3's opt-o
 
 Each run shows the agent the deal's Sasha status with the reason saved when it was set. When a turn
 changes it, the agent returns `deal_state`: `status` (active, paused, opt_out or completed), its
-own `reason`, an optional `next_check_on` day, and an optional `crm_lost_reason`. Code saves it
+own `reason`, an optional `next_check_on` (the New York date and time of Sasha's next look,
+`YYYY-MM-DDTHH:MM`), and an optional `crm_lost_reason`. Code saves it
 in `sasha_deal_status` (with Sasha's reason in `status_reason`) and, when `crm_lost_reason` is set, marks the deal lost in
 the CRM through the v3 edit-deal API, as v3 did after a win-back question or a permanent opt-out.
 A client's answer to a win-back question on a lost deal still reaches Account Manager
@@ -539,11 +540,11 @@ A client's answer to a win-back question on a lost deal still reaches Account Ma
 
 One safety net stays in code: no draft is ever saved for a deal that is, or becomes, opted out.
 
-`next_check_on` (after spring break, after an out-of-office, 60 days after a declined order) is
+`next_check_on` (after spring break, after an out-of-office, after a declined order) is
 written to v3's `sasha_followup_schedule` as `next_followup_date` with Sasha's reason in
-`scheduled_followup_reason`, the row v3's follow-up cron reads. An opt-out, a win-back question or a
-completed order stops the schedule (`stopped` with `opted_out`, `opt_out_winback` or `completed`), as
-v3 does. Nothing in the POC starts the follow-up on that day yet; the cron will.
+`scheduled_followup_reason`, the row the follow-up job reads. An
+opt-out, a win-back question or a completed order stops the schedule (`stopped` with `opted_out`,
+`opt_out_winback` or `completed`). See [Follow-ups](#follow-ups) for how they are scheduled.
 
 Delivered-order notices from sales@ trigger one warm check-in through the internal-email skill.
 
@@ -591,25 +592,31 @@ open samples on opt-out.
 
 ## Follow-ups
 
-**Account Manager decides when.** After every turn (outreach, client response, internal update,
-follow-up) Sasha sets the next follow-up day with its own reason in `deal_state.next_check_on`,
-following "Choose the next follow-up" in the [follow-up skill](account_manager_agent/capabilities/followup/SKILL.md)
-(v3's rhythm is the default guidance, not a fixed calendar; a client's own date always wins). The day
-is written to v3's `sasha_followup_schedule` (`next_followup_date`, `scheduled_followup_reason`).
+**Account Manager decides when, down to the hour.** After outreach and every follow-up check Sasha
+sets `deal_state.next_check_on` (New York date and time) with its own reason, following
+"Choose the next follow-up" in the [follow-up skill](account_manager_agent/capabilities/followup/SKILL.md).
+There is no fixed calendar: Sasha weighs what it just sent, the client's deadline, engagement and
+reply times, and a client's own date always wins. Code never picks a day or a time. If one of those
+turns ends without a next check, the schedule pauses.
 
-**An hourly job runs them.** Every `FOLLOWUP_CHECK_SECONDS` (default 3600) the web app claims deals
-whose day has arrived (active schedule, deal not opted out or handed off) and starts a normal
-follow-up run for each, with today as the business date. It runs only when `sasha_settings` has
-`sasha_master_key=enabled` and `auto_followup_enabled=true`, Mon–Fri 8:00–17:00 New York. Claiming
-clears the date in the same transaction, so a follow-up never starts twice.
-`POST /api/followups/run-due?force=true` runs the check now (force skips only the hours check).
+Code keeps records in `sasha_followup_schedule` and shows them to Sasha: the first Sasha
+message, follow-ups sent (`followup_count`, `last_followup_timestamp`, channel) and the client's
+reply times (`client_reply_times_utc`).
+
+**An hourly job runs them**, at :15 every hour (`FOLLOWUP_CHECK_SECONDS` sets a fixed interval
+instead; 0 disables it). It runs only when `sasha_settings` has `sasha_master_key=enabled` and
+`auto_followup_enabled=true`, any day of the week. It claims deals due this hour (earlier days
+catch up; active schedule; not opted out or handed off; not already sent or claimed today in New
+York) and keeps the date, so a follow-up never starts twice in a day. A won or lost deal stops its
+schedule instead of running. If a run cannot start, the claim is released.
+`POST /api/followups/run-due?force=true` claims everything due today, whatever the hour.
 
 **In the follow-up run** Sasha gets follow-up signals (days since the client replied and since
 Sasha wrote, conversation age, message counts, tactics used) and why this follow-up was planned. It
-works out the phase itself; there is no stage. A drafted follow-up increments `followup_count`; if
-Sasha sets no next day, the schedule is paused. A handoff stops it (`stop_reason: handoff`).
+works out the phase itself; there is no stage. A handoff stops the schedule (`stop_reason: handoff`).
 
 **By hand:** open a deal and select **Follow-up check** with a business date (defaults to today).
+It skips the outreach duplicate guard, and won or lost deals are refused.
 Days since the client's reply are optional and override the conversation's own dates. The notes
 sidebar shows the existing notebook from the current environment's runs directory.
 

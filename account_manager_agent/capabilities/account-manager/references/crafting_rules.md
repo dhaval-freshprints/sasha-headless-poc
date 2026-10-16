@@ -18,7 +18,7 @@ Read the common rules before every draft, then the section for the selected work
 ### Structure and output
 
 - In email, keep each paragraph to four sentences or fewer. When a closing question is needed, put it on its own final line before the sign-off.
-- Return email in `message_html` as an HTML fragment, not Markdown or a complete HTML document. Use `<p>` for paragraphs, `<ul><li>` for two or more options, `<br>` in the sign-off, and `<a href="URL">` for links. Do not add styles or headings. For SMS, follow the SMS format below.
+- Return email in `message_html` as an HTML fragment, not Markdown or a complete HTML document. Use `<p>` for paragraphs, `<ul><li>` for two or more options (follow-ups lead with one pick; see Follow-ups), `<br>` in the sign-off, and `<a href="URL">` for links. Do not add styles or headings. For SMS, follow the SMS format below.
 - Keep a status update, such as a ready design or an order update, to two or three sentences: what changed, what it means for the client, and the next step if there is one.
 - Keep browser mechanics, tool names, internal status, and technical errors out of the client-facing message.
 - Never name Fresh Prints staff, team mailboxes, or internal systems and records such as HQ, tickets, or the word “deal.” Say “your design,” “your proof,” or “your order.”
@@ -106,6 +106,19 @@ Apply these rules after the client-response workflow has gathered the required f
 - Explain noticeable font substitutions, color changes, and reproduction or print-quality limitations when they affect the client's decision. Keep extraction commands, model names, and processing details out of the reply unless the client asks about the process; answer such questions honestly in plain language.
 - Give specific, honest design feedback grounded in the inspected proof. If lettering is hard to read or contrast is weak, name that issue and suggest a concrete improvement. Do not call a design perfect or print-ready without supporting checks, or imply an improvement was made when it is only a recommendation.
 - Ask for confirmation only when a real choice or unresolved detail requires the client's input. Do not automatically end every completed mockup update with “Does it look right?”
+
+## Follow-ups
+
+Apply these rules with the followup skill's tactic and craft guidance.
+
+- Open with `Hey [Name]!` when more than a day has passed, then go straight to the new thing: the pick, the fact or the date. No stiff openers ("I wanted to reach out", "I wanted to follow up", "Hope all is well", "Just circling back", "As a reminder", "Touching base") and no corporate filler ("leverage", "solutions", "at your earliest convenience", "please do not hesitate").
+- Say it the way the client would: "when you need them by", not "in-hands date"; "getting printed", not "in production"; "your design", not "the artwork file"; "a quote" before the order, "an invoice" only after.
+- End with exactly one call to action: specific, warm and easy to answer, with the question on its own line. Good: "Want me to get the [product] ready so you can order?" Not: "Let me know your thoughts."
+- Ask about the client's situation as an either/or when it helps ("Should I keep this open, or close it out for now?"). Never make them choose between two products, colors or shipping speeds in the question; recommend one instead.
+- No reply-with-a-keyword asks ("Reply YES") and no numbered or lettered menus.
+- Use "let me know" at most once.
+- Keep follow-ups short: an email is usually two short paragraphs plus the question, and a Decision-phase message is shorter. SMS follows the SMS format.
+- When the email and SMS are both generated, they make the same single ask.
 
 ## Outreach
 

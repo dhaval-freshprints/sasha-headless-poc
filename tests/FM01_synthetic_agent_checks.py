@@ -81,7 +81,7 @@ history = [
     {'role':'sasha', 'content_type':'text/html', 'content':'<p>Take your time discussing the Synthetic Cotton Tee with the club.</p>', 'delivery_status':'generated'},
 ]
 prior_notes = "## Current decisions\n- Stage 1 follow-up sent: curated_design_idea\n"
-TACTICS = re.findall(r"^\| `([a-z_]+)` \|", (ROOT / 'account_manager_agent/capabilities/followup/references/tactics.md').read_text(), re.MULTILINE)
+TACTICS = re.findall(r"^### `([a-z_]+)`$", (ROOT / 'account_manager_agent/capabilities/followup/references/tactics.md').read_text(), re.MULTILINE)
 exhausted = prior_notes + "".join(f"- Follow-up generated: {tactic}\n" for tactic in TACTICS if tactic != 'curated_design_idea')
 # Follow-up checks give (as_of_date, days_since_client_reply); the skill infers the phase from them.
 cases = [
@@ -91,7 +91,14 @@ cases = [
 ]
 cases += [
     ('event_passed', history, None, False, 'follow_up', ('2026-12-15', 40), prior_notes, 'Unknown.'),
-    ('empty_followup', [], None, False, 'no_reply', ('2026-10-13', None), prior_notes, 'Unknown.'),
+    # A follow-up check drafts even with no conversation yet.
+    ('empty_followup', [], None, False, 'follow_up', ('2026-10-13', None), prior_notes, 'Unknown.'),
+    # Options went unanswered from a price-sensitive client with no confirmed date: recommend, no false urgency.
+    ('ignored_options_price_sensitive', [
+        {'role':'client', 'content_type':'text', 'content':'Budget is tight for us, ideally around $15 a shirt. No rush, recruitment is in November.'},
+        {'role':'sasha', 'content_type':'text/html', 'delivery_status':'generated',
+         'content':'<p>Here are two navy tees for recruitment:</p><ul><li>Synthetic Cotton Tee, $18 each for 50 with screen print</li><li>Synthetic Heavy Tee, $21 each for 50 with screen print</li></ul><p>Which one feels closer?</p>'},
+    ], None, False, 'follow_up', ('2026-10-13', 6), prior_notes, 'Unknown.'),
     ('exhausted', history, None, False, 'no_reply', ('2026-10-13', 10), exhausted, 'Unknown.'),
     ('unanswered_client', [client], None, False, 'response', ('2026-10-13', 9), prior_notes, 'Unknown.'),
     ('message_during_followup', history, None, True, 'response', ('2026-10-13', 15), prior_notes, 'Unknown.'),
@@ -198,6 +205,22 @@ for name, history, message, additional, expected, follow_up, notes_text, sample_
     checks['prior_tactics_preserved'] = all(entry in after_entries for entry in before_entries)
     checks['new_tactic_count'] = len(after_entries) - len(before_entries) == (1 if expected == 'follow_up' else 0)
     if expected == 'follow_up':
+        # Follow-up review rules that can be checked without judgement.
+        email_text = re.sub(r'<[^>]+>', ' ', result.get('message_html', ''))
+        checks['no_stiff_opener'] = not re.search(
+            r"wanted to (reach out|follow up|check in)|hope (all is|you're|you are) well|circling back|"
+            r"as a reminder|touching base", reply, re.I)
+        checks['no_keyword_reply'] = not re.search(r"\b(reply|text|respond)( with)? [\"'“]?(yes|y|stop|1|2)\b", reply, re.I)
+        checks['no_numbered_menu'] = '<ol' not in reply and not re.search(r"(^|\n|<li>)\s*(\d|[a-c])[.)]\s", reply, re.I)
+        checks['one_question'] = email_text.count('?') <= 1 and sum(b['text'].count('?') for b in bubbles) <= 1
+        # The synthetic deal has no confirmed deadline and no stock result.
+        checks['no_false_urgency'] = not re.search(
+            r"\border by\b|hurry|last chance|running (out|low)|before it's too late|deadline", reply, re.I)
+        checks['no_bare_check_in'] = not re.search(r"just (checking|following) (in|up)", reply, re.I)
+        # Sasha alone schedules: a next check with a time, or a deliberate pause.
+        state = result.get('deal_state') or {}
+        checks['chose_next_check'] = bool(re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}", str(state.get('next_check_on') or ''))) \
+            or state.get('status') == 'paused'
         new = [entry for entry in after_entries if entry not in before_entries]
         checks['library_tactic_generated'] = len(new) == 1 and new[0].startswith('- Follow-up generated:') \
             and new[0].split(':', 1)[1].split()[0].strip('`') in TACTICS

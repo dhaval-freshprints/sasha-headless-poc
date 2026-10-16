@@ -58,6 +58,7 @@ SAMPLE_UPDATE_SCHEMA = _object({
 # The Account Manager's decision about the deal itself, in its own words.
 DEAL_STATE_SCHEMA = _object({
     "status": {"type": "string", "enum": ["active", "paused", "opt_out", "completed"]},
+    # next_check_on: the New York date and time Sasha chose for its next look (YYYY-MM-DDTHH:MM).
     "reason": TEXT, "next_check_on": TEXT, "crm_lost_reason": TEXT,
 })
 

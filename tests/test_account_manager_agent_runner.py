@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta
 from dataclasses import replace
 import json
 import tempfile
@@ -10,6 +11,7 @@ from unittest.mock import patch
 
 from account_manager_agent.attachments import Attachment, AttachmentSet
 from tests.database_helpers import MemoryStorage
+from sasha_database.messages import utc_now
 from tests.test_account_manager_agent_environment import APPLICATION_VALUES, application_environment
 from account_manager_agent.notes import (
     saved_attachment_urls, with_attachment_links,
@@ -1168,37 +1170,56 @@ class ManagedRunnerTests(unittest.TestCase):
     def test_pause_schedules_the_follow_up_without_crm_changes(self):
         runner, sessions, _, edits = self._crm_runner()
         state = {"status": "paused", "reason": "Asked to reconnect after spring break.",
-                 "next_check_on": "2027-03-22", "crm_lost_reason": ""}
+                 "next_check_on": "2027-03-22T10:30", "crm_lost_reason": ""}
         final = self._final_with(sessions, convo_type="client_response", message_html="<p>Sounds good!</p>",
                                  deal_state=state)
         with patch.object(sessions.items, "_final_item", return_value=final):
             runner.run(SashaTask("303839", "task-1", TASK_URL, "Can you reach out after spring break?"))
-        self.assertEqual(self.database.deal_state("303839")["followup"],
-                         {"status": "active", "next_followup_date": "2027-03-22",
-                          "scheduled_followup_reason": state["reason"]})
-        self.assertEqual(runner.last_deal_state["followup"], "scheduled for 2027-03-22")
+        followup = self.database.deal_state("303839")["followup"]
+        # 10:30 New York is 14:30 UTC after the March clock change; the reply time is recorded for the next choice.
+        self.assertEqual((followup["status"], followup["next_followup_date"], followup["scheduled_followup_reason"]),
+                         ("active", datetime(2027, 3, 22, 14, 30), state["reason"]))
+        self.assertEqual(len(followup["followup_metadata"]["inbound_response_timestamps"]), 1)
+        self.assertEqual(runner.last_deal_state["followup"], "scheduled for 2027-03-22T10:30 New York")
         self.assertEqual(edits, [])
 
-    def test_followup_turn_counts_the_draft_and_pauses_without_a_next_day(self):
+    def _followup_turn(self, message_html, deal_state=None, **task):
         runner, sessions, _, _ = self._crm_runner()
-        self.database.followups["303839"] = {"status": "active", "next_followup_date": None}
-        final = self._final_with(sessions, convo_type="followup", message_html="<p>Two new options</p>")
+        self.database.followups["303839"] = {"status": "active", "next_followup_date": datetime(2026, 10, 16, 14),
+                                             "first_message_timestamp": datetime(2026, 10, 1), "followup_count": 2}
+        final = self._final_with(sessions, convo_type="followup" if message_html else None,
+                                 message_html=message_html, deal_state=deal_state)
         with patch.object(sessions.items, "_final_item", return_value=final):
-            runner.run(SashaTask("303839", "task-1", TASK_URL, turn_type="follow_up", as_of_date="2026-10-16"))
-        followup = self.database.deal_state("303839")["followup"]
-        self.assertEqual((followup["followup_count"], followup["status"]), (1, "paused"))
+            runner.run(SashaTask("303839", "task-1", TASK_URL, **(task or {"turn_type": "follow_up",
+                                                                           "as_of_date": "2026-10-16"})))
+        return runner, self.database.deal_state("303839")["followup"]
 
-    def test_followup_turn_with_a_next_day_stays_scheduled(self):
-        runner, sessions, _, _ = self._crm_runner()
-        self.database.followups["303839"] = {"status": "active", "next_followup_date": None}
+    def test_followup_turn_counts_the_draft_and_pauses_without_a_next_check(self):
+        runner, followup = self._followup_turn("<p>Two new options</p>")
+        self.assertEqual((followup["followup_count"], followup["status"], followup["next_followup_date"]),
+                         (3, "paused", None))
+        self.assertEqual(runner.last_deal_state["followup"], "paused (no next check chosen)")
+
+    def test_followup_turn_with_a_next_check_stays_scheduled_at_the_chosen_time(self):
         state = {"status": "active", "reason": "Shared two options; check in 2 days.",
-                 "next_check_on": "2026-10-18", "crm_lost_reason": ""}
-        final = self._final_with(sessions, convo_type="followup", message_html="<p>Two new options</p>",
-                                 deal_state=state)
-        with patch.object(sessions.items, "_final_item", return_value=final):
-            runner.run(SashaTask("303839", "task-1", TASK_URL, turn_type="follow_up", as_of_date="2026-10-16"))
-        followup = self.database.deal_state("303839")["followup"]
-        self.assertEqual((followup["status"], followup["next_followup_date"]), ("active", "2026-10-18"))
+                 "next_check_on": "2026-10-18T09:15", "crm_lost_reason": ""}
+        _, followup = self._followup_turn("<p>Two new options</p>", state)
+        self.assertEqual((followup["status"], followup["next_followup_date"], followup["followup_count"]),
+                         ("active", datetime(2026, 10, 18, 13, 15), 3))
+
+    def test_unsent_followup_without_a_next_check_pauses_without_counting(self):
+        _, followup = self._followup_turn("")
+        self.assertEqual((followup["followup_count"], followup["status"]), (2, "paused"))
+
+    def test_client_reply_keeps_the_plan_and_records_the_reply_time(self):
+        _, followup = self._followup_turn("<p>Navy it is!</p>", client_message="Navy please")
+        self.assertEqual((followup["status"], followup["next_followup_date"]), ("active", datetime(2026, 10, 16, 14)))
+        self.assertEqual(len(followup["followup_metadata"]["inbound_response_timestamps"]), 1)
+
+    def test_a_check_needs_a_time_not_just_a_day(self):
+        from sasha_database.storage import validate_deal_state
+        with self.assertRaisesRegex(ValueError, "date and time"):
+            validate_deal_state({"status": "active", "reason": "x", "next_check_on": "2026-10-18"})
 
     def _sample_runner(self, placed=True):
         runner, sessions, sandboxes = self._make_runner([])

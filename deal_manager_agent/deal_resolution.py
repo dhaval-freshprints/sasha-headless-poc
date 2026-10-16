@@ -36,7 +36,7 @@ from .deal_queries import (
     pick_canonical_deal_id, positive_int, proof_ids_for_deal, sasha_status, sasha_user_id,
 )
 
-Workflow = Literal["client_response", "outreach", "internal_email"]
+Workflow = Literal["client_response", "outreach", "internal_email", "follow_up"]
 LOST_REASON = "Merged multi-deal client — proofs consolidated to deal {canonical}"
 DUPLICATE_LOST_REASON = "Duplicate deal — Zap created multiple deals for same proof"
 DEFAULT_DUPLICATE_RECENCY_DAYS = 45  # v3 DUPLICATE_DEAL_RECENCY_DAYS default
@@ -227,6 +227,8 @@ class DealResolver:
                     return _not_active(db, incoming, deal, workflow)
                 if workflow == "internal_email":  # Team mail never merges deals or writes to the CRM.
                     return Resolution("proceed", "internal_email_active_deal", str(incoming))
+                if workflow == "follow_up":  # A follow-up check never merges deals.
+                    return Resolution("proceed", "follow_up_active_deal", str(incoming))
                 if len(active) == 1:
                     return Resolution("proceed", "single_active_deal", str(incoming))
                 latest = latest_outbound_by_deal(db, active)
@@ -282,6 +284,9 @@ class DealResolver:
 
 def _not_active(db, incoming: int, deal: dict, workflow: Workflow) -> Resolution:
     stage = str(deal["stage"] or "").strip().lower()
+    if workflow == "follow_up" and stage in {"won", "lost"}:
+        # No follow-up on a won or lost deal; the scheduler stops its follow-ups.
+        return Resolution("skipped", f"deal_{stage}", str(incoming))
     if workflow != "outreach" and stage == "won":
         return Resolution("proceed", f"incoming_deal_won_{workflow}", str(incoming))
     # As in v3: after a win-back question the deal is lost in the CRM and paused for Sasha;

@@ -2,7 +2,7 @@
 
 How a good account manager decides whether to write at all, and what the client's words mean for the deal. Use your own judgement; nothing here is a keyword rule. Read the whole conversation, not just the last line.
 
-The task includes this deal's Sasha status, with the reason saved when it was set, and its follow-up schedule (when Sasha will look at the deal again and why, or why follow-ups stopped). Read it before deciding anything. `next_check_on` in `deal_state` sets that follow-up day.
+The task includes this deal's Sasha status, with the reason saved when it was set, and its follow-up schedule (when Sasha will look at the deal again and why, or why follow-ups stopped). Read it before deciding anything. `next_check_on` in `deal_state` (a New York date and time, `YYYY-MM-DDTHH:MM`) sets that follow-up; you alone choose it (see [choosing the next follow-up](../../followup/SKILL.md)).
 
 ## Silence is a valid answer
 
@@ -26,7 +26,7 @@ Decide what the client is telling you and record it in `deal_state`, in your own
 | wants to stop hearing from us, or is leaving | follow [the win-back guide](../../winback/SKILL.md) | `paused` after a win-back question, otherwise `opt_out` |
 | asks you to come back later ("after spring break", "next month") | a short, natural acknowledgement when one fits | `paused`, `next_check_on` that day |
 | is out of office until a date | no reply | `active`, `next_check_on` the day after they return |
-| declines this order but is not leaving ("we're not doing merch this term") | a kind, short reply that leaves the door open, with no pitch | `paused`, `next_check_on` about 60 days out, for one gentle re-engagement |
+| declines this order but is not leaving ("we're not doing merch this term") | a kind, short reply that leaves the door open, with no pitch | `paused`, `next_check_on` when their next need would naturally come up, for one gentle re-engagement |
 | answers a win-back question or comes back after a pause | handle it like any client message | `active` |
 | replied, you answered, and the next move is theirs | your answer | `active` with a `next_check_on` if a gentle check-in would help them decide, otherwise `paused` until they write |
 | ordered, and the order is done | answer real questions; no re-pitch or checkout links | `completed` when nothing is left to do |

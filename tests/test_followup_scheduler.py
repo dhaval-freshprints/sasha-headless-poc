@@ -5,6 +5,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from tests.database_helpers import MemoryStorage
@@ -73,10 +74,35 @@ class SchedulerTests(unittest.TestCase):
                 self.assertIn("disabled", result["skipped"])
         self.assertEqual(self.manager.list_all(), [])
 
-    def test_waits_for_client_hours_unless_forced(self):
-        self.assertIn("client hours", self.run_due(now=SATURDAY)["skipped"])
-        self.assertEqual(len(self.run_due(now=SATURDAY, force=True)["started"]), 1)
+    def test_runs_on_weekends_and_catches_up_overdue_days(self):
+        self.assertEqual([item["deal_id"] for item in self.run_due(now=SATURDAY)["started"]], ["101"])
         self.wait()
+
+    def test_waits_for_the_scheduled_hour_unless_forced(self):
+        early = datetime(2026, 10, 14, 12, 0, tzinfo=timezone.utc)  # 08:00 ET; due 10:00 ET
+        self.assertEqual(self.run_due(now=early)["started"], [])
+        self.assertEqual(len(self.run_due(now=early, force=True)["started"]), 1)
+        self.wait()
+
+    def test_claimed_once_per_day_and_released_when_the_run_cannot_start(self):
+        with patch.object(self.manager, "submit", side_effect=RuntimeError("queue down")):
+            with self.assertRaises(RuntimeError):
+                self.run_due()
+        self.assertEqual([item["deal_id"] for item in self.run_due()["started"]], ["101"])
+        self.assertEqual(self.run_due()["started"], [])
+        self.wait()
+
+    def test_won_or_lost_deals_stop_instead_of_running(self):
+        class Resolver:
+            def resolve(self, deal_id, workflow):
+                assert workflow == "follow_up"
+                return SimpleNamespace(status="skipped", reason="deal_won", to_dict=dict)
+
+        result = run_due_followups(self.manager, self.deals, Settings(ENABLED), now=WEDNESDAY_11_ET,
+                                   resolver=Resolver())
+        self.assertEqual((result["started"], result["stopped"]), ([], [{"deal_id": "101", "reason": "deal_won"}]))
+        self.assertEqual((self.database.followups["101"]["status"], self.database.followups["101"]["stop_reason"]),
+                         ("stopped", "won"))
 
     def test_paused_deal_with_a_planned_check_still_runs(self):
         self.database.statuses["101"] = "paused"
