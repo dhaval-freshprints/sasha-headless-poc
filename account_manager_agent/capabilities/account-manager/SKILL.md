@@ -18,13 +18,21 @@ Use only the supplied database conversation history and incoming client messages
 4. If history exists without a new message, inspect it for an unanswered client request. Use the client-response skill only when a request remains unanswered. A saved nonblank Sasha draft counts as an already handled response in this local simulation, even though its delivery status is generated. Never describe that draft as sent.
 5. For a follow-up check (scheduled on a day chosen earlier, or started by hand) with nonblank history and no unanswered client request, use [followup](../followup/SKILL.md). It reads the timing, engagement and deal state, then picks one unused tactic that gives the client new value. If none fits, return no reply. Follow-up checks authorize read-only research and a draft, not CRM changes.
 6. On ordinary runs, when there is nothing to answer, return no reply. This includes a prior outreach draft awaiting the client, a handled conversation with no new request, and an acknowledgement with nothing outstanding. Only an explicit follow-up check permits a proactive follow-up. Otherwise do not draft proactive follow-ups or repeat an existing answer. Notes alone do not create a follow-up obligation.
-7. Reconsider the action whenever an additional client or team message arrives. If you were preparing outreach or a follow-up, address the incoming request in the same session. Use the common crafting rules and the section for the final action and discard superseded drafts and any newly proposed follow-up history entry.
+7. Reconsider the action and reply channel whenever an additional client or team message arrives. If you were preparing outreach or a follow-up, address the incoming request in the same session. Use the common crafting rules and the section for the final action and discard superseded email and SMS drafts and any newly proposed follow-up history entry.
 
 Before replying, read the deal's Sasha status and use [conversation and deal state rules](references/conversation_and_deal_state_rules.md) to decide whether to write at all and what the client's words mean for the deal, including opt-outs and the [win-back](../winback/SKILL.md), pauses, out-of-office replies and declined orders. Record any change in `deal_state` with your own reason, including when Sasha should look at the deal again (see [choosing the next follow-up](../followup/SKILL.md)); a follow-up only happens on a day you chose. Never write to a client whose deal is opted out.
 
 Account Manager owns the handoff decision. When handling a client message or a follow-up check, judge whether a person should take over using the criteria in [handoff](../handoff/SKILL.md), then follow that skill's procedure if needed. A handoff replaces the normal reply.
 
-No reply is a successful result with `status: "completed"`, `message_html: ""`, and empty failure fields. Update the deal notebook as instructed, but do not invent a message or perform unnecessary browser actions. A real blocker is a failure, not a no-reply decision.
+No reply is a successful result with `status: "completed"`, `communication_channel: "none"`, `message_html: ""`, `sms_messages: []`, `convo_type: null`, and empty failure fields. Update the deal notebook as instructed, but do not invent a message or perform unnecessary browser actions. A real blocker is a failure, not a no-reply decision. Failed results also leave both drafts empty and use channel `none`.
+
+## Choose the reply channel
+
+Choose `communication_channel` yourself from the conversation and overall context: `email`, `sms`, or `both`. Consider the client's stated preferences, the channels they use, their current request, and what this reply needs to communicate. The latest inbound channel is evidence, not an automatic routing rule. Use both when the context warrants both. Initial outreach always produces both email and SMS; no-reply and opt-out rules still take precedence.
+
+This applies to client responses, outreach, follow-ups, internal-update notifications, win-back replies, and handoff holding messages. A team email does not determine the client's reply channel; use the client's conversation. Reconsider your choice when additional messages arrive.
+
+Generate each chosen version directly from the same verified context in this turn. Return email HTML in `message_html` and ordered SMS bubbles in `sms_messages`. For email-only, use `sms_messages: []`; for SMS-only, use `message_html: ""`; for both, fill both fields. Keep facts, commitments, and next steps consistent across channels. Follow Crafting Rules for each format.
 
 The account-manager rules govern all specialized skills. Read [shared sales rules](references/sales_rules.md) for every action, and [the samples guide](../samples/SKILL.md) whenever a sample comes up. Use their sales rules for the work you choose, and read the common crafting rules and the section relevant to that work.
 
@@ -39,7 +47,7 @@ This capability belongs only to Account Manager. Use it for client responses, fo
 3. Use the helper's returned `url` exactly as the customer-facing link. It is evidence obtained during this run and is the explicit exception to browser-only URL sourcing. Do not substitute the internal CRM proof URL or manually construct a customer URL. The same customer URL serves proof viewing and checkout.
 4. Before presenting it as an order link, use browser checks to confirm the proof is complete and the requested quantity, stock, and enabled delivery option meet the client's constraints. A link being generated does not establish checkout readiness. A pending proof can have a status link; say it is still in progress, never ready to view or order.
 5. Generate one link per relevant proof, even when it contains several items. Regenerate when needed in a later turn; do not reuse old login links from history or notes. A missing login value produces a plain URL with `login_included: false`; use it without promising automatic login.
-6. If the helper returns an error and the reply requires the link, return `status: failed`, empty `message_html`, `failure_code: customer_link_unavailable`, and a short explanation for review. Do not guess a URL or substitute a CRM link. Replies that need no customer link do not require this helper.
+6. If the helper returns an error and the reply requires the link, return `status: failed`, `communication_channel: none`, empty `message_html` and `sms_messages`, `failure_code: customer_link_unavailable`, and a short explanation for review. Do not guess a URL or substitute a CRM link. Replies that need no customer link do not require this helper.
 
 Only run the fixed helper for link data. The other permitted database operation is the promo skill's read-only lookup through `python /opt/sasha/database.py`; follow its scoped queries for the current deal's promo. Keep other sales research in the browser. Do not inspect database credentials or print the stored login value separately. Keep authenticated links out of the deal notebook; include them only where needed in the draft. Do not open the customer login link in the staff browser: continue verifying facts on the CRM proof.
 
@@ -63,7 +71,7 @@ Only run the fixed helper for link data. The other permitted database operation 
 7. A question such as “What if?” authorizes investigation only. Do not persist a change unless the client clearly asked for that change.
 8. After an authorized write, reopen or reread the affected record and confirm the requested state. A click, toast, or closed dialog is not enough.
 9. Never send the drafted message, purchase anything, delete CRM records, or do unrelated work.
-10. Disconnect from the browser and return the required Sasha result JSON. The `message_html` is a draft for another system to use; do not send it yourself.
+10. Disconnect from the browser and return the required Sasha result JSON. Both `message_html` and `sms_messages` are drafts for another system to use; do not send them yourself.
 
 ## Reply crafting
 

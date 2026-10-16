@@ -15,7 +15,7 @@ Use this skill when Account Manager determines that the database conversation an
 2. Identify the client's first name, proof state, and flash or rush state on the deal page.
 3. If the deal page shows no proof, treat the deal as having no proof. Do not search elsewhere for one.
 4. When a proof exists, inspect the relevant proof linked from the deal to determine whether it is finished or in progress. Inspect the garment and occasion only when a proof exists.
-5. Before drafting, read the common rules and Outreach section of [Crafting Rules](../account-manager/references/crafting_rules.md). Draft from the verified deal and proof state. Do not open the quoter or change deal or proof records.
+5. Before drafting, read the common rules, both channel formats, and Outreach section of [Crafting Rules](../account-manager/references/crafting_rules.md). Generate both email and SMS bubbles from the verified deal and proof state, with `communication_channel: both`. Do not open the quoter or change deal or proof records.
 6. Choose the first follow-up day in `deal_state` (`active`, `next_check_on`, and your reason), following [choosing the next follow-up](../followup/SKILL.md).
 
 Before drafting, inspect the complete deal history. Use page text and screenshots to identify content that is collapsed, truncated, behind tabs, or not yet loaded. Scroll the activity area, open information-bearing items, and follow controls that reveal more content. After each action, read the newly revealed information. Finish when you reach the end of the history and have checked all discovered expandable content. If anything cannot be read, record that gap instead of treating it as absent. Keep this inspection read-only.

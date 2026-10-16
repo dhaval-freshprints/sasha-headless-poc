@@ -23,6 +23,7 @@ from .notes import prepare_notes, saved_attachment_urls
 from .pricing import CostEstimate, CostReporter, estimate_cost
 from .progress import ProgressReporter
 from .sandbox import DockerSandbox, SandboxConfig
+from .sms_links import shorten_sms_messages
 from .samples.broker import SampleFreshdeskBroker
 from .task import SASHA_RESULT_JSON_SCHEMA, SashaResult, SashaTask
 
@@ -299,11 +300,11 @@ class AccountManagerAgent:
             return {"status": status, "reason": reason, "offer": None,
                     "offer_error": f"Offers unavailable ({type(error).__name__})"}
 
-    def _finish_followup(self, deal_id: str, drafted: bool) -> None:
+    def _finish_followup(self, deal_id: str, channel: str) -> None:
         """Count a drafted follow-up; if Sasha chose no next follow-up day, pause the schedule."""
         try:
-            if drafted:
-                self.storage.record_followup_sent(deal_id)
+            if channel != "none":
+                self.storage.record_followup_sent(deal_id, channel)
             self.storage.pause_followups(deal_id, "No next follow-up chosen after this check")
         except Exception as error:
             self.progress.report(f"[follow-up] schedule not updated ({type(error).__name__})")
@@ -358,7 +359,8 @@ class AccountManagerAgent:
         self.progress.report(f"[sample] {outcome}")
         if outcome["placed"]:
             return result
-        return replace(result, status="failed", failure_code="sample_not_placed",
+        return replace(result, status="failed", message_html="", sms_messages=[],
+                       communication_channel="none", convo_type=None, failure_code="sample_not_placed",
                        failure_message=f"The sample was not placed: {outcome['reason']}")
 
     def _act_on_handoff(self, task: SashaTask, result: SashaResult, context: dict) -> dict | None:
@@ -467,11 +469,13 @@ class AccountManagerAgent:
                 raise self.persistence_error
             if handoff_context and result.status != "failed":
                 # A person owns this deal: Sasha never writes to the client or hands off again.
-                result = replace(result, status="completed", message_html="", convo_type=None, deal_state=None)
+                result = replace(result, status="completed", message_html="", sms_messages=[],
+                                 communication_channel="none", convo_type=None, deal_state=None)
             opted_out = deal_state["status"] == "opt_out" or (result.deal_state or {}).get("status") == "opt_out"
             if opted_out and result.status != "failed":
                 # Safety net for consent: nothing is ever drafted to a client who opted out.
-                result = replace(result, status="completed", message_html="", convo_type=None)
+                result = replace(result, status="completed", message_html="", sms_messages=[],
+                                 communication_channel="none", convo_type=None)
             if result.sample_request and result.status != "failed":
                 result = self._place_sample(task, result, handoff_context)
             if result.status in {"completed", "handoff"}:
@@ -480,16 +484,20 @@ class AccountManagerAgent:
                     *saved_attachment_urls(notes), *task.file_urls, *self.additional_attachment_urls,
                 ]))
                 updated = prepare_notes(notes, result.notes, urls,
-                                        result.convo_type == "followup" and not handoff)
+                                        result.convo_type == "followup" and result.has_draft() and not handoff)
+                if result.sms_messages:
+                    result = replace(result, sms_messages=shorten_sms_messages(result.sms_messages, self.progress.report))
                 self.storage.complete_run(task.deal_id, task.run_id, notes, updated,
                                           result.message_html, result.convo_type,
                                           handoff_reason=result.handoff_reason if handoff else None,
-                                          deal_state=None if handoff else result.deal_state)
+                                          deal_state=None if handoff else result.deal_state,
+                                          sms_messages=result.sms_messages)
                 result = replace(result, notes=updated)
                 if result.deal_state and not handoff:
                     self.last_deal_state = self._apply_deal_state(task.deal_id, result.deal_state)
                 if task.turn_type == "follow_up" and not handoff:
-                    self._finish_followup(task.deal_id, bool(result.message_html.strip()))
+                    channel = result.communication_channel if result.convo_type == "followup" else "none"
+                    self._finish_followup(task.deal_id, channel)
                 self.last_handoff = self._act_on_handoff(task, result, handoff_context)
                 if result.sample_update:
                     self.last_sample = {"update": self._sample_service().record_update(

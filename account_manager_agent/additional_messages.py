@@ -79,6 +79,7 @@ def additional_message_prompt(message: dict) -> str:
         "Reconcile this new client message with the earlier request, including any corrections. "
         "Use account-manager to reconsider the required action, even if you were preparing "
         "outreach or a follow-up. Address the new request instead of returning an outdated draft. "
+        "Reconsider email, SMS, or both from the updated context and replace both superseded drafts. "
         "Discard any newly proposed follow-up tactic entry for superseded work. "
         "Return the required Sasha result JSON. "
         "Update the deal notebook before finishing.\n"

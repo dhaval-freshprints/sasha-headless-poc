@@ -11,9 +11,19 @@ import sys
 DATABASE_SCRIPTS = Path(__file__).resolve().parents[2] / 'deal-manager-database' / 'scripts'
 sys.path.insert(0, str(DATABASE_SCRIPTS))
 from database import connect, read_query, configured_schemas, quote_schema
+from sasha_database.messages import conversation_body
 from dotenv import load_dotenv
 
 DEAL_COLUMNS = 'id, title, client_id, account_id, manager_id, stage, created_at, deleted_at, order_due_date'
+
+
+def add_body_excerpt(row):
+    if 'body' not in row:
+        return
+    body = conversation_body(row)
+    row.pop('body')
+    row['body_excerpt'] = body[:1200]
+    row['body_truncated'] = len(body) > 1200
 
 
 def normalize_email(value):
@@ -89,6 +99,8 @@ class EvidenceCollector:
             self.warnings.append(f'{query_id}: {source}: query failed ({type(error).__name__}); investigation incomplete')
             self.observations.append({'query_id': query_id, 'source': source, 'error_type': type(error).__name__})
             return []
+        for row in result['rows']:
+            add_body_excerpt(row)
         self.observations.append({'query_id': query_id, 'source': source, **result})
         if result['truncated']:
             self.warnings.append(f'{query_id}: {source}: results truncated; uniqueness is unproven')
@@ -112,8 +124,8 @@ class EvidenceCollector:
     def lookup_history(self, column, value, source, current_message=False):
         # Column names are fixed by the call sites, never supplied by message text.
         sql = f'''SELECT id,deal_id,convo_type,direction,sender_name,message_type,
-                  external_message_id,external_thread_id,subject,LEFT(body,1200) AS body_excerpt,
-                  CHAR_LENGTH(body)>1200 AS body_truncated,delivery_status,message_timestamp,created_at
+                  external_message_id,external_thread_id,subject,body,
+                  delivery_status,message_timestamp,created_at
                   FROM {self.history} WHERE {column}=%s AND message_type=%s AND deleted_at IS NULL'''
         parameters = [value, self.message['channel']]
         if not current_message:
@@ -149,8 +161,7 @@ class EvidenceCollector:
         slots = ','.join(['%s'] * len(senders))
         prior_sql, prior_parameters = self.prior_history_filter()
         self.query('prior_sender_conversation', f'''SELECT id,deal_id,sender_name,direction,
-                   message_type,convo_type,subject,LEFT(body,1200) AS body_excerpt,
-                   CHAR_LENGTH(body)>1200 AS body_truncated,external_message_id,
+                   message_type,convo_type,subject,body,external_message_id,
                    external_thread_id,message_timestamp,created_at
                    FROM {self.history} WHERE sender_name IN ({slots}) AND message_type=%s
                    AND direction='INBOUND' AND deleted_at IS NULL {prior_sql}
@@ -266,7 +277,7 @@ class EvidenceCollector:
             prior_sql, prior_parameters = self.prior_history_filter()
             self.query('candidate_prior_conversation', f'''SELECT id,deal_id,direction,sender_name,
                        message_type,convo_type,subject,delivery_status,
-                       LEFT(body,1200) AS body_excerpt,CHAR_LENGTH(body)>1200 AS body_truncated,
+                       body,
                        external_message_id,external_thread_id,message_timestamp,created_at
                        FROM {self.history} WHERE deal_id=%s AND deleted_at IS NULL {prior_sql}
                        ORDER BY COALESCE(message_timestamp,created_at) DESC,id DESC''',

@@ -20,8 +20,19 @@ def _entry_date(entry: dict[str, Any]) -> date | None:
 
 
 def _nonblank(history) -> list[dict[str, Any]]:
-    return [entry for entry in history
-            if entry.get("role") in ("client", "sasha") and str(entry.get("content") or "").strip()]
+    entries = []
+    sasha_runs = set()
+    for entry in history:
+        if entry.get("role") not in ("client", "sasha") or not str(entry.get("content") or "").strip():
+            continue
+        run_id = entry.get("run_id") if entry["role"] == "sasha" else None
+        # Email and SMS from the same run represent one attempt to reach the client.
+        if run_id and run_id in sasha_runs:
+            continue
+        if run_id:
+            sasha_runs.add(run_id)
+        entries.append(entry)
+    return entries
 
 
 def follow_up_signals(

@@ -119,6 +119,13 @@ cases += [
     ('no_handoff_price_question', history, 'What is the price for 40 of these tees?', False,
      'response_any', None, prior_notes, 'Unknown.'),
 ]
+for channel, request in (
+    ('sms', 'Channel: SMS\nFrom: +12025550123\n\nPlease reply only by text. Which garment and color were we discussing?'),
+    ('email', 'Please reply only by email. Which garment and color were we discussing?'),
+    ('both', 'Please give me both an email and a text reply. Which garment and color were we discussing?'),
+):
+    cases.append((f'{channel}_reply', history, request, False, f'channel:{channel}',
+                  None, prior_notes, 'Unknown.'))
 selected = set(sys.argv[1:])
 if selected:
     cases = [case for case in cases if case[0] in selected]
@@ -155,7 +162,8 @@ for name, history, message, additional, expected, follow_up, notes_text, sample_
             runner.submit_message('FM01_first_inbound', question)
     worker.join()
     result = outputs[0].to_dict() if outputs else {'status':'failed','failure_message':str(errors)}
-    reply = result.get('message_html', '')
+    bubbles = result.get('sms_messages', [])
+    reply = '\n'.join([result.get('message_html', ''), *(bubble['text'] for bubble in bubbles)])
     if expected.startswith('handoff:'):
         # The reason is the agent's own words; read it in the results for the expected situation.
         checks = {'handed_off': result['status'] == 'handoff',
@@ -166,6 +174,19 @@ for name, history, message, additional, expected, follow_up, notes_text, sample_
         checks['answers_sample_question'] = 'sample' in reply.lower() and ('blank' in reply.lower() or 'unprinted' in reply.lower() or 'not printed' in reply.lower())
     if expected == 'outreach':
         checks['introduces_sasha'] = 'sasha' in reply.lower() and 'account manager' in reply.lower()
+        checks['both_channels'] = result.get('communication_channel') == 'both' and bool(bubbles) and bool(result.get('message_html'))
+    if expected.startswith('channel:'):
+        checks['chosen_channel'] = result.get('communication_channel') == expected.split(':')[1]
+        checks['answers_current_question'] = 'navy' in reply.lower() and 'tee' in reply.lower()
+    if bubbles:
+        categories = ['core_response', 'additional_resources', 'status_warning', 'cta']
+        order = [categories.index(bubble['category']) for bubble in bubbles]
+        checks['bubble_order'] = order == sorted(order)
+        checks['plain_text_bubbles'] = all(not re.search(r'<[a-z/][^>]*>', bubble['text'], re.I) for bubble in bubbles)
+        # These synthetic replies contain no abbreviations; ignore URLs before counting sentences.
+        sentence_counts = [len([part for part in re.split(r'[.!?](?:\s+|$)', re.sub(r'https?://\S+', '', bubble['text'])) if part.strip()])
+                           for bubble in bubbles]
+        checks['short_bubbles'] = all(count <= 3 for count in sentence_counts) and sum(sentence_counts) <= 5
     before_entries = follow_up_entries(notes_text)
     after_entries = follow_up_entries(storage.load_notes(DEAL))
     checks['prior_tactics_preserved'] = all(entry in after_entries for entry in before_entries)
