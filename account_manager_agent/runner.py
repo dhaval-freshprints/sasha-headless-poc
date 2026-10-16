@@ -12,7 +12,12 @@ from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable
 
-from .attachments import AttachmentSet, fetch_to_directory, restore_saved_attachments
+from .attachments import (
+    AttachmentSet,
+    artwork_quality_guidance,
+    fetch_to_directory,
+    restore_saved_attachments,
+)
 from sasha_database.storage import SashaStorage
 from sasha_database.connection import DatabaseError
 from sasha_database.messages import IncomingMessage, incoming_message, join_messages
@@ -24,6 +29,7 @@ from .pricing import CostEstimate, CostReporter, estimate_cost
 from .progress import ProgressReporter
 from .sandbox import DockerSandbox, SandboxConfig
 from .sms_links import shorten_sms_messages
+from .artwork import ArtworkExtractBroker, ArtworkSettings
 from .samples.broker import SampleFreshdeskBroker
 from .task import SASHA_RESULT_JSON_SCHEMA, SashaResult, SashaTask
 
@@ -496,7 +502,13 @@ class AccountManagerAgent:
                 if result.deal_state and not handoff:
                     self.last_deal_state = self._apply_deal_state(task.deal_id, result.deal_state)
                 if task.turn_type == "follow_up" and not handoff:
-                    channel = result.communication_channel if result.convo_type == "followup" else "none"
+                    channel = "none"
+                    if result.convo_type == "followup" and result.has_draft():
+                        channel = (
+                            result.communication_channel
+                            if result.communication_channel != "none"
+                            else "email"
+                        )
                     self._finish_followup(task.deal_id, channel)
                 self.last_handoff = self._act_on_handoff(task, result, handoff_context)
                 if result.sample_update:
@@ -526,9 +538,14 @@ class AccountManagerAgent:
             task.deal_id,
             service_factory=self._sample_service,
         )
+        artwork_broker = ArtworkExtractBroker(
+            handle.workspace_directory,
+            ArtworkSettings.from_environment(),
+        )
 
         try:
             sample_broker.start()
+            artwork_broker.start()
             files = AttachmentSet()
             if task.file_urls:
                 self.progress.report(f"      Downloading {len(task.file_urls)} client file(s)")
@@ -636,6 +653,7 @@ class AccountManagerAgent:
             if self.additional_messages is not None:
                 self.additional_messages.close()
             sample_broker.stop()
+            artwork_broker.stop()
             self.progress.report("[7/7] Saving artifacts and cleaning up")
             cleanup = self._clean_up(
                 sandbox,
@@ -905,17 +923,19 @@ class AccountManagerAgent:
                 f"- {item.handle}: {item.name} ({item.size} bytes), "
                 f"/workspace/client-files/{item.path.name} "
                 f"({'saved attachment' if item.from_previous_turn else 'new attachment'})"
+                + (f"; {item.inspection.describe()}" if item.inspection else "")
                 for item in files.items
             )
             file_data = (
                 "These artwork files are available for this turn, including any "
                 "restored attachments from earlier turns on this deal. "
-                "Use only these paths, or an artwork file recreated from them with "
+                "Use only these paths, or an artwork file produced next to them by "
                 "/opt/sasha/extract_artwork.py, for uploads; do not fetch a remote URL.\n"
                 f"{file_lines}\n"
-                "When artwork is needed, use Playwright's setInputFiles on the "
-                "Design Tool input identified by upload-file-input, then inspect "
-                "the preview and canvas before saving.\n\n"
+                f"{artwork_quality_guidance(ArtworkSettings.from_environment())}\n"
+                "When artwork is needed, use Playwright's setInputFiles with a literal "
+                "path under /workspace/client-files on the Design Tool input identified "
+                "by upload-file-input, then inspect the preview and canvas before saving.\n\n"
             )
         if files is not None and files.unavailable_names:
             file_data += (

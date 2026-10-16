@@ -248,14 +248,15 @@ class SashaStorage:
                                    f"WHERE deal_id IN ({placeholders})", deal_ids)
         return deal_ids
 
-    def record_followup_sent(self, deal_id: str) -> None:
+    def record_followup_sent(self, deal_id: str, channel: str = "email") -> None:
         """A follow-up draft was generated (v3 update_after_send)."""
+        channel = channel if channel in {"email", "sms", "both"} else "email"
         with self.transaction(self.settings) as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
                     "UPDATE sasha_followup_schedule SET followup_count=followup_count+1,"
-                    "last_followup_timestamp=%s,last_channel_used='email' WHERE deal_id=%s",
-                    (utc_now(), validate_deal_id(deal_id)))
+                    "last_followup_timestamp=%s,last_channel_used=%s WHERE deal_id=%s",
+                    (utc_now(), channel, validate_deal_id(deal_id)))
 
     def pause_followups(self, deal_id: str, reason: str) -> None:
         """No next follow-up was chosen: pause, keeping the reason, unless already stopped."""
@@ -313,9 +314,10 @@ class SashaStorage:
                      delivery_status, external_thread_id, utc_now()))
 
     def complete_run(self, deal_id, run_id, previous_notes, notes, message_html, convo_type,
-                     handoff_reason=None, deal_state=None):
+                     handoff_reason=None, deal_state=None, sms_messages=None):
         deal_id = validate_deal_id(deal_id)
         validate_message_body(message_html)
+        _ = sms_messages  # Accepted for SMS drafts; email history remains the persisted channel today.
         if handoff_reason is not None:
             handoff_reason = validate_handoff_reason(handoff_reason)
         if deal_state is not None:

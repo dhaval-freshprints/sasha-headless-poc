@@ -10,13 +10,14 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
 import time
 import urllib.error
 import urllib.request
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 WORKSPACE = Path("/workspace")
 ARTIFACTS = WORKSPACE / "artifacts"
@@ -27,6 +28,17 @@ START_BROWSER = ["node", "/opt/sasha/start_browser.js"]
 DEFAULT_TIMEOUT_SECONDS = 90
 LOCK_WAIT_SECONDS = 120
 CDP_TIMEOUT_SECONDS = 2.0
+CLIENT_FILES_ROOT = PurePosixPath("/workspace/client-files")
+SET_INPUT_FILES_CALL = re.compile(r"\.setInputFiles\s*\(")
+STRING_LITERAL = re.compile(r"""(?P<quote>['"`])(?P<value>(?:\\.|(?!(?P=quote)).)*)(?P=quote)""")
+FORBIDDEN_UPLOAD = re.compile(
+    r"\b(?:Buffer|createReadStream|readFileSync|readFile)\b|buffer\s*:",
+    re.IGNORECASE,
+)
+PATH_LIKE = re.compile(
+    r"^(?:/|\./|\.\./)|[/\\]|\.(?:png|jpe?g|gif|webp|svg|pdf|ai|eps)$",
+    re.IGNORECASE,
+)
 
 
 class BrowserExecError(Exception):
@@ -49,6 +61,90 @@ def workspace_script(value: str) -> Path:
     if not path.is_file():
         raise BrowserExecError("missing_script", f"Script not found: {path}")
     return path
+
+
+def _call_argument_text(source: str, open_paren_index: int) -> str:
+    depth = 0
+    index = open_paren_index
+    while index < len(source):
+        character = source[index]
+        if character in {"'", '"', "`"}:
+            quote = character
+            index += 1
+            while index < len(source):
+                if source[index] == "\\":
+                    index += 2
+                    continue
+                if source[index] == quote:
+                    break
+                index += 1
+            index += 1
+            continue
+        if character == "(":
+            depth += 1
+        elif character == ")":
+            depth -= 1
+            if depth == 0:
+                return source[open_paren_index + 1 : index]
+        index += 1
+    raise BrowserExecError(
+        "invalid_upload_path",
+        "Unclosed setInputFiles call; upload paths could not be validated.",
+    )
+
+
+def approved_client_file_path(value: str) -> bool:
+    """Return True when value is a literal path under /workspace/client-files."""
+    candidate = value.strip()
+    if not candidate or ".." in candidate or "$" in candidate:
+        return False
+    path = PurePosixPath(candidate)
+    if not path.is_absolute():
+        return False
+    try:
+        relative = path.relative_to(CLIENT_FILES_ROOT)
+    except ValueError:
+        return False
+    return bool(relative.parts)
+
+
+def validate_upload_paths(script: Path) -> None:
+    """Reject Playwright uploads that are not literal /workspace/client-files paths."""
+    source = script.read_text(encoding="utf-8")
+    if "setInputFiles" not in source:
+        return
+    found_call = False
+    for match in SET_INPUT_FILES_CALL.finditer(source):
+        found_call = True
+        arguments = _call_argument_text(source, match.end() - 1)
+        if FORBIDDEN_UPLOAD.search(arguments):
+            raise BrowserExecError(
+                "invalid_upload_path",
+                "setInputFiles may only use literal paths under /workspace/client-files; "
+                "buffers and dynamic file content are blocked.",
+                {"script": str(script)},
+            )
+        literals = [item.group("value") for item in STRING_LITERAL.finditer(arguments)]
+        path_literals = [value for value in literals if PATH_LIKE.search(value)]
+        if not path_literals:
+            raise BrowserExecError(
+                "invalid_upload_path",
+                "setInputFiles requires a literal path under /workspace/client-files.",
+                {"script": str(script)},
+            )
+        for value in path_literals:
+            if "${" in value or not approved_client_file_path(value):
+                raise BrowserExecError(
+                    "invalid_upload_path",
+                    "Uploads must use literal paths directly under /workspace/client-files.",
+                    {"script": str(script), "path": value},
+                )
+    if "setInputFiles" in source and not found_call:
+        raise BrowserExecError(
+            "invalid_upload_path",
+            "setInputFiles usage could not be validated; use locator.setInputFiles('/workspace/client-files/...').",
+            {"script": str(script)},
+        )
 
 
 def cdp_health() -> dict:
@@ -153,6 +249,7 @@ def run_script(script: Path, timeout_seconds: float) -> subprocess.CompletedProc
 
 
 def execute(script: Path, timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS) -> dict:
+    validate_upload_paths(script)
     fd = acquire_lock()
     started = time.time()
     restarted = False

@@ -54,9 +54,10 @@ class MemoryStorage:
             self.followups[deal_id]['next_followup_date'] = None
         return [int(deal_id) for deal_id in due]
 
-    def record_followup_sent(self, deal_id):
+    def record_followup_sent(self, deal_id, channel='email'):
         row = self.followups.setdefault(deal_id, {'status': 'active'})
         row['followup_count'] = row.get('followup_count', 0) + 1
+        row['last_channel_used'] = channel
 
     def pause_followups(self, deal_id, reason):
         row = self.followups.get(deal_id)
@@ -85,8 +86,8 @@ class MemoryStorage:
         return True
 
     def complete_run(self, deal_id, run_id, previous_notes, notes, message_html, convo_type,
-                     handoff_reason=None, deal_state=None):
-        self.completed.append((deal_id, run_id, notes, message_html, convo_type))
+                     handoff_reason=None, deal_state=None, sms_messages=None):
+        self.completed.append((deal_id, run_id, notes, message_html, convo_type, sms_messages))
         self.notes[deal_id] = notes
         if handoff_reason is not None:
             self.statuses[deal_id], self.status_reasons[deal_id] = 'handoff_needed', handoff_reason

@@ -153,7 +153,8 @@ class CustomerLinkRuntimeTests(unittest.TestCase):
             self.assertNotIn("/run/secrets", command)
             self.assertNotIn("--env-file", arguments)
             forwarded_names = {arguments[index + 1] for index, value in enumerate(arguments) if value == "--env"}
-            self.assertEqual(forwarded_names, set(DATABASE_ENVIRONMENT) | {"PYTHONPATH=/opt", "OPENAI_API_KEY"})
+            self.assertEqual(forwarded_names, set(DATABASE_ENVIRONMENT) | {"PYTHONPATH=/opt"})
+            self.assertNotIn("OPENAI_API_KEY", forwarded_names)
             self.assertNotIn("openai-secret", command)
             self.assertNotIn("rds-ca.pem", command)
             self.assertNotIn("NON_PROD_SSL_CA", forwarded_names)

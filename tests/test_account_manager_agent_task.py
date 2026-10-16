@@ -62,6 +62,8 @@ class SashaResultTests(unittest.TestCase):
             "deal_id": "303839",
             "status": "completed",
             "message_html": "Any model-generated HTML",
+            "sms_messages": [],
+            "communication_channel": "email",
             "failure_code": "",
             "failure_message": "",
             "notes": "Saved notes",

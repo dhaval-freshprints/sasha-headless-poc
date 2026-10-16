@@ -1,11 +1,16 @@
 """Fetch client artwork into an OpenAI-managed Sasha run workspace."""
 
+from __future__ import annotations
+
 import mimetypes
 import re
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import unquote, urlparse
+
+from .artwork.inspection import ArtworkInspection, inspect_artwork
+from .artwork.settings import ArtworkSettings
 
 MAX_BYTES = 20 * 1024 * 1024
 FETCH_TIMEOUT = 30
@@ -22,9 +27,13 @@ class Attachment:
     name: str
     size: int
     from_previous_turn: bool = False
+    inspection: ArtworkInspection | None = None
 
     def describe(self) -> str:
-        return f"{self.handle} ({self.name}, {self.size // 1024} KB)"
+        base = f"{self.handle} ({self.name}, {self.size // 1024} KB)"
+        if self.inspection is None:
+            return base
+        return f"{base}; {self.inspection.describe()}"
 
 
 class AttachmentSet:
@@ -98,7 +107,36 @@ def _fetch_one(url: str, handle: str, target_dir: Path) -> Attachment:
 
     path = target_dir / f"{handle}{suffix}"
     path.write_bytes(payload)
-    return Attachment(handle=handle, path=path, name=name, size=len(payload))
+    return Attachment(
+        handle=handle,
+        path=path,
+        name=name,
+        size=len(payload),
+        inspection=inspect_artwork(path),
+    )
+
+
+def artwork_quality_guidance(settings: ArtworkSettings | None = None) -> str:
+    """Task text that forces a suitability route before Design Tool upload."""
+    quality = settings or ArtworkSettings.from_environment()
+    return (
+        "Before uploading any artwork, choose exactly one route for each used attachment and "
+        "record it in /workspace/artifacts/artwork_decisions.json: "
+        "`direct`, `extract`, `preserve_photo`, or `request_source`. "
+        f"Effective PPI is usable artwork pixel width divided by print width in inches. "
+        f"Direct raster uploads must be at least {quality.min_print_ppi:g} PPI at the intended "
+        f"Design Tool width; aim for {quality.target_print_ppi:g} PPI when possible. "
+        "Use `direct` only for isolated vector files or clean standalone rasters that already "
+        "meet the minimum. Use `extract` via `python /opt/sasha/extract_artwork.py` for text, "
+        "line art, or logos embedded in a shirt/screenshot/UI/background, or when raster "
+        "resolution is insufficient. Use `preserve_photo` for intended photographic content: "
+        "keep original pixels and Design Tool crop only; never regenerate people, places, or "
+        "animals. Use `request_source` when the design is unreadable or cannot be prepared "
+        "faithfully. Never create print artwork by cropping a tiny region and enlarging it "
+        "with Pillow, ImageMagick, canvas, or similar tools—upscaling cannot invent missing "
+        "detail. Upload only files under /workspace/client-files (originals or host-broker "
+        "extract outputs). After placement, recheck effective PPI if width changed."
+    )
 
 
 def file_name(url: str) -> str:

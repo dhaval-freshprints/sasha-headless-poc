@@ -66,6 +66,8 @@ SASHA_RESULT_JSON_SCHEMA = {
         "deal_id",
         "status",
         "message_html",
+        "sms_messages",
+        "communication_channel",
         "notes",
         "convo_type",
         "handoff_reason",
@@ -80,6 +82,20 @@ SASHA_RESULT_JSON_SCHEMA = {
         "deal_id": {"type": "string"},
         "status": {"type": "string", "enum": ["completed", "handoff", "failed"]},
         "message_html": {"type": "string"},
+        "sms_messages": {
+            "type": "array",
+            "items": _object({
+                "category": {
+                    "type": "string",
+                    "enum": ["core_response", "additional_resources", "status_warning", "cta"],
+                },
+                "text": TEXT,
+            }),
+        },
+        "communication_channel": {
+            "type": "string",
+            "enum": ["email", "sms", "both", "none"],
+        },
         "notes": {"type": "string"},
         "convo_type": {"type": ["string", "null"], "enum": ["client_response", "followup", "internal_mail", "outreach", None]},
         "handoff_reason": {"type": "string"},
@@ -122,6 +138,8 @@ class SashaResult:
     deal_id: str
     status: Literal["completed", "handoff", "failed"]
     message_html: str = ""
+    sms_messages: tuple[dict[str, Any], ...] = ()
+    communication_channel: Literal["email", "sms", "both", "none"] = "none"
     failure_code: str = ""
     failure_message: str = ""
     notes: str = ""
@@ -132,21 +150,32 @@ class SashaResult:
     sample_update: dict | None = None
     deal_state: dict | None = None
 
+    def has_draft(self) -> bool:
+        return bool(self.message_html.strip()) or bool(self.sms_messages)
+
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        result = asdict(self)
+        result["sms_messages"] = list(self.sms_messages)
+        return result
 
     @classmethod
     def from_json(cls, value: str) -> "SashaResult":
-        result = cls(**json.loads(value))
+        payload = json.loads(value)
+        messages = payload.get("sms_messages") or ()
+        if isinstance(messages, list):
+            payload["sms_messages"] = tuple(messages)
+        result = cls(**payload)
         if result.status not in {"completed", "handoff", "failed"}:
             raise ValueError("Invalid result status")
         if result.isa_decision not in {"", "accepted", "rejected", "unclear"}:
             raise ValueError("Invalid isa_decision")
+        if result.communication_channel not in {"email", "sms", "both", "none"}:
+            raise ValueError("Invalid communication_channel")
         for name in ("deal_id", "message_html", "notes", "handoff_reason", "failure_code", "failure_message"):
             if not isinstance(getattr(result, name), str):
                 raise ValueError(f"Result {name} must be text")
-        if result.status == "completed" and result.message_html.strip() and result.convo_type not in CONVERSATION_TYPES:
+        if result.status == "completed" and result.has_draft() and result.convo_type not in CONVERSATION_TYPES:
             raise ValueError("A generated draft requires a valid convo_type")
-        if result.status == "completed" and not result.message_html.strip() and result.convo_type is not None:
+        if result.status == "completed" and not result.has_draft() and result.convo_type is not None:
             raise ValueError("No-reply results must have null convo_type")
         return result

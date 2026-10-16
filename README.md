@@ -759,21 +759,32 @@ Set `SASHA_LIVE_QA_PERSIST_PROOF=1` only for a disposable QA proof when a save s
 ## Artwork from photos and screenshots
 
 Clients often send a photo of a shirt, or a screenshot of a mockup from another site, and ask
-for that design. Design Tool's Crop and Remove Background can't lift a print off fabric, so
-Account Manager recreates it first:
+for that design. Before upload, Sasha chooses one suitability route (`direct`, `extract`,
+`preserve_photo`, or `request_source`), records it in `workspace/artifacts/artwork_decisions.json`,
+and must meet `ARTWORK_MIN_PRINT_PPI` (default 150) at the intended print width. Effective PPI is
+usable artwork pixel width divided by print width in inches. Hand-upscaled crops are forbidden;
+uploads must use literal paths under `/workspace/client-files` (mounted read-only in the container
+so only the host downloader/broker can create approved files there).
+
+Design Tool's Crop and Remove Background can't lift a print off fabric, so Account Manager
+recreates embedded artwork through the host broker:
 
 ```
 python /opt/sasha/extract_artwork.py /workspace/client-files/file_1.png --keep "..." --shape wide
 ```
 
 - Sasha decides when a file needs this, and describes the text and graphics to keep in `--keep`.
-- The tool sends the file to OpenAI's image model (`ARTWORK_IMAGE_MODEL`, default `gpt-image-1`,
-  with `OPENAI_API_KEY`). The model draws the print on flat green; the tool makes the green
-  transparent and trims it. The result, `file_1_extracted.png`, sits next to the original.
-  Drawing straight onto a transparent background turned white letters black.
-- Real photos inside a print are never redrawn. Sasha crops them from the original in Design Tool.
+- The sandbox tool asks a **host broker** (same pattern as Freshdesk samples). The host calls
+  OpenAI's image model (`ARTWORK_IMAGE_MODEL`, default `gpt-image-1`, with host `OPENAI_API_KEY`).
+  Credentials never enter the container. The model draws the print on flat green; the host makes
+  the green transparent and trims it. The result, `file_1_extracted.png`, sits next to the original
+  (and under `artifacts/`). Drawing straight onto a transparent background turned white letters black.
+  Optional `--action-id` makes retries idempotent.
+- Real photos inside a print are never redrawn (`preserve_photo`). Sasha crops them from the original
+  in Design Tool.
 - Sasha checks the result against the original, uses it for the proof, and tells the client
-  the mockup uses a recreated design, asking for the original file if they have one.
+  the mockup uses a recreated design, asking for the original file if they have one
+  (`request_source` when fidelity is impossible).
 
 The guide is `account-manager/references/artwork_from_photos.md`. A call takes about a minute.
 After pulling this change, rebuild the Account Manager image (it now includes Pillow).

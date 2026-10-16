@@ -26,10 +26,10 @@ BROWSER_EXEC_SCRIPT = Path(__file__).with_name("browser_exec.py")
 CUSTOMER_LINK_SCRIPT = Path(__file__).with_name("customer_links.py")
 SAMPLE_FRESHDESK_SCRIPT = Path(__file__).with_name("sample_freshdesk_tool.py")
 EXTRACT_ARTWORK_SCRIPT = Path(__file__).with_name("extract_artwork.py")
+ARTWORK_PACKAGE_DIRECTORY = Path(__file__).with_name("artwork")
 DATABASE_SCRIPT = Path(__file__).resolve().parents[1] / "deal_manager_agent/skills/deal-manager-database/scripts/database.py"
-# Artwork extraction calls OpenAI's image model. Like the database settings, these are passed
-# to the container by name; their values never appear in the docker command line.
-ARTWORK_ENVIRONMENT_VARIABLES = ("OPENAI_API_KEY", "ARTWORK_IMAGE_MODEL")
+# Artwork extraction is host-brokered; OpenAI credentials never enter the container.
+ARTWORK_ENVIRONMENT_VARIABLES: tuple[str, ...] = ()
 BROWSER_READY_STATUSES = {"started", "running", "restarted"}
 DEFAULT_CONTAINER_CPUS = "2"
 DEFAULT_CONTAINER_MEMORY = "3g"
@@ -90,6 +90,7 @@ class DockerSandbox:
         workspace_directory.mkdir(parents=True, exist_ok=False)
         try:
             (workspace_directory / "artifacts").mkdir()
+            (workspace_directory / "client-files").mkdir()
             for skill_name in (
                 "account-manager",
                 "outreach",
@@ -177,6 +178,8 @@ class DockerSandbox:
                 "--mount",
                 f"type=bind,src={EXTRACT_ARTWORK_SCRIPT},dst=/opt/sasha/extract_artwork.py,readonly",
                 "--mount",
+                f"type=bind,src={ARTWORK_PACKAGE_DIRECTORY},dst=/opt/sasha/artwork,readonly",
+                "--mount",
                 f"type=bind,src={BROWSER_EXEC_SCRIPT},dst=/opt/sasha/browser_exec.py,readonly",
                 "--mount",
                 f"type=bind,src={DATABASE_SCRIPT},dst=/opt/sasha/database.py,readonly",
@@ -185,6 +188,10 @@ class DockerSandbox:
                 *database_options,
                 "--mount",
                 f"type=bind,src={handle.workspace_directory},dst=/workspace",
+                "--mount",
+                # Nested RO overlay: originals and host-broker extracts stay host-writable,
+                # but the container cannot create ad hoc artwork under client-files.
+                f"type=bind,src={handle.workspace_directory / 'client-files'},dst=/workspace/client-files,readonly",
                 "--mount",
                 f"type=bind,src={AUTHENTICATION_SCRIPT},dst=/opt/sasha/setup_auth.js,readonly",
                 "--mount",

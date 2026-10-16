@@ -200,6 +200,11 @@ class DockerSandboxTests(unittest.TestCase):
         self.assertIn("dst=/opt/sasha/start_browser.js,readonly", container_command)
         self.assertIn("dst=/opt/sasha/browser_exec.py,readonly", container_command)
         self.assertIn("dst=/opt/sasha/sample_freshdesk.py,readonly", container_command)
+        self.assertIn("dst=/opt/sasha/extract_artwork.py,readonly", container_command)
+        self.assertIn("dst=/opt/sasha/artwork,readonly", container_command)
+        self.assertIn("dst=/workspace/client-files,readonly", container_command)
+        self.assertNotIn("OPENAI_API_KEY", container_command)
+        self.assertNotIn("ARTWORK_IMAGE_MODEL", container_command)
         command = run.call_args.args[0]
         self.assertEqual(command[command.index("--memory") + 1], "3g")
         self.assertEqual(command[command.index("--cpus") + 1], "2")

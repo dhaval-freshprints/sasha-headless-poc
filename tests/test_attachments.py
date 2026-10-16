@@ -34,6 +34,9 @@ class AttachmentDownloadTests(unittest.TestCase):
         self.assertEqual(files.items[0].handle, "file_1")
         self.assertEqual(files.items[0].path.name, "file_1.svg")
         self.assertEqual(files.items[0].path.read_bytes(), b"<svg></svg>")
+        self.assertIsNotNone(files.items[0].inspection)
+        self.assertEqual(files.items[0].inspection.kind, "vector")
+        self.assertIn("vector", files.items[0].describe())
 
     @patch("account_manager_agent.attachments.urllib.request.urlopen")
     def test_downloads_multiple_files_with_separate_handles(self, urlopen):
