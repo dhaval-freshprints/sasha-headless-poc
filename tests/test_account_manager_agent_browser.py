@@ -27,8 +27,10 @@ ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT / ".env")
 
 LIVE_QA_ENABLED = os.environ.get("SASHA_LIVE_QA") == "1"
-DEAL_ID = os.environ.get("SASHA_LIVE_QA_DEAL_ID", "303931")
-COMMAND_TIMEOUT_SECONDS = 90
+DEAL_ID = os.environ.get("SASHA_LIVE_QA_DEAL_ID", "397030")
+# Disposable QA proof for the new-item workflow. Leave unset to skip persistence.
+PROOF_ID = os.environ.get("SASHA_LIVE_QA_PROOF_ID", "").strip()
+COMMAND_TIMEOUT_SECONDS = 120
 
 # A tiny stand-in for a Sasha command: attach, do one thing, print JSON, disconnect.
 ATTACH_SCRIPT = r"""
@@ -155,11 +157,210 @@ class KeptOpenBrowserLiveTests(unittest.TestCase):
 
         exit_code, result = self.start_browser()
         self.assertEqual(exit_code, 0, result)
-        self.assertEqual(result, {"status": "started"})
+        self.assertEqual(result.get("status"), "started")
 
         exit_code, result = self.attach("open", self.deal_url)
         self.assertEqual(exit_code, 0, result)
         self.assertTrue(result["signedIn"])
+
+    def test_explicit_restart_recovers_unhealthy_browser(self):
+        exit_code, result = self.run_restart()
+        self.assertEqual(exit_code, 0, result)
+        self.assertEqual(result.get("status"), "restarted")
+
+        exit_code, result = self.attach("open", self.deal_url)
+        self.assertEqual(exit_code, 0, result)
+        self.assertTrue(result["signedIn"])
+
+    def test_browser_exec_serializes_a_workspace_script(self):
+        script = (
+            self.handle.workspace_directory / "browser_step.js"
+        )
+        script.write_text(
+            'const { chromium } = require("playwright");\n'
+            "(async () => {\n"
+            '  const browser = await chromium.connectOverCDP("http://127.0.0.1:9222");\n'
+            "  const pages = browser.contexts()[0].pages();\n"
+            '  process.stdout.write(JSON.stringify({ pages: pages.length }));\n'
+            "  await browser.close();\n"
+            "})().catch((error) => { console.error(error); process.exit(1); });\n",
+            encoding="utf-8",
+        )
+        process = self.run_in_container(
+            "python", "/opt/sasha/browser_exec.py", "/workspace/browser_step.js"
+        )
+        self.assertEqual(process.returncode, 0, process.stderr or process.stdout)
+        self.assertIn('"pages"', process.stdout)
+
+    def test_multiple_heavy_pages_then_close_extras(self):
+        """Open several app pages, then close extras so only the deal stays."""
+        base = os.environ["FP_BASE_URL"].rstrip("/")
+        urls = json.dumps(
+            [
+                self.deal_url,
+                self.quoter_url,
+                f"{base}/dashboard/catalog",
+                f"{base}/dashboard/designs",
+            ]
+        )
+        script = self.handle.workspace_directory / "heavy_pages.js"
+        script.write_text(
+            "const { chromium } = require('playwright');\n"
+            "(async () => {\n"
+            "  const browser = await chromium.connectOverCDP('http://127.0.0.1:9222');\n"
+            "  const context = browser.contexts()[0];\n"
+            f"  const urls = {urls};\n"
+            "  const opened = [];\n"
+            "  for (const url of urls) {\n"
+            "    const page = await context.newPage();\n"
+            "    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });\n"
+            "    opened.push(page.url());\n"
+            "  }\n"
+            "  const pages = context.pages();\n"
+            "  const before = pages.length;\n"
+            "  for (const page of pages.slice(1)) {\n"
+            "    await page.close();\n"
+            "  }\n"
+            "  process.stdout.write(JSON.stringify({\n"
+            "    opened,\n"
+            "    before,\n"
+            "    after: context.pages().length,\n"
+            "  }));\n"
+            "  await browser.close();\n"
+            "})().catch((error) => {\n"
+            "  process.stdout.write(JSON.stringify({ error: error.message.split('\\n')[0] }));\n"
+            "  process.exit(1);\n"
+            "});\n",
+            encoding="utf-8",
+        )
+        process = self.run_in_container(
+            "python", "/opt/sasha/browser_exec.py", "/workspace/heavy_pages.js",
+            "--timeout-seconds", "90",
+        )
+        self.assertEqual(process.returncode, 0, process.stderr or process.stdout)
+        result = json.loads(process.stdout)
+        self.assertGreaterEqual(result["before"], 4)
+        self.assertEqual(result["after"], 1)
+        self.assertEqual(len(result["opened"]), 4)
+
+    def run_restart(self):
+        process = self.run_in_container("node", "/opt/sasha/start_browser.js", "--restart")
+        return process.returncode, json.loads(process.stdout)
+
+
+@unittest.skipUnless(LIVE_QA_ENABLED, "set SASHA_LIVE_QA=1 to run live QA smoke tests")
+@unittest.skipUnless(bool(PROOF_ID), "set SASHA_LIVE_QA_PROOF_ID for disposable proof workflow")
+class DesignToolNewProofItemLiveTests(unittest.TestCase):
+    """Reach save-ready on a new proof item. Persist only when PROOF_ID is disposable QA."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.runs_directory = tempfile.TemporaryDirectory()
+        cls.sandbox = DockerSandbox(
+            SandboxConfig(
+                image=os.environ.get(
+                    "ACCOUNT_MANAGER_AGENT_SANDBOX_IMAGE", "sasha-account-manager-agent:local"
+                ),
+                runs_directory=Path(cls.runs_directory.name),
+            ),
+            executor_api_key="not-used-by-smoke-tests",
+        )
+        base_url = os.environ["FP_BASE_URL"].rstrip("/")
+        cls.proof_url = f"{base_url}/dashboard/proof/{PROOF_ID}"
+        cls.handle = cls.sandbox.prepare(
+            SashaTask(DEAL_ID, f"proof-smoke-{uuid.uuid4().hex[:8]}", cls.proof_url)
+        )
+        try:
+            cls.sandbox.start_container()
+            cls.sandbox.authenticate(
+                cls.proof_url,
+                os.environ["FP_LOGIN_URL"],
+                os.environ["FP_USER"],
+                os.environ["FP_PASSWORD"],
+            )
+            cls.sandbox.start_browser()
+        except Exception:
+            cls.tearDownClass()
+            raise
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.sandbox.stop()
+        cls.runs_directory.cleanup()
+
+    def test_opens_new_proof_item_and_reaches_save_ready(self):
+        persist = os.environ.get("SASHA_LIVE_QA_PERSIST_PROOF") == "1"
+        persist_js = "true" if persist else "false"
+        proof_url = json.dumps(self.proof_url)
+        script = self.handle.workspace_directory / "new_proof_item.js"
+        script.write_text(
+            "const { chromium } = require('playwright');\n"
+            "(async () => {\n"
+            "  const browser = await chromium.connectOverCDP('http://127.0.0.1:9222');\n"
+            "  const context = browser.contexts()[0];\n"
+            "  const page = context.pages()[0] || await context.newPage();\n"
+            f"  await page.goto({proof_url}, {{ waitUntil: 'domcontentloaded', timeout: 60000 }});\n"
+            "  await page.keyboard.press('Escape').catch(() => {});\n"
+            "  const create = page.getByTestId('proof-create-new-item-button');\n"
+            "  const visible = await create.isVisible().catch(() => false);\n"
+            "  const beforePages = context.pages().map((p) => p.url());\n"
+            "  if (visible) {\n"
+            "    await create.click({ timeout: 15000 });\n"
+            "  } else {\n"
+            "    await page.getByText(/Create in Design Tool/i).first().click({ timeout: 15000 });\n"
+            "  }\n"
+            "  await page.waitForTimeout(2000);\n"
+            "  const pages = context.pages();\n"
+            "  const editor = pages.find((p) => /proofItemId=/i.test(p.url()) || /design/i.test(p.url()))\n"
+            "    || pages[pages.length - 1];\n"
+            "  await editor.bringToFront();\n"
+            "  for (const other of pages) {\n"
+            "    if (other !== editor && /editor|design|proofItemId=/i.test(other.url())) {\n"
+            "      await other.close();\n"
+            "    }\n"
+            "  }\n"
+            "  const save = editor.getByRole('button', { name: /^Save$/i }).first();\n"
+            "  const saveReady = await save.isVisible().catch(() => false);\n"
+            f"  const persist = {persist_js};\n"
+            "  if (persist && saveReady) {\n"
+            "    await save.click();\n"
+            "    await editor.getByText(/Save as new revision|Save$/i).last()"
+            ".click({ timeout: 15000 }).catch(() => {});\n"
+            "  }\n"
+            "  process.stdout.write(JSON.stringify({\n"
+            "    proofUrl: page.url(),\n"
+            "    editorUrl: editor.url(),\n"
+            "    beforePages,\n"
+            "    saveReady,\n"
+            "    persisted: persist,\n"
+            "    createVisible: visible,\n"
+            "  }));\n"
+            "  await browser.close();\n"
+            "})().catch((error) => {\n"
+            "  process.stdout.write(JSON.stringify({ error: error.message.split('\\n')[0] }));\n"
+            "  process.exit(1);\n"
+            "});\n",
+            encoding="utf-8",
+        )
+        process = subprocess.run(
+            [
+                "docker",
+                "exec",
+                self.handle.container_name,
+                "python",
+                "/opt/sasha/browser_exec.py",
+                "/workspace/new_proof_item.js",
+                "--timeout-seconds",
+                "120",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=COMMAND_TIMEOUT_SECONDS,
+        )
+        self.assertEqual(process.returncode, 0, process.stderr or process.stdout)
+        result = json.loads(process.stdout)
+        self.assertTrue(result.get("saveReady"), result)
+        self.assertIn("proof", result.get("editorUrl", "").lower() + result.get("proofUrl", "").lower())
 
 
 if __name__ == "__main__":

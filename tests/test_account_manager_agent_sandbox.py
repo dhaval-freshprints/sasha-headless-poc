@@ -198,9 +198,31 @@ class DockerSandboxTests(unittest.TestCase):
         container_command = " ".join(run.call_args.args[0])
         self.assertIn("dst=/opt/sasha/browser_keeper.js,readonly", container_command)
         self.assertIn("dst=/opt/sasha/start_browser.js,readonly", container_command)
+        self.assertIn("dst=/opt/sasha/browser_exec.py,readonly", container_command)
         self.assertIn("dst=/opt/sasha/sample_freshdesk.py,readonly", container_command)
+        command = run.call_args.args[0]
+        self.assertEqual(command[command.index("--memory") + 1], "3g")
+        self.assertEqual(command[command.index("--cpus") + 1], "2")
+        self.assertEqual(command[command.index("--shm-size") + 1], "1g")
         self.assertNotIn("dst=/opt/account_manager_agent", container_command)
         self.assertNotIn("FRESHDESK_API_KEY", container_command)
+
+    def test_container_resource_limits_are_validated(self):
+        from account_manager_agent.sandbox import container_resource_limits
+
+        self.assertEqual(container_resource_limits({}), ("2", "3g", "1g"))
+        self.assertEqual(
+            container_resource_limits({
+                "ACCOUNT_MANAGER_AGENT_CONTAINER_CPUS": "4",
+                "ACCOUNT_MANAGER_AGENT_CONTAINER_MEMORY": "6g",
+                "ACCOUNT_MANAGER_AGENT_CONTAINER_SHM_SIZE": "2g",
+            }),
+            ("4", "6g", "2g"),
+        )
+        with self.assertRaises(ValueError):
+            container_resource_limits({"ACCOUNT_MANAGER_AGENT_CONTAINER_CPUS": "0"})
+        with self.assertRaises(ValueError):
+            container_resource_limits({"ACCOUNT_MANAGER_AGENT_CONTAINER_MEMORY": "lots"})
 
     @patch("account_manager_agent.sandbox.subprocess.run")
     def test_start_browser_runs_start_script_in_the_container(self, run):

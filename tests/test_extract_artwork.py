@@ -53,13 +53,23 @@ class ExtractArtworkTests(unittest.TestCase):
         return Response(json.dumps({"data": [{"b64_json": base64.b64encode(image).decode()}]}).encode())
 
     def test_writes_a_transparent_png_next_to_the_original(self):
-        result = extract(str(self.source), '"Pipe down" at the top, a dolphin', "wide", self.opener, self.root)
+        artifacts = self.root.parent / "artifacts"
+        with patch.object(extract_artwork, "ARTIFACTS", artifacts):
+            result = extract(
+                str(self.source),
+                '"Pipe down" at the top, a dolphin',
+                "wide",
+                self.opener,
+                self.root,
+            )
         self.assertEqual(result["path"], str((self.root / "file_1_extracted.png").resolve()))
         # The green background becomes transparent and is trimmed; white and red stay.
         picture = Image.open(result["path"])
         self.assertEqual((picture.mode, picture.size), ("RGBA", (2, 1)))
         self.assertEqual(list(picture.get_flattened_data()), [(*WHITE, 255), (*RED, 255)])
         self.assertEqual(self.source.read_bytes(), b"jpeg bytes")
+        self.assertEqual(result["artifact"], str(artifacts / "file_1_extracted.png"))
+        self.assertTrue((artifacts / "file_1_extracted.png").is_file())
         request = self.requests[0]
         self.assertEqual(request.full_url, extract_artwork.API_URL)
         self.assertEqual(request.get_header("Authorization"), "Bearer test-key")

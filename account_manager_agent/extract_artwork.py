@@ -22,6 +22,7 @@ import uuid
 from pathlib import Path
 
 CLIENT_FILES = Path("/workspace/client-files")
+ARTIFACTS = Path("/workspace/artifacts")
 API_URL = "https://api.openai.com/v1/images/edits"
 DEFAULT_MODEL = "gpt-image-1"
 TIMEOUT_SECONDS = 300
@@ -147,7 +148,17 @@ def extract(value: str, keep: str, shape: str = "auto", opener=urllib.request.ur
     image = remove_green(request_image(source, keep, shape, api_key, model, opener))
     target = output_file(source)
     target.write_bytes(image)
-    return {"ok": True, "source": str(source), "path": str(target), "bytes": len(image)}
+    artifact = None
+    try:
+        ARTIFACTS.mkdir(parents=True, exist_ok=True)
+        artifact = ARTIFACTS / target.name
+        artifact.write_bytes(image)
+    except OSError:
+        artifact = None
+    result = {"ok": True, "source": str(source), "path": str(target), "bytes": len(image)}
+    if artifact is not None:
+        result["artifact"] = str(artifact)
+    return result
 
 
 def main() -> None:

@@ -31,11 +31,13 @@ standard input, and removes the container when the turn ends.
 
 After sign-in, the runner starts one headless Chrome on the signed-in profile
 (`account_manager_agent/start_browser.js`) and keeps it running for the whole turn.
-Sasha's Playwright scripts attach to it with
-`chromium.connectOverCDP('http://127.0.0.1:9222')` instead of launching Chrome,
-so page state carries over between commands. The port exists only inside the
-disposable container. If attaching fails, Sasha runs the same start script to
-restart the browser.
+Sasha writes short Playwright scripts and runs them through
+`python /opt/sasha/browser_exec.py /workspace/SCRIPT.js`, which serializes browser
+access, bounds command time, and restarts Chrome once when CDP is unhealthy.
+Scripts attach with `chromium.connectOverCDP('http://127.0.0.1:9222')` instead of
+launching Chrome, so page state carries over between commands. The port exists
+only inside the disposable container. Default container limits are 2 CPUs and 3
+GiB (override with `ACCOUNT_MANAGER_AGENT_CONTAINER_*`).
 
 ## Requirements
 
@@ -747,8 +749,12 @@ Live QA smoke tests for the kept-open browser sign in to the configured Fresh Pr
 the managed Docker image. They are skipped unless `SASHA_LIVE_QA=1`:
 
 ```bash
-SASHA_LIVE_QA=1 .venv/bin/python -m unittest tests.test_account_manager_agent_browser -v
+SASHA_LIVE_QA=1 SASHA_LIVE_QA_DEAL_ID=397030 \
+  .venv/bin/python -m unittest tests.test_account_manager_agent_browser -v
 ```
+
+Optional: `SASHA_LIVE_QA_PROOF_ID` enables the Design Tool new-proof-item workflow test.
+Set `SASHA_LIVE_QA_PERSIST_PROOF=1` only for a disposable QA proof when a save should stick.
 
 ## Artwork from photos and screenshots
 
