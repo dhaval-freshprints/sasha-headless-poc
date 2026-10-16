@@ -38,13 +38,13 @@ except ImportError:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Recreate the printed design from a garment photo as a transparent PNG."
+        description="Recreate selected graphic elements from a reference image as a transparent PNG."
     )
     parser.add_argument("file", help="A supplied file under /workspace/client-files")
     parser.add_argument(
         "--keep",
         default="",
-        help="The text and graphics to recreate, exactly as seen. Leave out real photos.",
+        help="Describe one graphic to isolate; explicitly exclude text and other elements. Leave out real photos.",
     )
     parser.add_argument(
         "--shape",

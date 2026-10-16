@@ -57,7 +57,14 @@ def output_file(source: Path) -> Path:
 def prompt(keep: str) -> str:
     keep = " ".join(keep.split())
     if keep:
-        return f"{INSTRUCTIONS} Recreate only these elements, and leave out everything else: {keep}"
+        return (
+            f"{INSTRUCTIONS} Recreate only these elements, and leave out everything else: {keep}. "
+            "This selection takes precedence over the whole-design preservation instructions. "
+            "Omit every unselected element, including surrounding lettering and other graphics. "
+            "If the selection excludes text, return the selected graphic alone with no words, "
+            "letters, captions, or placeholder text. Preserve the selected element's own colors "
+            "and proportions; do not include empty space for omitted elements."
+        )
     return INSTRUCTIONS
 
 

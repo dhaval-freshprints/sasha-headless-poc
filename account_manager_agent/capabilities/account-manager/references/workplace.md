@@ -107,11 +107,18 @@ When the client needs an additional mockup on the same proof record and the CRM 
 - Before replacing wording, confirm that `Text Tool` is open and an editable text field contains the intended original wording. A generic Size & Placement panel is not confirmation of text editing. Read the field value rather than relying only on page body text.
 - Replace the content of the confirmed text field with the exact requested wording. Exit editing and view a fresh screenshot to verify the rendered wording, style, and unrelated artwork. Reselect the text and read its value again before saving. Repeat for each text object covered by the request; do not leave other requested wording unchanged.
 - If selection still fails after a correction using a fresh screenshot, stop and report that text selection could not be confirmed. Do not call the artwork flattened, rasterized, or uneditable without evidence from the selected object's controls or an explicit application message.
+- For reference-image reconstruction, use Add Text separately for every heading or caption. Inspect the font selector's actual options, compare plausible fonts visually, and record the observed candidates and chosen font. Select the closest available font; do not guess font names or upload raster lettering as a shortcut.
+- Read each new text field back, inspect its rendered letters, and check its placement relative to the separate graphic objects. Exclude text from extracted graphics to avoid duplicated lettering.
 - Complete content, font, and color before size and placement because those changes can alter the bounding box.
 - Use Playwright's file-input support only for an approved local artwork file supplied to the task. Target the artwork input identified by `upload-file-input`, not the font input.
 - Upload completion is intermediate. Inspect rejection state or the Edit Image dialog, then inspect the placed canvas artwork.
 - Uploading creates another object and does not automatically replace the selected image.
 - Remove Background and Crop Image change the supplied artwork. Inspect before and after using either control. They cannot lift a print off a photographed garment; for that, see [artwork from photos and screenshots](artwork_from_photos.md).
+
+### Reference-design quality review
+
+- Inspect the complete composition at readable zoom and garment scale. Correct weak contrast, tiny captions, collisions, and spacing while honoring explicit client colors, dimensions, print method, and placement. Follow the artwork guide for permitted improvements and honest client feedback.
+- After saving a reference reconstruction, reopen its proof and editor. Select each rebuilt text object and verify its field value and font; confirm the separate graphics and overall composition persisted. Record verified results and unresolved issues in the artwork audit. A thumbnail alone cannot verify text editability.
 
 ### Placement and save
 

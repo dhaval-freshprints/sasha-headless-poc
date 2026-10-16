@@ -790,7 +790,17 @@ recreates embedded artwork through the host broker:
 python /opt/sasha/extract_artwork.py /workspace/client-files/file_1.png --keep "..." --shape wide
 ```
 
-- Sasha decides when a file needs this, and describes the text and graphics to keep in `--keep`.
+- For reference photos and screenshots, Sasha inventories every graphic and text block. Each independent
+  graphic is extracted separately with `--keep` explicitly excluding lettering and other graphics; each
+  text block is created as editable Design Tool text using the closest observed available font. Clean
+  production-ready artwork remains intact unless editing is requested. Unreadable wording requires clarification.
+- Use distinct `--action-id` values for separate elements or changed requests; reuse only for identical retries.
+  Each extraction produces its own approved file. The audit retains attachment fields and adds `elements`
+  (text/font choices, image paths and final PPI) and `visual_review` (findings, changes, remaining issues,
+  and saved verification). Text-only references do not require an image upload.
+- Sasha reviews contrast, small text, spacing, and composition on the garment, improves readability within
+  explicit client constraints, and reopens the saved proof and editor to verify separate objects and editable
+  text. Client drafts explain meaningful changes, noticeable font substitutions, and remaining limitations.
 - The sandbox tool asks a **host broker** (same pattern as Freshdesk samples). The host calls
   OpenAI's image model (`ARTWORK_IMAGE_MODEL`, default `gpt-image-1`, with host `OPENAI_API_KEY`).
   Credentials never enter the container. The model draws the print on flat green; the host makes

@@ -97,6 +97,24 @@ class ExtractArtworkServiceTests(unittest.TestCase):
         )
         self.assertTrue(second["path"].endswith("file_1_extracted_2.png"))
 
+    def test_separate_graphic_requests_exclude_unselected_content_and_keep_outputs(self):
+        results = []
+        for selection in (
+            "Only the scooter illustration. Exclude all lettering and other graphics",
+            "Only the wing emblem. Exclude all lettering and other graphics",
+        ):
+            results.append(extract(
+                str(self.source), selection, workspace=self.workspace,
+                api_key="test-key", opener=self.opener,
+            ))
+            body = self.requests[-1].data.decode("latin-1")
+            self.assertIn(selection, body)
+            self.assertIn("selection takes precedence", body)
+            self.assertIn("no words, letters, captions, or placeholder text", body)
+        self.assertNotEqual(results[0]["path"], results[1]["path"])
+        self.assertTrue(all(Path(result["path"]).is_file() for result in results))
+        self.assertEqual(self.source.read_bytes(), b"jpeg bytes")
+
     def test_only_supplied_images_are_accepted(self):
         outside = self.root.parent / "secret.png"
         outside.write_bytes(b"x")
