@@ -911,10 +911,10 @@ class AccountManagerAgent:
                 "Follow-up signals computed from the dated conversation and deal notes:\n"
                 f"{describe_signals(signals)}\n"
                 + (f"Why this follow-up was planned: {planned}\n" if planned else "")
-                + "Empty database history means no reply only while no incoming client message exists. "
-                "An incoming message or unanswered client request in the database history takes priority. "
-                "Otherwise use the followup skill: read the situation, choose one unused tactic that "
-                "gives the client new value or return no reply, and choose the next follow-up.\n\n"
+                + "An incoming message or unanswered client request in the database history takes priority. "
+                "Otherwise use the followup skill, even when the database history is empty: read the "
+                "situation, draft one unused tactic that gives the client a reason to engage, and choose "
+                "the next follow-up. Return no reply only for the exceptions the followup skill lists.\n\n"
             )
 
         file_data = ""

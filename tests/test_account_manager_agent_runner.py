@@ -1083,7 +1083,8 @@ class ManagedRunnerTests(unittest.TestCase):
         self.assertIn("Business as_of_date: 2026-10-13", message)
         self.assertIn("Days since client reply: 10 day(s)", message)
         self.assertIn("Why this follow-up was planned: Sent navy mockup; check in", message)
-        self.assertIn("Empty database history means no reply", message)
+        self.assertIn("even when the database history is empty", message)
+        self.assertNotIn("Empty database history means no reply", message)
         self.assertNotIn("follow_up_stage", message)
 
     def _final_with(self, sessions, **changes):

@@ -15,6 +15,8 @@ Reply only when the client asked something, something is still open, or a messag
 
 Do not send a proactive message when you wrote last and the client has not answered within about a day. A client's own message can always be answered.
 
+An explicit follow-up check is the exception: the client's silence is the reason it runs, so follow the [followup](../../followup/SKILL.md) skill, which drafts a follow-up unless one of its listed exceptions applies.
+
 ## What the client's words mean for the deal
 
 Decide what the client is telling you and record it in `deal_state`, in your own words, whenever it changes how Sasha should treat the deal. The `reason` is for whoever reads the deal next (you on a later turn, or a person): what the client said and why you set this state.
