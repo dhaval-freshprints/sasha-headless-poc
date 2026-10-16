@@ -523,6 +523,36 @@ class ManagedRunnerTests(unittest.TestCase):
         self.assertIn("Keep this inspection read-only", skill)
         self.assertIn("Introduce Sasha as the client's account manager", crafting)
 
+    def test_artwork_limits_route_to_proof_requests_not_handoff(self):
+        root = Path(__file__).resolve().parents[1] / "account_manager_agent" / "capabilities"
+        account_manager = (root / "account-manager" / "SKILL.md").read_text()
+        handoff = (root / "handoff" / "SKILL.md").read_text()
+        sales = (root / "account-manager" / "references" / "sales_rules.md").read_text()
+        crafting = (root / "account-manager" / "references" / "crafting_rules.md").read_text()
+        client_response = (root / "client-response" / "SKILL.md").read_text()
+        self.assertIn("artwork, printing, decoration, placement, or Design Tool limitation is not a handoff reason", account_manager)
+        self.assertIn("submit a verified art-team proof or revision request", account_manager)
+        self.assertIn("Do not hand off for artwork, printing, decoration, placement, or Design Tool limitations", handoff)
+        self.assertIn("Submit an art-team proof or revision request when Design Tool cannot complete", sales)
+        self.assertIn("Never hand off solely because artwork, decoration, or Design Tool work", sales)
+        self.assertIn("submit a verified art-team proof or revision request instead of handing off", client_response)
+        self.assertIn("tell the client the request is in for a proof or revision", crafting)
+        self.assertIn("Do not expose Design Tool, editor, or internal tooling limits", crafting)
+
+    def test_needs_changes_proofs_share_checkout_links(self):
+        root = Path(__file__).resolve().parents[1] / "account_manager_agent" / "capabilities"
+        account_manager = (root / "account-manager" / "SKILL.md").read_text()
+        handoff = (root / "handoff" / "SKILL.md").read_text()
+        crafting = (root / "account-manager" / "references" / "crafting_rules.md").read_text()
+        workplace = (root / "account-manager" / "references" / "workplace.md").read_text()
+        self.assertIn("A saved proof in `Needs Changes` is checkout-ready", account_manager)
+        self.assertIn("Do not wait for full art or licensing approval", account_manager)
+        self.assertIn("Do not hand off solely because licensing shows `Approval Required`", handoff)
+        self.assertIn("saved proof is in `Needs Changes`", handoff)
+        self.assertIn("including a saved proof in `Needs Changes` with self-checkout enabled", crafting)
+        self.assertIn("proof status of `Needs Changes` is a saved, orderable state", workplace)
+        self.assertIn("Block Self-Checkout", workplace)
+
     def test_playbooks_use_natural_product_references(self):
         repository_root = Path(__file__).resolve().parents[1]
         playbook_paths = [

@@ -35,7 +35,9 @@ Use the application destinations supplied in the task. CRM paths below are relat
 - The quantity control is an unlabeled spinbutton next to the style code. Entering a quantity recalculates the displayed price. Nothing persists until `Save Price`; `Cancel` discards the temporary value.
 - The delivery panel offers `Order On`, `Need By`, a date field, and `Shipping Options`. Shipping cards show dates, cost or savings, MOQ, selection, and availability. Disabled cards can still show values.
 - `Location & Decorations` shows print type, color count, and art description by location.
-- `Original Proof`, `Revision 1`, and similar chips select versions.
+- Licensing fields may show Greek or collegiate organizations with statuses such as `Approval Required` or `No Marks`. Those labels do not by themselves block self-checkout.
+- `Original Proof`, `Revision 1`, and similar chips select versions. A proof status of `Needs Changes` is a saved, orderable state for the client when `Block Self-Checkout` is off.
+- The price panel's `Order This Item` control and the `Block Self-Checkout` toggle show whether the client can place the order. Checkout readiness depends on that toggle and an available order action, not on licensing approval alone.
 - `Or Submit a Revision Request` opens the revision form and is hidden while a revision is pending.
 - `Design in Design Tool` or `Revise in Design Tool` opens that proof in a new browser page.
 - A proof linked from the deal belongs to that deal, even when its `Client` field shows a different name. Use it as this client's proof; a name mismatch is something for a person to check, not a reason to set the proof aside.

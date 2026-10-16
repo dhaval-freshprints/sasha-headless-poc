@@ -118,6 +118,9 @@ cases += [
      'handoff:client_upset', None, prior_notes, 'Unknown.'),
     ('no_handoff_price_question', history, 'What is the price for 40 of these tees?', False,
      'response_any', None, prior_notes, 'Unknown.'),
+    ('no_handoff_unsupported_decoration', history,
+     'Can you add the patterned sleeve bands from my photo onto both sleeves of this shirt?', False,
+     'proof_request', None, prior_notes, 'Unknown.'),
 ]
 for channel, request in (
     ('sms', 'Channel: SMS\nFrom: +12025550123\n\nPlease reply only by text. Which garment and color were we discussing?'),
@@ -170,6 +173,9 @@ for name, history, message, additional, expected, follow_up, notes_text, sample_
                   'reason_given': bool(str(result.get('handoff_reason', '')).strip())}
     else:
         checks = {'completed':result['status']=='completed', 'expected_reply_presence':bool(reply.strip())==(expected!='no_reply')}
+    if expected == 'proof_request':
+        checks['did_not_hand_off'] = result['status'] != 'handoff'
+        checks['mentions_proof_or_revision'] = bool(re.search(r'\b(proof|revision|mockup)\b', reply, re.I))
     if expected == 'response':
         checks['answers_sample_question'] = 'sample' in reply.lower() and ('blank' in reply.lower() or 'unprinted' in reply.lower() or 'not printed' in reply.lower())
     if expected == 'outreach':

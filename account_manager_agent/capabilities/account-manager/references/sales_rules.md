@@ -56,20 +56,21 @@ These rules apply to outreach, client response, and follow-ups. They do not sele
 
 ## Proofs and revisions
 
-- Before creating a proof or art-team request, obtain exact text to print or usable artwork. “My logo,” an organization name, a filename, or a promise to send a file is not print content.
+- Before creating a proof or art-team request, obtain exact text to print or usable artwork. “My logo,” an organization name, a filename, or a promise to send a file is not print content. When those details are missing, ask for them and change nothing during that turn.
 - Artwork is usable when the current task supplies an approved local file, it is already accessible on the relevant proof, or the selected gallery design has loaded in the Design Tool through `Customize This`. Earlier text in the conversation may be reused exactly.
-- When content is available, try the Design Tool first. Use its text controls for wording and Playwright file-input support for an approved local artwork file. For an existing proof, use its Design Tool entry point. Set “Send a Copy to Client” to No.
+- When content is available, try the Design Tool first whenever it can complete the requested change. Use its text controls for wording and Playwright file-input support for an approved local artwork file. For an existing proof, use its Design Tool entry point. Set “Send a Copy to Client” to No.
 - Preserve the requested or existing print type. Do not switch methods merely to bypass a limitation.
 - Preserve supplied artwork. Remove a background, crop, or replace an object only when the client's request requires it. Keep unrelated artwork.
 - When the supplied artwork is a photo or screenshot of a printed garment or mockup, recreate the print as clean artwork first; see [artwork from photos and screenshots](artwork_from_photos.md).
 - Inspect exact text, artwork, garment, color, print method, size, and placement before saving.
 - Reopen the proof from the deal after saving. Report a mockup or revision as ready only after the reopened proof shows it.
-- After a Design Tool attempt, use the art-team form only when the application confirms an explicit editing restriction. A missed click, generic selection panel, or `Select part of your design` is not a blocker. Follow the selection and verification guidance in Workplace first. If selection or image viewing cannot be confirmed, report that limitation without claiming the artwork is uneditable. Recheck the deal and proof before any art-team request to avoid duplicates.
-- For an art-team request, include exact content, placement, and relevant instructions in the field the art team reads. Include the actual approved artwork file when required, then reopen and verify the request.
+- Submit an art-team proof or revision request when Design Tool cannot complete the change, the application confirms an editing restriction, or the requested artwork, printing, decoration, or placement cannot be completed with available tooling or confirmed Fresh Prints printing and decoration knowledge. Examples include sleeve bands or stripes, cuffs, hems, wrap graphics, finishes the editor cannot place, and other standard decoration placements that the online proof cannot show. A missed click, generic selection panel, or `Select part of your design` is not a blocker. Follow the selection and verification guidance in Workplace first. If selection or image viewing cannot be confirmed, report that limitation without claiming the artwork is uneditable. Recheck the deal and proof before any art-team request to avoid duplicates.
+- For an art-team request, include exact content, garment, placement, requested method or finish when known, and relevant instructions in the field the art team reads. Include the actual approved artwork file when required, then reopen and verify that the request is pending before drafting the client update.
 - Keep one proof per deal. A product swap is not a revision. Front and back of one garment are two locations on one proof item.
 - Do not submit another art request while one is pending.
 - Do not create or change a proof in the same reply as a question about whether to change it.
 - If no color is supplied, choose a sensible available color. A color family is enough to choose a shade.
+- Never hand off solely because artwork, decoration, or Design Tool work is outside Sasha's direct editing path. Use the proof-request path above instead.
 
 ## Identifying the requested design
 

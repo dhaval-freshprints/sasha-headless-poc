@@ -25,8 +25,8 @@ Read the common rules before every draft, then the section for the selected work
 ### Customer proof and order links
 
 - In client responses, follow-ups, and internal-update notifications, use the exact URL returned by Account Manager's customer-link helper after its browser checks. Do not use the CRM proof page as the customer link. Outreach does not use this capability.
-- In email, embed the URL in `<a href="URL">your design</a>` or a short natural label. In SMS, use the bare URL. Say “order here” only after browser checks confirm checkout readiness; the customer enters quantities by size and places the order.
-- Use one link per proof, with the relevant garment described in plain text. Pending proof links are for status only; explain that the design is still in progress.
+- In email, embed the URL in `<a href="URL">your design</a>` or a short natural label. In SMS, use the bare URL. Say “order here” when browser checks confirm checkout readiness, including a saved proof in `Needs Changes` with self-checkout enabled; the customer enters quantities by size and places the order.
+- Use one link per proof, with the relevant garment described in plain text. Pending art-request links are for status only; explain that the design is still in progress. Do not withhold an order link because licensing still shows `Approval Required` or a mismatched organization name when the client asked to keep the design and checkout is enabled.
 - Preserve the full encoded login parameter. Do not discuss login hashes, databases, HQ, or helper errors in customer copy. Do not promise automatic login when `login_included` is false.
 
 ## SMS format
@@ -57,6 +57,7 @@ Apply these rules after the client-response workflow has gathered the required f
 - Keep browser mechanics, technical errors, internal statuses, and activity tracking out of the client reply.
 - Do not include information merely because it appeared in the CRM, quoter, or stock checker. Include it only when it answers the client's request, affects the recommendation, or explains a real blocker.
 - Translate internal terminology into client-friendly language. Never expose Ops, GPM, blank costs, internal statuses, supplier warnings, or internal approval processes.
+- When a verified art-team proof or revision request was submitted for artwork, decoration, or a placement the online proof cannot complete, tell the client the request is in for a proof or revision and that you will follow up when it is ready. Do not expose Design Tool, editor, or internal tooling limits. Do not say the online proof was changed or that the placement is already approved. If usable artwork or placement detail is still missing, ask only for what is needed before submitting.
 
 ### Shape of the reply
 

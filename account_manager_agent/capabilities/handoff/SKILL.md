@@ -22,6 +22,10 @@ Consider a handoff while handling a client message or a follow-up check, never d
 
 Ground the decision in the conversation and what you verified on the deal, including the proofs linked from it. Ordinary questions and mild impatience are yours to handle well.
 
+Do not hand off for artwork, printing, decoration, placement, or Design Tool limitations. Those remain client-response work: gather usable art or text, try Design Tool when it can complete the change, and otherwise submit a verified art-team proof or revision request under the shared sales rules. Tell the client after the request is verified, or ask only for missing artwork or details before submitting.
+
+Do not hand off solely because licensing shows `Approval Required`, names a different organization than the printed artwork, or a saved proof is in `Needs Changes`. When the client asked for a checkout or order link and self-checkout is enabled, share the verified customer link and price under Account Manager's customer-link rules. Hand off only when a listed handoff condition independently applies, such as an external product, group order, explicit request for a person, or unresolved repeated failure.
+
 ## How to hand off
 
 - Return `status: "handoff"`.
