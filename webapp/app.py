@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import logging
 import threading
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
@@ -33,6 +34,7 @@ from deal_manager_agent.settings import storage_directory
 
 
 ROOT = Path(__file__).resolve().parent.parent
+LOGGER = logging.getLogger(__name__)
 WEB_DIRECTORY = Path(__file__).resolve().parent
 STATIC_DIRECTORY = WEB_DIRECTORY / "static"
 
@@ -494,11 +496,15 @@ def _start_sample_freshdesk_worker(sync, stop: threading.Event) -> None:
         return
 
     def loop():
-        while not stop.wait(interval):
+        while not stop.is_set():
             try:
-                sync()
-            except Exception:  # Freshdesk or database outage: try again on the next tick.
-                pass
+                result = sync()
+                if not result.get("configured", True):
+                    LOGGER.warning("Sample Freshdesk sync is disabled because Freshdesk is not configured")
+            except Exception:
+                LOGGER.exception("Sample Freshdesk sync failed; retrying on the next interval")
+            if stop.wait(interval):
+                break
 
     threading.Thread(target=loop, daemon=True, name="sample-freshdesk").start()
 

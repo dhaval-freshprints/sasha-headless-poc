@@ -22,17 +22,37 @@ CAPABILITIES_DIRECTORY = Path(__file__).with_name("capabilities")
 AUTHENTICATION_SCRIPT = Path(__file__).with_name("setup_auth.js")
 BROWSER_KEEPER_SCRIPT = Path(__file__).with_name("browser_keeper.js")
 START_BROWSER_SCRIPT = Path(__file__).with_name("start_browser.js")
+BROWSER_EXEC_SCRIPT = Path(__file__).with_name("browser_exec.py")
 CUSTOMER_LINK_SCRIPT = Path(__file__).with_name("customer_links.py")
 SAMPLE_FRESHDESK_SCRIPT = Path(__file__).with_name("sample_freshdesk_tool.py")
-ACCOUNT_MANAGER_PACKAGE = Path(__file__).resolve().parent
+EXTRACT_ARTWORK_SCRIPT = Path(__file__).with_name("extract_artwork.py")
 DATABASE_SCRIPT = Path(__file__).resolve().parents[1] / "deal_manager_agent/skills/deal-manager-database/scripts/database.py"
-FRESHDESK_ENVIRONMENT_VARIABLES = (
-    "FRESHDESK_DOMAIN",
-    "FRESHDESK_API_KEY",
-    "FRESHDESK_REQUESTER_EMAIL",
-    "FRESHDESK_SAMPLE_GROUP_ID",
-)
-BROWSER_READY_STATUSES = {"started", "running"}
+# Artwork extraction calls OpenAI's image model. Like the database settings, these are passed
+# to the container by name; their values never appear in the docker command line.
+ARTWORK_ENVIRONMENT_VARIABLES = ("OPENAI_API_KEY", "ARTWORK_IMAGE_MODEL")
+BROWSER_READY_STATUSES = {"started", "running", "restarted"}
+DEFAULT_CONTAINER_CPUS = "2"
+DEFAULT_CONTAINER_MEMORY = "3g"
+DEFAULT_CONTAINER_SHM = "1g"
+MEMORY_PATTERN = re.compile(r"^[1-9]\d*[kKmMgGtT]?$")
+CPUS_PATTERN = re.compile(r"^(?:[1-9]\d*(?:\.\d+)?|0\.[1-9]\d*)$")
+
+
+def container_resource_limits(
+    values: dict[str, str] | None = None,
+) -> tuple[str, str, str]:
+    """Return (cpus, memory, shm_size) from environment with validated defaults."""
+    source = values if values is not None else os.environ
+    cpus = (source.get("ACCOUNT_MANAGER_AGENT_CONTAINER_CPUS") or DEFAULT_CONTAINER_CPUS).strip()
+    memory = (source.get("ACCOUNT_MANAGER_AGENT_CONTAINER_MEMORY") or DEFAULT_CONTAINER_MEMORY).strip()
+    shm = (source.get("ACCOUNT_MANAGER_AGENT_CONTAINER_SHM_SIZE") or DEFAULT_CONTAINER_SHM).strip()
+    if not CPUS_PATTERN.fullmatch(cpus):
+        raise ValueError("ACCOUNT_MANAGER_AGENT_CONTAINER_CPUS must be a positive number")
+    if not MEMORY_PATTERN.fullmatch(memory):
+        raise ValueError("ACCOUNT_MANAGER_AGENT_CONTAINER_MEMORY must look like 3g or 3072m")
+    if not MEMORY_PATTERN.fullmatch(shm):
+        raise ValueError("ACCOUNT_MANAGER_AGENT_CONTAINER_SHM_SIZE must look like 1g or 1024m")
+    return cpus, memory, shm
 
 
 @dataclass(frozen=True)
@@ -130,10 +150,10 @@ class DockerSandbox:
         handle = self._require_handle()
         database = DatabaseSettings.from_environment()
         database_options, process_environment = container_database_options(database)
-        for name in FRESHDESK_ENVIRONMENT_VARIABLES:
-            value = os.environ.get(name, "").strip()
-            if value:
-                database_options.extend(["--env", f"{name}={value}"])
+        for name in ARTWORK_ENVIRONMENT_VARIABLES:
+            if os.environ.get(name, "").strip():
+                database_options.extend(["--env", name])
+        cpus, memory, shm = container_resource_limits()
         subprocess.run(
             [
                 "docker",
@@ -143,11 +163,11 @@ class DockerSandbox:
                 "--name",
                 handle.container_name,
                 "--memory",
-                "1g",
+                memory,
                 "--cpus",
-                "1",
+                cpus,
                 "--shm-size",
-                "1g",
+                shm,
                 "--tmpfs",
                 "/browser-profile:rw,nosuid,nodev,noexec,size=512m",
                 "--mount",
@@ -155,7 +175,9 @@ class DockerSandbox:
                 "--mount",
                 f"type=bind,src={SAMPLE_FRESHDESK_SCRIPT},dst=/opt/sasha/sample_freshdesk.py,readonly",
                 "--mount",
-                f"type=bind,src={ACCOUNT_MANAGER_PACKAGE},dst=/opt/account_manager_agent,readonly",
+                f"type=bind,src={EXTRACT_ARTWORK_SCRIPT},dst=/opt/sasha/extract_artwork.py,readonly",
+                "--mount",
+                f"type=bind,src={BROWSER_EXEC_SCRIPT},dst=/opt/sasha/browser_exec.py,readonly",
                 "--mount",
                 f"type=bind,src={DATABASE_SCRIPT},dst=/opt/sasha/database.py,readonly",
                 "--mount",

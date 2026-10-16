@@ -67,7 +67,12 @@ class SampleRequests:
         if not values:
             return
         assignments = ",".join(f"{name}=%s" for name in values)
-        self._write(
-            f"UPDATE sasha_sample_requests SET {assignments} WHERE id=%s AND deal_id=%s AND deleted_at IS NULL",
-            (*values.values(), sample_id, validate_deal_id(deal_id)),
-        )
+        with self.transaction(self.settings) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"UPDATE sasha_sample_requests SET {assignments} "
+                    "WHERE id=%s AND deal_id=%s AND status='placed' AND deleted_at IS NULL",
+                    (*values.values(), sample_id, validate_deal_id(deal_id)),
+                )
+                if cursor.rowcount != 1:
+                    raise ValueError("Sample is no longer an amendable placed request")

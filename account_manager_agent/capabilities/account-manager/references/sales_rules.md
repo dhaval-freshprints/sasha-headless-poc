@@ -61,6 +61,7 @@ These rules apply to outreach, client response, and follow-ups. They do not sele
 - When content is available, try the Design Tool first. Use its text controls for wording and Playwright file-input support for an approved local artwork file. For an existing proof, use its Design Tool entry point. Set “Send a Copy to Client” to No.
 - Preserve the requested or existing print type. Do not switch methods merely to bypass a limitation.
 - Preserve supplied artwork. Remove a background, crop, or replace an object only when the client's request requires it. Keep unrelated artwork.
+- When the supplied artwork is a photo or screenshot of a printed garment or mockup, recreate the print as clean artwork first; see [artwork from photos and screenshots](artwork_from_photos.md).
 - Inspect exact text, artwork, garment, color, print method, size, and placement before saving.
 - Reopen the proof from the deal after saving. Report a mockup or revision as ready only after the reopened proof shows it.
 - After a Design Tool attempt, use the art-team form only when the application confirms an explicit editing restriction. A missed click, generic selection panel, or `Select part of your design` is not a blocker. Follow the selection and verification guidance in Workplace first. If selection or image viewing cannot be confirmed, report that limitation without claiming the artwork is uneditable. Recheck the deal and proof before any art-team request to avoid duplicates.

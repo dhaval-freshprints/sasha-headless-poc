@@ -5,6 +5,7 @@ import unittest
 from account_manager_agent.samples.freshdesk import (
     FreshdeskClient,
     infer_sample_status_from_thread,
+    summarize_conversations,
     ticket_id_from_url,
     ticket_payload,
 )
@@ -113,7 +114,7 @@ class ServiceTests(unittest.TestCase):
         result = self.service.place("42", "run-1", REQUEST)
         self.assertEqual((result["placed"], result["ticket"]), (True, "not sent: Freshdesk is not configured"))
 
-    def test_freshdesk_reply_and_amend_call_the_api(self):
+    def test_freshdesk_note_and_amend_update_complete_ticket_details(self):
         self.service.place("42", "run-1", REQUEST)
         self.samples.set_ticket(1, "https://fp.freshdesk.com/a/tickets/9001")
         calls = []
@@ -125,14 +126,30 @@ class ServiceTests(unittest.TestCase):
 
         client = FreshdeskClient("fp.freshdesk.com", "key", "sasha@freshprints.com", opener=opener)
         self.service.freshdesk_factory = lambda: client
-        reply = self.service.freshdesk_reply("42", 1, "Please ship soon.")
-        self.assertTrue(reply["ok"])
-        amend = self.service.freshdesk_amend("42", 1, color="Purple White", message="Client changed color.")
+        note = self.service.freshdesk_note("42", 1, "Please ship soon.")
+        self.assertTrue(note["ok"])
+        amend = self.service.freshdesk_amend(
+            "42", 1, color="Purple White", size="S", product_link="https://fp.test/p/c1717",
+            message="Client changed color.",
+        )
         self.assertTrue(amend["ok"])
         self.assertEqual(self.samples.rows[0]["color"], "Purple White")
-        methods = [item[1] for item in calls]
-        self.assertIn("POST", methods)
-        self.assertIn("PUT", methods)
+        update = next(item for item in calls if item[1] == "PUT")
+        payload = json.loads(update[2])
+        self.assertEqual(payload["custom_fields"]["cf_garment_color"], "Purple White")
+        self.assertIn("Purple White", payload["description"])
+        self.assertIn("Size: S", payload["description"])
+        self.assertTrue(any(url.endswith("/notes") for url, method, _ in calls if method == "POST"))
+
+    def test_amend_rejects_a_sample_that_already_shipped(self):
+        self.service.place("42", "run-1", REQUEST)
+        self.samples.set_ticket(1, "https://fp.freshdesk.com/a/tickets/9001")
+        self.samples.rows[0]["status"] = "shipped"
+        result = self.service.freshdesk_amend("42", 1, color="Purple White")
+        self.assertEqual(
+            result,
+            {"ok": False, "error": "sample_already_progressed", "status": "shipped"},
+        )
 
     def test_followup_sync_advances_sample_status_from_freshdesk_thread(self):
         self.service.place("42", "run-1", REQUEST)
@@ -162,6 +179,19 @@ class FreshdeskParsingTests(unittest.TestCase):
         conversations = [{"body_text": "Your sample shipped today. Tracking: 1Z"}]
         self.assertEqual(infer_sample_status_from_thread(conversations, "placed"), "shipped")
         self.assertIsNone(infer_sample_status_from_thread(conversations, "shipped"))
+        self.assertIsNone(infer_sample_status_from_thread(
+            [{"body_text": "This was not cancelled.", "incoming": True}],
+            "placed",
+        ))
+
+    def test_conversation_summary_is_newest_first_and_keeps_source_metadata(self):
+        summaries = summarize_conversations([
+            {"id": 1, "created_at": "2026-01-01T00:00:00Z", "body_text": "Old"},
+            {"id": 2, "created_at": "2026-01-02T00:00:00Z", "body_text": "Tracking 1Z", "incoming": True},
+        ])
+        self.assertEqual(summaries[0]["id"], 2)
+        self.assertEqual(summaries[0]["text"], "Tracking 1Z")
+        self.assertTrue(summaries[0]["incoming"])
 
 
 class FreshdeskTests(unittest.TestCase):

@@ -656,7 +656,8 @@ class ManagedRunnerTests(unittest.TestCase):
         task_message = sandboxes[0].task_message
         self.assertIn("chromium.connectOverCDP('http://127.0.0.1:9222')", task_message)
         self.assertIn("Do not launch Chrome yourself", task_message)
-        self.assertIn("node /opt/sasha/start_browser.js", task_message)
+        self.assertIn("python /opt/sasha/browser_exec.py", task_message)
+        self.assertIn("Do not run browser commands in parallel", task_message)
         self.assertNotIn("Close the browser", task_message)
 
     def test_cleanup_reports_workspace_scripts_that_launch_chrome(self):

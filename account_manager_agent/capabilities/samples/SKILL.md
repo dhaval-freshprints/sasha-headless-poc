@@ -11,7 +11,7 @@ Fresh Prints sends free, blank samples (the garment only, no print) so a client 
 
 The task includes this deal's samples (style, color, size, status and dates) and the limits from Sasha's settings. Use them as the record of what was already sent. You are responsible for applying the limits: nothing checks them after you.
 
-A **background job** polls Freshdesk for open sample tickets and updates `samples` status in the database. Every run, including follow-ups, reads that record in the sample context. When the client asks about tracking, delivery, or a change to an open sample, run `python /opt/sasha/sample_freshdesk.py sync SAMPLE_ID` (and `show` if needed) before you answer; see [sample Freshdesk tool](references/sample_freshdesk.md). Use `reply` and `amend` during the turn when logistics must act on the ticket.
+A **background job** polls Freshdesk for open sample tickets and updates `samples` status in the database. Every run, including follow-ups, reads that record in the sample context. When the client asks about tracking, delivery, or a change to an open sample, run `python /opt/sasha/sample_freshdesk.py sync SAMPLE_ID` (and `show` if needed) before you answer; see [sample Freshdesk tool](references/sample_freshdesk.md). Use `note` and `amend` during the turn when logistics must act on the ticket.
 
 ## When to offer one
 

@@ -59,6 +59,16 @@ For a design chosen from the gallery, open its detail page and inspect `Customiz
 
 If the deal already has a proof, use that proof's editor to save to the same proof. Its Designs panel can load gallery artwork. Compare the imported artwork's size and placement with the gallery reference before saving; importing does not guarantee the same position. The wearer's left chest is on the viewer's right in the front view.
 
+### New proof item on an existing proof
+
+When the client needs an additional mockup on the same proof record and the CRM proof offers create-new-item:
+
+1. Work from the CRM proof page (`/dashboard/proof/<proof_id>`). Close open Save menus, side panels, and overlays first; an open Design Tool Save menu or a covering `proof-information` strip can intercept clicks.
+2. Prefer the stable control `data-testid="proof-create-new-item-button"` (Create a new proof item). If that control is covered or not visible, use `Create in Design Tool` from the proof page and identify the newly opened Design Tool tab by its URL (`proofId` / `proofItemId`), not by assuming it is the first or last page.
+3. After the new editor opens, close the superseded Design Tool tab for the earlier item so only one heavy editor stays open.
+4. Place artwork, then save once through the documented Save menu path. Do not click Top `Save` repeatedly while a prior click is still pending.
+5. Reopen the CRM proof and confirm the new item or revision label before telling the client the mockup is ready.
+
 ### Interface and selection
 
 - The left rail contains Add Text, Upload, Designs, Clipart & logos, and Greek. The right panel contains product, color, print type, and method.
@@ -79,7 +89,7 @@ If the deal already has a proof, use that proof's editor to save to the same pro
 - Use Playwright's file-input support only for an approved local artwork file supplied to the task. Target the artwork input identified by `upload-file-input`, not the font input.
 - Upload completion is intermediate. Inspect rejection state or the Edit Image dialog, then inspect the placed canvas artwork.
 - Uploading creates another object and does not automatically replace the selected image.
-- Remove Background and Crop Image change the supplied artwork. Inspect before and after using either control.
+- Remove Background and Crop Image change the supplied artwork. Inspect before and after using either control. They cannot lift a print off a photographed garment; for that, see [artwork from photos and screenshots](artwork_from_photos.md).
 
 ### Placement and save
 

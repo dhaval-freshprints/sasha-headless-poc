@@ -31,11 +31,13 @@ standard input, and removes the container when the turn ends.
 
 After sign-in, the runner starts one headless Chrome on the signed-in profile
 (`account_manager_agent/start_browser.js`) and keeps it running for the whole turn.
-Sasha's Playwright scripts attach to it with
-`chromium.connectOverCDP('http://127.0.0.1:9222')` instead of launching Chrome,
-so page state carries over between commands. The port exists only inside the
-disposable container. If attaching fails, Sasha runs the same start script to
-restart the browser.
+Sasha writes short Playwright scripts and runs them through
+`python /opt/sasha/browser_exec.py /workspace/SCRIPT.js`, which serializes browser
+access, bounds command time, and restarts Chrome once when CDP is unhealthy.
+Scripts attach with `chromium.connectOverCDP('http://127.0.0.1:9222')` instead of
+launching Chrome, so page state carries over between commands. The port exists
+only inside the disposable container. Default container limits are 2 CPUs and 3
+GiB (override with `ACCOUNT_MANAGER_AGENT_CONTAINER_*`).
 
 ## Requirements
 
@@ -562,8 +564,10 @@ not call Freshdesk. `POST /api/samples/sync-freshdesk` runs the poll now. Set th
 disable the background worker.
 
 **Freshdesk during a run.** Account Manager can call `python /opt/sasha/sample_freshdesk.py` inside
-the sandbox (`show`, `sync`, `reply`, `amend`) to read the logistics thread, post updates, and amend
-open samples. See [sample Freshdesk reference](account_manager_agent/capabilities/samples/references/sample_freshdesk.md).
+the sandbox (`show`, `sync`, `note`, `amend`) to read the logistics thread, add internal notes, and
+amend samples that have not shipped. A deal-scoped host broker executes those operations, so the
+Freshdesk API key never enters the Codex container. See the
+[sample Freshdesk reference](account_manager_agent/capabilities/samples/references/sample_freshdesk.md).
 
 Not ported from v3: the Freshdesk webhook, the stale-shipment nudge and Slack alert, and cancelling
 open samples on opt-out.
@@ -745,8 +749,34 @@ Live QA smoke tests for the kept-open browser sign in to the configured Fresh Pr
 the managed Docker image. They are skipped unless `SASHA_LIVE_QA=1`:
 
 ```bash
-SASHA_LIVE_QA=1 .venv/bin/python -m unittest tests.test_account_manager_agent_browser -v
+SASHA_LIVE_QA=1 SASHA_LIVE_QA_DEAL_ID=397030 \
+  .venv/bin/python -m unittest tests.test_account_manager_agent_browser -v
 ```
+
+Optional: `SASHA_LIVE_QA_PROOF_ID` enables the Design Tool new-proof-item workflow test.
+Set `SASHA_LIVE_QA_PERSIST_PROOF=1` only for a disposable QA proof when a save should stick.
+
+## Artwork from photos and screenshots
+
+Clients often send a photo of a shirt, or a screenshot of a mockup from another site, and ask
+for that design. Design Tool's Crop and Remove Background can't lift a print off fabric, so
+Account Manager recreates it first:
+
+```
+python /opt/sasha/extract_artwork.py /workspace/client-files/file_1.png --keep "..." --shape wide
+```
+
+- Sasha decides when a file needs this, and describes the text and graphics to keep in `--keep`.
+- The tool sends the file to OpenAI's image model (`ARTWORK_IMAGE_MODEL`, default `gpt-image-1`,
+  with `OPENAI_API_KEY`). The model draws the print on flat green; the tool makes the green
+  transparent and trims it. The result, `file_1_extracted.png`, sits next to the original.
+  Drawing straight onto a transparent background turned white letters black.
+- Real photos inside a print are never redrawn. Sasha crops them from the original in Design Tool.
+- Sasha checks the result against the original, uses it for the proof, and tells the client
+  the mockup uses a recreated design, asking for the original file if they have one.
+
+The guide is `account-manager/references/artwork_from_photos.md`. A call takes about a minute.
+After pulling this change, rebuild the Account Manager image (it now includes Pillow).
 
 ## Account Manager customer links
 

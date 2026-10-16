@@ -142,7 +142,7 @@ class CustomerLinkRuntimeTests(unittest.TestCase):
             sandbox = DockerSandbox(SandboxConfig("image", root, "https://hq.example"), "executor")
             handle = sandbox.prepare(SashaTask("100", "task", "https://crm.example/deal?id=100"))
             with patch("account_manager_agent.sandbox.DatabaseSettings.from_environment", return_value=settings), \
-                    patch.dict(os.environ, {"UNRELATED_SECRET": "unrelated", "OPENAI_API_KEY": "openai-secret"}), \
+                    patch.dict(os.environ, {"UNRELATED_SECRET": "unrelated", "OPENAI_API_KEY": "openai-secret"}, clear=True), \
                     patch("account_manager_agent.sandbox.subprocess.run", return_value=CompletedProcess([], 0)) as run:
                 sandbox.start_container()
             run.assert_called_once()
@@ -153,7 +153,8 @@ class CustomerLinkRuntimeTests(unittest.TestCase):
             self.assertNotIn("/run/secrets", command)
             self.assertNotIn("--env-file", arguments)
             forwarded_names = {arguments[index + 1] for index, value in enumerate(arguments) if value == "--env"}
-            self.assertEqual(forwarded_names, set(DATABASE_ENVIRONMENT) | {"PYTHONPATH=/opt"})
+            self.assertEqual(forwarded_names, set(DATABASE_ENVIRONMENT) | {"PYTHONPATH=/opt", "OPENAI_API_KEY"})
+            self.assertNotIn("openai-secret", command)
             self.assertNotIn("rds-ca.pem", command)
             self.assertNotIn("NON_PROD_SSL_CA", forwarded_names)
             self.assertEqual(json.loads((handle.run_directory / "customer_link_context.json").read_text()),
