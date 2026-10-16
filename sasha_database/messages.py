@@ -2,16 +2,61 @@
 
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
+import json
 import re
 
 
 CONVERSATION_TYPES = {"client_response", "followup", "internal_mail", "outreach"}
+SMS_CATEGORIES = ("core_response", "additional_resources", "status_warning", "cta")
 MAX_MESSAGE_BYTES = 16777215
 
 
 def validate_message_body(body: str) -> None:
     if len(body.encode("utf-8")) > MAX_MESSAGE_BYTES:
         raise ValueError("Message body exceeds the database MEDIUMTEXT byte limit")
+
+
+def validate_sms_messages(messages: list) -> None:
+    if not isinstance(messages, list):
+        raise ValueError("sms_messages must be an array")
+    for message in messages:
+        if not isinstance(message, dict) or set(message) != {"category", "text"}:
+            raise ValueError("Each SMS bubble requires category and text")
+        if message["category"] not in SMS_CATEGORIES:
+            raise ValueError("Invalid SMS bubble category")
+        if not isinstance(message["text"], str) or not message["text"].strip():
+            raise ValueError("SMS bubble text must be nonblank text")
+    validate_message_body(sms_body(messages))
+
+
+def sms_body(messages: list[dict]) -> str:
+    return "\n\n".join(message["text"] for message in messages)
+
+
+def read_sms_messages(row: dict) -> list[dict] | None:
+    if row.get("message_type") != "SMS" or row.get("direction") != "OUTBOUND":
+        return None
+    try:
+        messages = json.loads(row["body"])
+        validate_sms_messages(messages)
+    except (ValueError, TypeError):
+        return None
+    return messages
+
+
+def conversation_body(row: dict) -> str:
+    messages = read_sms_messages(row)
+    return sms_body(messages) if messages is not None else row["body"]
+
+
+def draft_channel(message_html: str, sms_messages: list) -> str:
+    if message_html.strip() and sms_messages:
+        return "both"
+    if message_html.strip():
+        return "email"
+    if sms_messages:
+        return "sms"
+    return "none"
 
 
 def utc_now() -> datetime:

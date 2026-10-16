@@ -88,6 +88,20 @@ async function main() {
     await page.frameLocator('#message-preview').getByText('Hello Alex.', { exact: true }).waitFor();
     assert.equal(await page.locator('#no-reply-needed').isVisible(), false);
 
+    const bubbles = [{ category: 'core_response', text: 'Your mockup is ready.' },
+      { category: 'cta', text: '<img src=x onerror=alert(1)> What do you think?' }];
+    run.result = { status: 'completed', message_html: '', sms_messages: bubbles };
+    await page.reload();
+    await page.locator('#sms-preview-section').waitFor();
+    assert.deepEqual(await page.locator('.sms-bubble').allTextContents(), bubbles.map(bubble => bubble.text));
+    assert.equal(await page.locator('#sms-preview img').count(), 0);
+    assert.equal(await page.locator('#email-preview-section').isVisible(), false);
+    assert.equal(await page.locator('#no-reply-needed').isVisible(), false);
+    run.result.message_html = '<p>Hello Alex.</p>';
+    await page.reload();
+    await page.frameLocator('#message-preview').getByText('Hello Alex.', { exact: true }).waitFor();
+    assert.equal(await page.locator('#sms-preview-section').isVisible(), true);
+
     run = { ...run, status: 'failed', error_message: 'Fixture browser failure', result: { status: 'failed', message_html: '' } };
     await page.reload();
     await page.getByText('Fixture browser failure', { exact: true }).waitFor();

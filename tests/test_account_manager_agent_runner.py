@@ -161,7 +161,9 @@ class FakeItemsAPI:
             "status": "completed",
             "message_html": MESSAGE,
             "notes": "## Current decisions\n- None recorded.",
-            "convo_type": "outreach",
+            "convo_type": "client_response",
+            "communication_channel": "email",
+            "sms_messages": [],
             "failure_code": "",
             "failure_message": "",
         }
@@ -1056,6 +1058,9 @@ class ManagedRunnerTests(unittest.TestCase):
         final = sessions.items._final_item()
         result = json.loads(final["content"][0]["text"])
         result.update(changes)
+        if "communication_channel" not in changes:
+            from sasha_database.messages import draft_channel
+            result["communication_channel"] = draft_channel(result["message_html"], result["sms_messages"])
         final["content"][0]["text"] = json.dumps(result)
         return final
 

@@ -1,6 +1,7 @@
 """Storage tests run against an explicitly enabled, disposable local MySQL instance."""
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
+import json
 import os
 from pathlib import Path
 import unittest
@@ -10,13 +11,26 @@ import pymysql
 from account_manager_agent.sandbox import ARTWORK_ENVIRONMENT_VARIABLES
 from sasha_database.config import DatabaseSettings, container_database_options
 from sasha_database.connection import DatabaseError
-from sasha_database.messages import IncomingMessage, incoming_message
+from sasha_database.messages import IncomingMessage, incoming_message, conversation_body, read_sms_messages
 from sasha_database.storage import SashaStorage
 
 ACCOUNT_MANAGER_TOOL_VARIABLES = set(ARTWORK_ENVIRONMENT_VARIABLES)
 
 
 class MessageTests(unittest.TestCase):
+    def test_legacy_sms_stays_plain_and_structured_sms_is_readable(self):
+        for body in ('Plain SMS', '[invalid JSON', '{"text":"plain"}'):
+            row = {'direction': 'OUTBOUND', 'message_type': 'SMS', 'body': body}
+            self.assertIsNone(read_sms_messages(row))
+            self.assertEqual(conversation_body(row), body)
+        bubbles = [{'category': 'core_response', 'text': 'First'}, {'category': 'cta', 'text': 'Next?'}]
+        row = {'direction': 'OUTBOUND', 'message_type': 'SMS', 'body': json.dumps(bubbles)}
+        self.assertEqual(read_sms_messages(row), bubbles)
+        self.assertEqual(conversation_body(row), 'First\n\nNext?')
+        row['direction'] = 'INBOUND'
+        self.assertIsNone(read_sms_messages(row))
+        self.assertEqual(conversation_body(row), json.dumps(bubbles))
+
     def test_plain_text_and_envelopes_preserve_bodies(self):
         self.assertEqual(incoming_message('Keep From: inside my body').body, 'Keep From: inside my body')
         message = incoming_message('Channel: Email\nFrom: art@freshprints.com\nSubject: Ready\n\nProof ready')
@@ -215,7 +229,7 @@ class MySQLStorageTests(unittest.TestCase):
                 cursor.execute(statement)
             cursor.execute('DROP TRIGGER IF EXISTS reject_test_draft')
             cursor.execute("CREATE TRIGGER reject_test_draft BEFORE INSERT ON sasha_conversation_history "
-                           "FOR EACH ROW BEGIN IF NEW.body='reject this draft' THEN "
+                           "FOR EACH ROW BEGIN IF NEW.body LIKE '%reject this draft%' THEN "
                            "SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='synthetic failure'; END IF; END")
         cls.settings = DatabaseSettings({
             'NON_PROD_HOST': '127.0.0.1', 'NON_PROD_PORT': os.environ['SASHA_TEST_MYSQL_PORT'],
@@ -244,6 +258,41 @@ class MySQLStorageTests(unittest.TestCase):
         with self.admin.cursor() as cursor:
             cursor.execute(sql)
             return next(iter(cursor.fetchone().values()))
+
+    def test_sms_round_trip_and_both_channel_retries_use_original_schema(self):
+        bubbles = [{'category': 'core_response', 'text': 'Your mockup is ready!'},
+                   {'category': 'cta', 'text': 'What do you think?'}]
+        self.storage.prepare_run('42', 'sms')
+        self.storage.complete_run('42', 'sms', '', 'Notes', '', 'client_response', sms_messages=bubbles)
+        notes, history = self.storage.load_context('42')
+        self.assertEqual(history[0]['sms_messages'], bubbles)
+        self.assertEqual(history[0]['content'], 'Your mockup is ready!\n\nWhat do you think?')
+        self.assertEqual(history[0]['run_id'], 'sms')
+        self.assertEqual(json.loads(self.scalar('SELECT body FROM sasha_conversation_history')), bubbles)
+        with self.admin.cursor() as cursor:
+            cursor.execute("SHOW COLUMNS FROM sasha_conversation_history LIKE 'sms_messages'")
+            self.assertIsNone(cursor.fetchone())
+        for _ in range(2):
+            self.storage.complete_run('42', 'both', notes, 'Updated', '<p>Hello</p>', 'outreach', sms_messages=bubbles)
+        self.assertEqual(self.scalar('SELECT COUNT(*) FROM sasha_conversation_history'), 3)
+        with self.assertRaisesRegex(ValueError, 'different result'):
+            self.storage.complete_run('42', 'both', notes, 'Updated', '<p>Hello</p>', 'outreach',
+                                      sms_messages=[{'category': 'cta', 'text': 'Changed'}])
+
+    def test_sms_failure_rolls_back_email_and_notes(self):
+        self.storage.prepare_run('42', 'both')
+        with self.assertRaises(DatabaseError):
+            self.storage.complete_run('42', 'both', '', 'Rollback', '<p>Hello</p>', 'outreach',
+                                      sms_messages=[{'category': 'core_response', 'text': 'reject this draft'}])
+        self.assertEqual(self.storage.load_context('42'), ('', []))
+
+    def test_followup_channel_uses_original_enum_and_null_for_both(self):
+        self.storage.prepare_run('42', 'followup')
+        self.storage.apply_followup_schedule('42', {'status': 'active', 'reason': 'Check in', 'next_check_on': '2026-10-20'})
+        for count, (channel, expected) in enumerate((('email', 'email'), ('sms', 'sms'), ('both', None)), 1):
+            self.storage.record_followup_sent('42', channel)
+            followup = self.storage.deal_state('42')['followup']
+            self.assertEqual((followup['last_channel_used'], followup['followup_count']), (expected, count))
 
     def test_active_status_is_unique_and_existing_status_is_preserved(self):
         self.storage.prepare_run('42', 'one')

@@ -220,6 +220,23 @@ outside that managed-turn limit.
 
 ## Output
 
+Account Manager returns `communication_channel` (`email`, `sms`, `both`, or `none`),
+`message_html`, and ordered `sms_messages` bubbles with `category` and plain-text
+`text`. Outreach includes both channels. Other replies use the agent's contextual
+channel decision. The UI previews each channel separately.
+
+Email and SMS use separate history rows under the same `run_id`, saved atomically.
+All SMS bubbles are JSON in the existing `body` column; no schema migration is needed.
+History readers support both structured bubbles and older plain-text SMS. Repeating
+an identical save does not duplicate rows. Follow-ups count once per run, with
+`last_channel_used=NULL` for both channels and the existing email/SMS enum unchanged.
+
+Bitly shortens SMS links on the host before saving. Configure `BITLY_ACCESS_TOKEN`,
+`BITLY_GROUP_GUID`, `BITLY_DOMAIN`, and optionally `BITLY_SHORTEN_URL` (default:
+`https://api-ssl.bitly.com/v4/shorten`) in the host environment or ignored `.env`.
+Credentials stay outside the agent container. Email links stay unchanged. Bitly
+failures keep the original URL and report a warning without exposing credentials.
+
 Run artifacts remain under `runs/account-manager-agent/<environment>/`. They may contain debug
 copies of prompts and results. They are never a fallback for deal notes or conversation history.
 Downloaded client artwork is removed after the turn.
