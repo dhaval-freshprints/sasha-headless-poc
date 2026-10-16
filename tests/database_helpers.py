@@ -3,6 +3,7 @@ from copy import deepcopy
 from dataclasses import replace
 from unittest.mock import patch
 from sasha_database.storage import validate_deal_id
+from sasha_database.messages import sms_body
 
 
 class MemoryStorage:
@@ -55,9 +56,11 @@ class MemoryStorage:
         return [int(deal_id) for deal_id in due]
 
     def record_followup_sent(self, deal_id, channel='email'):
+        if channel not in {'email', 'sms', 'both'}:
+            raise ValueError('Invalid follow-up channel')
         row = self.followups.setdefault(deal_id, {'status': 'active'})
         row['followup_count'] = row.get('followup_count', 0) + 1
-        row['last_channel_used'] = channel
+        row['last_channel_used'] = None if channel == 'both' else channel
 
     def pause_followups(self, deal_id, reason):
         row = self.followups.get(deal_id)
@@ -99,7 +102,12 @@ class MemoryStorage:
         history = self.history.setdefault(deal_id, [])
         if message_html.strip():
             history.append({'id': len(history)+1, 'role': 'sasha', 'content': message_html,
+                            'run_id': run_id, 'message_type': 'EMAIL',
                             'delivery_status': 'generated', 'content_type': 'text/html'})
+        if sms_messages:
+            history.append({'id': len(history)+1, 'role': 'sasha', 'content': sms_body(sms_messages),
+                            'run_id': run_id, 'message_type': 'SMS', 'sms_messages': deepcopy(sms_messages),
+                            'delivery_status': 'generated', 'content_type': 'text'})
 
 
 def setup_database(test):

@@ -57,13 +57,39 @@ class SashaTaskTests(unittest.TestCase):
 
 
 class SashaResultTests(unittest.TestCase):
+    def test_all_channels_have_matching_drafts(self):
+        bubbles = [{"category": "core_response", "text": "Your mockup is ready."}]
+        for channel, email, sms in (("email", "<p>Hello</p>", []), ("sms", "", bubbles),
+                                    ("both", "<p>Hello</p>", bubbles), ("none", "", [])):
+            with self.subTest(channel=channel):
+                result = SashaResult('42', 'completed', message_html=email, sms_messages=sms,
+                                     communication_channel=channel, convo_type='client_response' if channel != 'none' else None)
+                parsed = SashaResult.from_json(json.dumps(result.to_dict()))
+                self.assertEqual(parsed, result)
+                self.assertEqual(parsed.has_draft(), channel != 'none')
+
+    def test_missing_fields_and_invalid_bubbles_are_rejected(self):
+        result = SashaResult('42', 'completed', communication_channel='sms', convo_type='client_response',
+                             sms_messages=[{'category': 'cta', 'text': 'Want a mockup?'}]).to_dict()
+        for field in ('sms_messages', 'communication_channel'):
+            missing = dict(result)
+            missing.pop(field)
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, 'requires'):
+                SashaResult.from_json(json.dumps(missing))
+        for changed in ({'communication_channel': 'email'}, {'sms_messages': 'text'},
+                        {'sms_messages': [{'category': 'unknown', 'text': 'Hi'}]},
+                        {'sms_messages': [{'category': 'cta', 'text': '  '}]},
+                        {'status': 'failed'}, {'convo_type': 'outreach'}):
+            with self.subTest(changed=changed), self.assertRaises(ValueError):
+                SashaResult.from_json(json.dumps({**result, **changed}))
+
     def test_result_round_trips_json_without_message_validation(self):
         value = {
             "deal_id": "303839",
             "status": "completed",
             "message_html": "Any model-generated HTML",
-            "sms_messages": [],
-            "communication_channel": "email",
+            "communication_channel": "both",
+            "sms_messages": [{"category": "core_response", "text": "Hi, I'm Sasha."}],
             "failure_code": "",
             "failure_message": "",
             "notes": "Saved notes",

@@ -1,12 +1,14 @@
 """Input and output values for one managed Sasha turn."""
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 import json
 from datetime import date
 from typing import Any, Literal
 import uuid
-from dataclasses import field
-from sasha_database.messages import IncomingMessage, CONVERSATION_TYPES, join_messages
+from sasha_database.messages import (
+    IncomingMessage, CONVERSATION_TYPES, SMS_CATEGORIES, draft_channel,
+    join_messages, validate_sms_messages,
+)
 
 
 def normalize_client_message(message: str | None) -> str | None:
@@ -66,8 +68,8 @@ SASHA_RESULT_JSON_SCHEMA = {
         "deal_id",
         "status",
         "message_html",
-        "sms_messages",
         "communication_channel",
+        "sms_messages",
         "notes",
         "convo_type",
         "handoff_reason",
@@ -82,20 +84,11 @@ SASHA_RESULT_JSON_SCHEMA = {
         "deal_id": {"type": "string"},
         "status": {"type": "string", "enum": ["completed", "handoff", "failed"]},
         "message_html": {"type": "string"},
-        "sms_messages": {
-            "type": "array",
-            "items": _object({
-                "category": {
-                    "type": "string",
-                    "enum": ["core_response", "additional_resources", "status_warning", "cta"],
-                },
-                "text": TEXT,
-            }),
-        },
-        "communication_channel": {
-            "type": "string",
-            "enum": ["email", "sms", "both", "none"],
-        },
+        "communication_channel": {"type": "string", "enum": ["email", "sms", "both", "none"]},
+        "sms_messages": {"type": "array", "items": _object({
+            "category": {"type": "string", "enum": list(SMS_CATEGORIES)},
+            "text": TEXT,
+        })},
         "notes": {"type": "string"},
         "convo_type": {"type": ["string", "null"], "enum": ["client_response", "followup", "internal_mail", "outreach", None]},
         "handoff_reason": {"type": "string"},
@@ -138,7 +131,7 @@ class SashaResult:
     deal_id: str
     status: Literal["completed", "handoff", "failed"]
     message_html: str = ""
-    sms_messages: tuple[dict[str, Any], ...] = ()
+    sms_messages: list[dict[str, str]] = field(default_factory=list)
     communication_channel: Literal["email", "sms", "both", "none"] = "none"
     failure_code: str = ""
     failure_message: str = ""
@@ -149,7 +142,6 @@ class SashaResult:
     sample_request: dict | None = None
     sample_update: dict | None = None
     deal_state: dict | None = None
-
     def has_draft(self) -> bool:
         return bool(self.message_html.strip()) or bool(self.sms_messages)
 
@@ -160,11 +152,10 @@ class SashaResult:
 
     @classmethod
     def from_json(cls, value: str) -> "SashaResult":
-        payload = json.loads(value)
-        messages = payload.get("sms_messages") or ()
-        if isinstance(messages, list):
-            payload["sms_messages"] = tuple(messages)
-        result = cls(**payload)
+        data = json.loads(value)
+        if "communication_channel" not in data or "sms_messages" not in data:
+            raise ValueError("Result requires communication_channel and sms_messages")
+        result = cls(**data)
         if result.status not in {"completed", "handoff", "failed"}:
             raise ValueError("Invalid result status")
         if result.isa_decision not in {"", "accepted", "rejected", "unclear"}:
@@ -174,8 +165,15 @@ class SashaResult:
         for name in ("deal_id", "message_html", "notes", "handoff_reason", "failure_code", "failure_message"):
             if not isinstance(getattr(result, name), str):
                 raise ValueError(f"Result {name} must be text")
-        if result.status == "completed" and result.has_draft() and result.convo_type not in CONVERSATION_TYPES:
+        validate_sms_messages(result.sms_messages)
+        if result.communication_channel != draft_channel(result.message_html, result.sms_messages):
+            raise ValueError("communication_channel must match the generated drafts")
+        if result.status == "failed" and result.has_draft():
+            raise ValueError("Failed results must not include drafts")
+        if result.has_draft() and result.convo_type not in CONVERSATION_TYPES:
             raise ValueError("A generated draft requires a valid convo_type")
         if result.status == "completed" and not result.has_draft() and result.convo_type is not None:
             raise ValueError("No-reply results must have null convo_type")
+        if result.status == "completed" and result.convo_type == "outreach" and result.communication_channel != "both":
+            raise ValueError("Outreach requires both email and SMS drafts")
         return result

@@ -525,11 +525,25 @@ function renderResult(run) {
 
   section.classList.remove("hidden");
   const message = run.result.message_html || "";
-  const noReply = run.result.status === "completed" && !message.trim();
+  const bubbles = run.result.sms_messages || [];
+  const noReply = run.result.status === "completed" && !message.trim() && !bubbles.length;
   document.querySelector("#no-reply-needed").classList.toggle("hidden", !noReply);
-  document.querySelector("#message-preview").classList.toggle("hidden", noReply);
+  document.querySelector("#email-preview-section").classList.toggle("hidden", !message.trim());
   document.querySelector("#message-preview").srcdoc = message;
+  renderSmsBubbles(bubbles);
   document.querySelector("#result-json").textContent = JSON.stringify(run.result, null, 2);
+}
+
+function renderSmsBubbles(bubbles) {
+  document.querySelector("#sms-preview-section").classList.toggle("hidden", !bubbles.length);
+  const list = document.querySelector("#sms-preview");
+  list.replaceChildren();
+  for (const bubble of bubbles) {
+    const item = document.createElement("li");
+    item.className = "sms-bubble";
+    item.textContent = bubble.text;
+    list.append(item);
+  }
 }
 
 function renderArtifacts(run) {

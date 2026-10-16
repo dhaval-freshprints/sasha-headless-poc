@@ -7,7 +7,10 @@ import json
 
 from .config import DatabaseSettings, quote_schema, required
 from .connection import transaction
-from .messages import CONVERSATION_TYPES, IncomingMessage, utc_now, valid_email, validate_message_body
+from .messages import (
+    CONVERSATION_TYPES, IncomingMessage, read_sms_messages, sms_body, utc_now, valid_email,
+    validate_message_body, validate_sms_messages,
+)
 
 
 def validate_handoff_reason(reason: str) -> str:
@@ -41,6 +44,34 @@ def validate_deal_id(deal_id: str) -> int:
     if not str(deal_id).isascii() or not str(deal_id).isdigit() or not 0 < int(deal_id) <= 2147483647:
         raise ValueError("deal_id must be a positive database INT")
     return int(deal_id)
+
+
+def draft_rows(message_html: str, sms_messages: list) -> list[dict]:
+    validate_message_body(message_html)
+    validate_sms_messages(sms_messages)
+    rows = []
+    if message_html.strip():
+        rows.append({"message_type": "EMAIL", "body": message_html, "content_type": "text/html"})
+    if sms_messages:
+        body = json.dumps(sms_messages, ensure_ascii=False, sort_keys=True)
+        validate_message_body(body)
+        rows.append({"message_type": "SMS", "body": body, "content_type": "text"})
+    return rows
+
+
+def same_drafts(existing, drafts, convo_type) -> bool:
+    if len(existing) != len(drafts):
+        return False
+    expected = {draft["message_type"]: draft for draft in drafts}
+    if len({row["message_type"] for row in existing}) != len(existing):
+        return False
+    for row in existing:
+        draft = expected.get(row["message_type"])
+        if not draft or row["convo_type"] != convo_type:
+            return False
+        if row["body"] != draft["body"] or row["content_type"] != draft["content_type"]:
+            return False
+    return True
 
 
 class SashaStorage:
@@ -136,13 +167,17 @@ class SashaStorage:
     @staticmethod
     def _history_entry(row):
         timestamp = row["message_timestamp"] or row["created_at"]
+        messages = read_sms_messages(row)
         return {
             "id": row["id"], "role": "sasha" if row["direction"] == "OUTBOUND" else "client",
+            "run_id": row.get("run_id"),
             "sender_name": row["sender_name"], "message_type": row["message_type"],
             "subject": row["subject"], "convo_type": row["convo_type"],
-            "content": row["body"], "content_type": row["content_type"],
+            "content": sms_body(messages) if messages is not None else row["body"],
+            "content_type": row["content_type"],
             "delivery_status": row["delivery_status"], "date": timestamp.date().isoformat(),
             "attachments": json.loads(row["attachments"]) if isinstance(row["attachments"], str) else row["attachments"],
+            "sms_messages": messages,
         }
 
     @staticmethod
@@ -172,7 +207,7 @@ class SashaStorage:
                     "WHERE deal_id=%s AND deleted_at IS NULL", (deal_id,))
                 row = cursor.fetchone() or {}
                 cursor.execute(
-                    "SELECT status,next_followup_date,scheduled_followup_reason,stop_reason,followup_count "
+                    "SELECT status,next_followup_date,scheduled_followup_reason,stop_reason,followup_count,last_channel_used "
                     "FROM sasha_followup_schedule WHERE deal_id=%s", (deal_id,))
                 followup = cursor.fetchone()
         return {"status": row.get("status") or "active", "status_reason": row.get("status_reason") or "",
@@ -250,13 +285,15 @@ class SashaStorage:
 
     def record_followup_sent(self, deal_id: str, channel: str = "email") -> None:
         """A follow-up draft was generated (v3 update_after_send)."""
-        channel = channel if channel in {"email", "sms", "both"} else "email"
+        if channel not in {"email", "sms", "both"}:
+            raise ValueError("Invalid follow-up channel")
+        last_channel = None if channel == "both" else channel
         with self.transaction(self.settings) as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
                     "UPDATE sasha_followup_schedule SET followup_count=followup_count+1,"
                     "last_followup_timestamp=%s,last_channel_used=%s WHERE deal_id=%s",
-                    (utc_now(), channel, validate_deal_id(deal_id)))
+                    (utc_now(), last_channel, validate_deal_id(deal_id)))
 
     def pause_followups(self, deal_id: str, reason: str) -> None:
         """No next follow-up was chosen: pause, keeping the reason, unless already stopped."""
@@ -316,13 +353,12 @@ class SashaStorage:
     def complete_run(self, deal_id, run_id, previous_notes, notes, message_html, convo_type,
                      handoff_reason=None, deal_state=None, sms_messages=None):
         deal_id = validate_deal_id(deal_id)
-        validate_message_body(message_html)
-        _ = sms_messages  # Accepted for SMS drafts; email history remains the persisted channel today.
+        drafts = draft_rows(message_html, [] if sms_messages is None else sms_messages)
         if handoff_reason is not None:
             handoff_reason = validate_handoff_reason(handoff_reason)
         if deal_state is not None:
             deal_state = validate_deal_state(deal_state)
-        if message_html.strip() and convo_type not in CONVERSATION_TYPES:
+        if drafts and convo_type not in CONVERSATION_TYPES:
             raise ValueError("A generated draft requires a valid convo_type")
         sender = self.sender_email() if message_html.strip() else None
         with self.transaction(self.settings) as connection:
@@ -330,13 +366,12 @@ class SashaStorage:
                 self._lock_deal(cursor, deal_id)
                 current_notes = self._notes(cursor, deal_id)
                 cursor.execute(
-                    "SELECT body,convo_type FROM sasha_conversation_history "
+                    "SELECT body,convo_type,message_type,content_type FROM sasha_conversation_history "
                     "WHERE deal_id=%s AND run_id=%s AND direction='OUTBOUND' AND deleted_at IS NULL",
                     (deal_id, run_id))
-                existing = cursor.fetchone()
+                existing = cursor.fetchall()
                 if existing:
-                    if (existing["body"] == message_html and existing["convo_type"] == convo_type
-                            and current_notes == notes):
+                    if same_drafts(existing, drafts, convo_type) and current_notes == notes:
                         return
                     raise ValueError("This run already saved a different result")
                 if current_notes != previous_notes:
@@ -351,10 +386,12 @@ class SashaStorage:
                         "UPDATE sasha_deal_status SET status=%s,status_reason=%s "
                         "WHERE deal_id=%s AND status<>'handoff_needed'",
                         (deal_state["status"], deal_state["reason"], deal_id))
-                if message_html.strip():
+                for draft in drafts:
                     cursor.execute(
                         "INSERT INTO sasha_conversation_history "
                         "(deal_id,run_id,convo_type,direction,sender_name,message_type,body,"
                         "content_type,delivery_status,message_timestamp) "
-                        "VALUES (%s,%s,%s,'OUTBOUND',%s,'EMAIL',%s,'text/html','generated',%s)",
-                        (deal_id, run_id, convo_type, sender, message_html, utc_now()))
+                        "VALUES (%s,%s,%s,'OUTBOUND',%s,%s,%s,%s,'generated',%s)",
+                        (deal_id, run_id, convo_type,
+                         sender if draft["message_type"] == "EMAIL" else "Sasha",
+                         draft["message_type"], draft["body"], draft["content_type"], utc_now()))

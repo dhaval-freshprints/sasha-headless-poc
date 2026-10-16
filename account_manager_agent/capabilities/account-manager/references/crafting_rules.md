@@ -11,13 +11,12 @@ Read the common rules before every draft, then the section for the selected work
 - Use plain words: “when you need them by,” “getting printed,” and “the request.”
 - Do not use dashes as sentence separators. Hyphens inside words and numbers are fine.
 - Do not use limp closers or require magic-word approvals.
-- Sign off `Best,<br>Sasha` or `Thanks,<br>Sasha`, with nothing after it.
+- For email only, sign off `Best,<br>Sasha` or `Thanks,<br>Sasha`, with nothing after it.
 
 ### Structure and output
 
-- Keep each paragraph to four sentences or fewer.
-- When a closing question is needed, put it on its own final line before the sign-off.
-- Return `message_html` as an HTML fragment, not Markdown or a complete HTML document. Use `<p>` for paragraphs, `<ul><li>` for two or more options, `<br>` in the sign-off, and `<a href="URL">` for links. Do not add styles or headings.
+- In email, keep each paragraph to four sentences or fewer. When a closing question is needed, put it on its own final line before the sign-off.
+- Return email in `message_html` as an HTML fragment, not Markdown or a complete HTML document. Use `<p>` for paragraphs, `<ul><li>` for two or more options, `<br>` in the sign-off, and `<a href="URL">` for links. Do not add styles or headings. For SMS, follow the SMS format below.
 - Keep a status update, such as a ready design or an order update, to two or three sentences: what changed, what it means for the client, and the next step if there is one.
 - Keep browser mechanics, tool names, internal status, and technical errors out of the client-facing message.
 - Never name Fresh Prints staff, team mailboxes, or internal systems and records such as HQ, tickets, or the word “deal.” Say “your design,” “your proof,” or “your order.”
@@ -26,9 +25,20 @@ Read the common rules before every draft, then the section for the selected work
 ### Customer proof and order links
 
 - In client responses, follow-ups, and internal-update notifications, use the exact URL returned by Account Manager's customer-link helper after its browser checks. Do not use the CRM proof page as the customer link. Outreach does not use this capability.
-- Embed the URL in `<a href="URL">your design</a>` or a short natural label. Say “order here” only after browser checks confirm checkout readiness; the customer enters quantities by size and places the order.
+- In email, embed the URL in `<a href="URL">your design</a>` or a short natural label. In SMS, use the bare URL. Say “order here” only after browser checks confirm checkout readiness; the customer enters quantities by size and places the order.
 - Use one link per proof, with the relevant garment described in plain text. Pending proof links are for status only; explain that the design is still in progress.
 - Preserve the full encoded login parameter. Do not discuss login hashes, databases, HQ, or helper errors in customer copy. Do not promise automatic login when `login_included` is false.
+
+## SMS format
+
+- Write `sms_messages` as an ordered array of objects with exactly `category` and `text`. Each object is one complete bubble; decide boundaries while writing.
+- Use this category order: `core_response` → `additional_resources` → `status_warning` → `cta`. Omit empty or unnecessary categories.
+- `core_response`: answer the client's latest request. Put any greeting here only.
+- `additional_resources`: relevant verified links, products, or options. Use plain URLs; do not tell the client to check email instead. Preserve original URLs exactly; the application shortens them with Bitly. Never invent short links or call Bitly yourself.
+- `status_warning`: a brief price/status line or blocker only when needed for this request or next step.
+- `cta`: at most one short question or next step across the reply. Omit it when the answer stands alone.
+- Use at most three sentences per bubble, including greetings, and about five sentences across all bubbles. Keep within roughly 32 iMessage lines. These are limits, not targets; rewrite overlong bubbles before returning.
+- Plain text only: no HTML, Markdown links, signatures, or sign-offs. Keep facts, commitments, and next steps consistent with email when generating both.
 
 ## Client responses
 

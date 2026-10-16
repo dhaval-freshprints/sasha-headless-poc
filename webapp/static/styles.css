@@ -542,6 +542,25 @@ dd {
   background: #fff;
 }
 
+#sms-preview {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+  padding: 0;
+  list-style: none;
+}
+
+.sms-bubble {
+  max-width: min(100%, 460px);
+  padding: 12px 16px;
+  border-radius: 16px 16px 4px 16px;
+  background: #e2f3e7;
+  color: #143d24;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 details {
   margin-top: 12px;
 }

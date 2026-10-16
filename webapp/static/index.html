@@ -209,7 +209,14 @@
               <section id="result-section" class="result hidden">
                 <h2>Account Manager’s answer</h2>
                 <p id="no-reply-needed" class="hidden">No reply needed.</p>
-                <iframe id="message-preview" sandbox="" title="Account Manager response preview"></iframe>
+                <section id="email-preview-section" class="hidden">
+                  <h3>Email</h3>
+                  <iframe id="message-preview" sandbox="" title="Account Manager response preview"></iframe>
+                </section>
+                <section id="sms-preview-section" class="hidden">
+                  <h3>SMS</h3>
+                  <ol id="sms-preview" aria-label="SMS bubbles"></ol>
+                </section>
                 <details>
                   <summary>Structured result</summary>
                   <pre id="result-json"></pre>

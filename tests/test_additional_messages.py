@@ -71,6 +71,7 @@ class ControlledSession:
     def complete(self, turn_id, answer):
         self.turns[turn_id] = "completed"
         result = {"deal_id": "303839", "status": "completed", "message_html": answer,
+                  "communication_channel": "email" if answer else "none", "sms_messages": [],
                   "notes": "## Current decisions\n- Follow-up generated: close_the_loop",
                   "convo_type": "client_response" if answer else None}
         self.items.append({"role": "assistant", "phase": "final_answer", "turn_id": turn_id, "content": [{"type": "output_text", "text": json.dumps(result)}]})

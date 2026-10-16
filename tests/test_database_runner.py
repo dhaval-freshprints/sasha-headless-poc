@@ -8,7 +8,7 @@ from tests import test_account_manager_agent_runner as fixtures
 from account_manager_agent.task import SashaTask
 from account_manager_agent.notes import follow_up_entries, saved_attachment_urls
 from sasha_database.connection import DatabaseError
-from sasha_database.messages import IncomingMessage
+from sasha_database.messages import IncomingMessage, draft_channel
 
 
 class RunnerPersistenceTests(unittest.TestCase):
@@ -24,6 +24,8 @@ class RunnerPersistenceTests(unittest.TestCase):
         item = self.sessions.items._final_item()
         value = json.loads(item['content'][0]['text'])
         value.update(changes)
+        if 'communication_channel' not in changes:
+            value['communication_channel'] = draft_channel(value['message_html'], value['sms_messages'])
         item['content'][0]['text'] = json.dumps(value)
         return patch.object(self.sessions.items, '_final_item', return_value=item)
 
@@ -121,3 +123,34 @@ class RunnerPersistenceTests(unittest.TestCase):
             result = self.runner.run(self.task)
         self.assertEqual(result.failure_code, 'invalid_result')
         self.assertEqual(self.database.completed, [])
+
+    def test_sms_only_and_both_save_and_return_bubbles(self):
+        bubbles = [{'category': 'core_response', 'text': 'Your mockup is ready.'}]
+        for email, channel in (('', 'sms'), ('<p>Your mockup is ready.</p>', 'both')):
+            with self.subTest(channel=channel), self.output(message_html=email, sms_messages=bubbles):
+                result = self.runner.run(replace(self.task, run_id=channel))
+                self.assertEqual((result.status, result.communication_channel), ('completed', channel))
+                self.assertEqual(self.database.history['303839'][-1]['sms_messages'], bubbles)
+                artifact = self.runner.last_run_directory / 'workspace' / 'result.json'
+                self.assertEqual(json.loads(artifact.read_text())['sms_messages'], bubbles)
+
+    def test_outreach_saves_both_and_suppression_clears_both(self):
+        bubbles = [{'category': 'core_response', 'text': 'Hi, I am Sasha.'}]
+        with self.output(convo_type='outreach', sms_messages=bubbles):
+            result = self.runner.run(replace(self.task, client_message=None))
+        self.assertEqual(result.status, 'completed')
+        self.assertEqual([row['message_type'] for row in self.database.history['303839']], ['EMAIL', 'SMS'])
+        for status in ('opt_out', 'handoff_needed'):
+            self.database.statuses['303839'] = status
+            with self.subTest(status=status), self.output(sms_messages=bubbles):
+                result = self.runner.run(replace(self.task, run_id=status))
+                self.assertEqual((result.communication_channel, result.message_html, result.sms_messages), ('none', '', []))
+
+    def test_both_channel_followup_counts_once(self):
+        bubbles = [{'category': 'cta', 'text': 'Do you need anything else?'}]
+        with self.output(convo_type='followup', sms_messages=bubbles):
+            result = self.runner.run(replace(self.task, client_message=None, turn_type='follow_up', as_of_date='2026-10-16'))
+        self.assertEqual(result.status, 'completed')
+        row = self.database.followups['303839']
+        self.assertEqual(row['followup_count'], 1)
+        self.assertIsNone(row['last_channel_used'])

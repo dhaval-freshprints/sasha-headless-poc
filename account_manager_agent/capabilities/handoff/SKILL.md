@@ -26,7 +26,7 @@ Ground the decision in the conversation and what you verified on the deal, inclu
 
 - Return `status: "handoff"`.
 - In `handoff_reason`, write for the teammate who takes over, in your own words and up to five sentences: why a person should take over, who the client is, what they want, where the deal stands, and what should happen next.
-- Decide whether the client should hear from you now. When silence would hurt, put a short holding message in `message_html`, following [Crafting Rules](../account-manager/references/crafting_rules.md): you are checking with your team and someone will follow up shortly. Do not mention a handoff or name staff. Otherwise leave it empty.
+- Decide whether the client should hear from you now. When silence would hurt, choose email, SMS, or both from context and write a short holding message in the matching draft fields, following [Crafting Rules](../account-manager/references/crafting_rules.md): you are checking with your team and someone will follow up shortly. Do not mention a handoff or name staff. Otherwise use channel `none` and leave both drafts empty.
 - Note the handoff in `notes`. Do not change CRM records, proofs or orders as part of it.
 
 ## When the deal is already handed off
