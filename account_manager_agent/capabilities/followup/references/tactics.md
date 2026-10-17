@@ -25,7 +25,7 @@ Each tactic is used at most once per deal. **Needs** lists the evidence you must
 - **Needs:** proof and revision history on the deal.
 - **Adds:** free art-team help and free revisions.
 - **How:** one line of empathy, then the offer: our designers can take it from here for free, with free revisions, usually within about a day.
-- **Example:** "Getting a design just right can take a few rounds. If it helps, our designers can take a pass at it for free, with as many revisions as you need."
+- **Example:** "Getting a design just right can take a few rounds. Our designers can take a pass at it for free, with as many revisions as you need."
 - **Don't:** claim work has started or name a delivery time you have not verified.
 
 ### `expertise_value_add`
@@ -42,8 +42,8 @@ Each tactic is used at most once per deal. **Needs** lists the evidence you must
 - **Fits when:** the client gave a need-by date and verified delivery requires ordering within about four weeks.
 - **Needs:** delivery dates from the proof or quoter this run.
 - **Adds:** the real place-by date for their own deadline.
-- **How:** open gently, give the place-by date, and say briefly why (production plus shipping time). Frame dates as estimates.
-- **Example:** "I don't want to rush you, but to have these by [need-by date] you'd want to order by about [place-by date], since printing and shipping take around [time]."
+- **How:** lead with their date and the place-by date, and say briefly why (production plus shipping time). Keep it calm, and frame dates as estimates.
+- **Example:** "To have these by [need-by date], you'd want to order by about [place-by date], since printing and shipping take around [time]."
 - **Don't:** use it on a date the client never confirmed, or present an estimate as a guarantee.
 
 ### `stock_warning`
@@ -51,7 +51,7 @@ Each tactic is used at most once per deal. **Needs** lists the evidence you must
 - **Needs:** a live stock checker result this run.
 - **Adds:** a soft heads-up before sizes run out.
 - **How:** name the product, the color and the sizes that are low, and keep it a heads-up, not a threat.
-- **Example:** "Quick heads-up: the [color] [product] on your proof is running low in [sizes]."
+- **Example:** "The [color] [product] on your proof is running low in [sizes], so you may want to lock in your size count soon."
 - **Don't:** give inventory counts, or warn about stock you did not check this run.
 
 ### `relevance_timing`
@@ -145,7 +145,7 @@ Each tactic is used at most once per deal. **Needs** lists the evidence you must
 - **Needs:** the event date.
 - **Adds:** a brief check-in and an open door for the next merch.
 - **How:** name their event, and keep the door open for the next one.
-- **Example:** "Hope [event] was a blast! If you've got anything coming up next semester, I'd love to help."
+- **Example:** "Now that [event] is behind you, is anything coming up next semester? I can pull ideas together for it."
 - **Don't:** claim the event went well.
 
 ### `future_planning`

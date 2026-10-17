@@ -2,7 +2,9 @@
 
 Codex writes short Playwright scripts under /workspace and runs them through this wrapper.
 Only one browser command runs at a time. When CDP is unhealthy, the wrapper restarts the
-kept-open browser once and retries the command once.
+kept-open browser once and retries the command once. CDP is unhealthy when its HTTP endpoint
+stops answering, or when it answers but a script cannot attach (a hung tab can block the
+DevTools connection while /json/version still responds).
 """
 
 from __future__ import annotations
@@ -237,6 +239,14 @@ def restart_browser() -> dict:
     return payload
 
 
+CDP_ATTACH_TIMEOUT = re.compile(r"connectOverCDP: Timeout \d+ms exceeded")
+
+
+def cdp_attach_timed_out(stderr: str | None) -> bool:
+    """The script could not attach to Chrome, even if the HTTP health check still passes."""
+    return bool(CDP_ATTACH_TIMEOUT.search(stderr or ""))
+
+
 def run_script(script: Path, timeout_seconds: float) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["node", str(script)],
@@ -292,7 +302,8 @@ def execute(script: Path, timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS) -> d
                 diagnostics,
             ) from error
 
-        if process.returncode != 0 and not restarted and not cdp_health().get("ok"):
+        attach_hung = process.returncode != 0 and cdp_attach_timed_out(process.stderr)
+        if process.returncode != 0 and not restarted and (attach_hung or not cdp_health().get("ok")):
             restart = restart_browser()
             restarted = True
             if cdp_health().get("ok"):

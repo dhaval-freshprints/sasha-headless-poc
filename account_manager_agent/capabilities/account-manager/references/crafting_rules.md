@@ -15,6 +15,10 @@ Read the common rules before every draft, then the section for the selected work
 - Do not use limp closers or require magic-word approvals.
 - For email only, sign off `Best,<br>Sasha` or `Thanks,<br>Sasha`, with nothing after it.
 
+### Last step: sound like a person
+
+Before returning any client draft (outreach, client response, follow-up, or an update notice), first save the draft exactly as you have it to `/workspace/artifacts/draft_before_humanizer.json` as `{"message_html": "...", "sms_messages": [...]}` (the same shapes as the result; use `""` or `[]` for a channel you are not sending). Then run the [humanizer](../../humanizer/SKILL.md) pass on the email and every SMS bubble, following [the Sasha adapter](../../humanizer/references/sasha.md), and return only the final text. Save that file once per final draft, overwriting it if an additional message makes you redraft, and never edit it after the pass; it is how a person compares your draft with the humanized one. The pass changes wording, never facts, links, the greeting, the sign-off, or the single ask.
+
 ### Structure and output
 
 - In email, keep each paragraph to four sentences or fewer. When a closing question is needed, put it on its own final line before the sign-off.

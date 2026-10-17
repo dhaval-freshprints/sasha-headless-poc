@@ -622,7 +622,7 @@ class ManagedRunnerTests(unittest.TestCase):
         )
         message = AccountManagerAgent._build_task_message(task, application_environment())
         self.assertIn("Use the `account-manager` skill", message)
-        self.assertIn("client-response, internal-email, followup, promo-codes, winback, samples, and handoff skills are available", message)
+        self.assertIn("client-response, internal-email, followup, promo-codes, winback, samples, handoff, and humanizer skills are available", message)
         self.assertNotIn("Follow-up signals", message)
         self.assertIn("CRM activity supplies deal facts, not the routing conversation", message)
         self.assertNotIn("Selected workflow:", message)

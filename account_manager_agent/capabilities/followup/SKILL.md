@@ -105,6 +105,8 @@ Gather the facts the tactic needs in the browser: catalog, quoter, stock checker
 - it reuses a sentence or the closing question from the last Sasha message;
 - an email paragraph runs past four sentences.
 
+Then run the humanizer pass from the crafting rules; follow-ups are where template phrasing creeps in most.
+
 ## 5. Record the tactic
 
 Only when the final result is a nonblank follow-up draft, append exactly one bullet to Current decisions in the deal notes: `- Follow-up generated: tactic_id`. Keep every earlier entry, including older `Stage N follow-up …` entries. Never record a tactic for no reply, failure, handoff, client response, or work superseded by an additional message.

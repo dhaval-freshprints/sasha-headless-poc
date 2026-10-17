@@ -79,13 +79,19 @@ class DockerSandboxTests(unittest.TestCase):
                 "winback",
                 "samples",
                 "handoff",
+                "humanizer",
             },
         )
+        # The vendored humanizer keeps its MIT license next to it.
+        self.assertTrue((copied / "humanizer" / "LICENSE").is_file())
+        self.assertTrue((copied / "humanizer" / "references" / "sasha.md").is_file())
         self.assertNotIn("workflow", json.loads((handle.workspace_directory / "task.json").read_text()))
         for source in source_directory.rglob("*.md"):
             target = copied / source.relative_to(source_directory)
             self.assertEqual(target.read_text(), source.read_text())
             for reference in re.findall(r"\]\(([^)]+)\)", target.read_text()):
+                if reference.startswith(("http://", "https://")):
+                    continue
                 self.assertTrue((target.parent / reference).is_file(), reference)
 
     def test_outreach_edits_apply_to_new_runs_without_changing_prepared_runs(self):
@@ -107,7 +113,7 @@ class DockerSandboxTests(unittest.TestCase):
         promo_directory = source_directory / "promo-codes"
         promo_directory.mkdir()
         (promo_directory / "SKILL.md").write_text("Regular-order promo offers.")
-        for skill_name in ("winback", "samples", "handoff"):
+        for skill_name in ("winback", "samples", "handoff", "humanizer"):
             skill_directory = source_directory / skill_name
             skill_directory.mkdir()
             (skill_directory / "SKILL.md").write_text(f"Handle {skill_name} work.")

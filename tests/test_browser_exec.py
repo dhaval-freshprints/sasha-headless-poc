@@ -67,6 +67,49 @@ class BrowserExecTests(unittest.TestCase):
             self.assertTrue(result["restarted"])
             restart.assert_called_once()
 
+    def _run_with_failures(self, stderr):
+        """Run a script whose first attempt fails with stderr while the HTTP health check passes."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            script = root / "step.js"
+            script.write_text("console.log('ok')\n", encoding="utf-8")
+            artifacts = root / "artifacts"
+            artifacts.mkdir()
+            attempts = iter([
+                type("P", (), {"returncode": 1, "stdout": "", "stderr": stderr})(),
+                type("P", (), {"returncode": 0, "stdout": "ok\n", "stderr": ""})(),
+            ])
+            with patch.object(browser_exec, "WORKSPACE", root), \
+                    patch.object(browser_exec, "ARTIFACTS", artifacts), \
+                    patch.object(browser_exec, "LOCK_PATH", artifacts / "browser.lock"), \
+                    patch.object(browser_exec, "DIAGNOSTICS_PATH", artifacts / "browser_diagnostics.json"), \
+                    patch.object(browser_exec, "cdp_health", return_value={"ok": True}), \
+                    patch.object(browser_exec, "process_snapshot", return_value=[]), \
+                    patch.object(
+                        browser_exec,
+                        "restart_browser",
+                        return_value={"status": "restarted", "exit_code": 0},
+                    ) as restart, \
+                    patch.object(browser_exec, "run_script", side_effect=lambda *_: next(attempts)) as run:
+                result = browser_exec.execute(script, timeout_seconds=5)
+            return result, restart, run
+
+    def test_cdp_attach_timeout_restarts_once_and_reruns_even_when_health_passes(self):
+        # A hung tab can block the DevTools attach while /json/version still answers.
+        result, restart, run = self._run_with_failures(
+            "browserType.connectOverCDP: Timeout 30000ms exceeded.\nCall log: ...")
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["restarted"])
+        restart.assert_called_once()
+        self.assertEqual(run.call_count, 2)
+
+    def test_page_timeout_does_not_restart_the_browser(self):
+        result, restart, run = self._run_with_failures("locator.click: Timeout 30000ms exceeded.")
+        self.assertFalse(result["ok"])
+        self.assertFalse(result["restarted"])
+        restart.assert_not_called()
+        self.assertEqual(run.call_count, 1)
+
     def test_stale_lock_is_cleared_when_owner_is_dead(self):
         with tempfile.TemporaryDirectory() as directory:
             artifacts = Path(directory)

@@ -972,7 +972,7 @@ class AccountManagerAgent:
             f"Runtime version: {RUNNER_VERSION}.\n"
             "Use the `account-manager` skill to decide what work is needed from the "
             "database conversation history and incoming client messages. "
-            "The outreach, client-response, internal-email, followup, promo-codes, winback, samples, and handoff skills are available. "
+            "The outreach, client-response, internal-email, followup, promo-codes, winback, samples, handoff, and humanizer skills are available. "
             "CRM activity supplies deal facts, not the routing conversation for this version.\n\n"
             f"Deal ID: {task.deal_id}\n"
             f"Originating task ID: {task.task_id}\n"

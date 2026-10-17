@@ -191,6 +191,23 @@ for name, history, message, additional, expected, follow_up, notes_text, sample_
     if expected.startswith('channel:'):
         checks['chosen_channel'] = result.get('communication_channel') == expected.split(':')[1]
         checks['answers_current_question'] = 'navy' in reply.lower() and 'tee' in reply.lower()
+    if reply.strip():
+        # Humanizer tells that can be checked without judgement, on every drafted reply.
+        plain = re.sub(r'<[^>]+>', ' ', reply)
+        checks['no_dashes'] = not re.search(r"[\u2013\u2014]| -- ", plain)
+        checks['no_curly_quotes'] = not re.search(r"[\u2018\u2019\u201c\u201d]", plain)
+        checks['no_chatbot_wrappers'] = not re.search(
+            r"i hope this helps|feel free to|let me know if you have any questions|happy to help!|great question", plain, re.I)
+        checks['no_not_x_but_y'] = not re.search(r"\bnot (just|only|merely)\b|\bit's not [^.?!]{1,60}, it's\b", plain, re.I)
+        # Sasha saves its draft before the humanizer pass, so before and after can be compared.
+        draft_file = Path(runner.last_run_directory or '') / 'workspace/artifacts/draft_before_humanizer.json'
+        try:
+            draft = json.loads(draft_file.read_text())
+            checks['draft_before_humanizer_saved'] = isinstance(draft.get('message_html'), str) \
+                and isinstance(draft.get('sms_messages'), list)
+        except (OSError, ValueError, AttributeError):
+            checks['draft_before_humanizer_saved'] = False
+        checks['no_guessed_outcome'] = not re.search(r"\bhope [^.?!]{0,60}\b(went|was) (well|great|a blast|a hit)", plain, re.I)
     if bubbles:
         categories = ['core_response', 'additional_resources', 'status_warning', 'cta']
         order = [categories.index(bubble['category']) for bubble in bubbles]

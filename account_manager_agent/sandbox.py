@@ -101,6 +101,7 @@ class DockerSandbox:
                 "winback",
                 "samples",
                 "handoff",
+                "humanizer",
             ):
                 shutil.copytree(
                     CAPABILITIES_DIRECTORY / skill_name,
