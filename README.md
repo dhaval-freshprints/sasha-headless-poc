@@ -4,8 +4,9 @@ Account Manager handles one Fresh Prints sales turn through an OpenAI managed ag
 session, using Sasha as its client-facing persona. It chooses outreach, client response,
 or no reply from database conversation history and incoming client messages.
 
-The POC generates a client-facing HTML message. It does not send the message,
-purchase anything, or delete CRM records.
+The POC generates email HTML and SMS bubbles. The host's `outbound` package can
+automatically send final drafts through FreshFlow when explicitly enabled; sending
+is disabled by default. The agent container never sends customer messages itself.
 
 ## How it works
 
@@ -223,10 +224,12 @@ outside that managed-turn limit.
 Account Manager returns `communication_channel` (`email`, `sms`, `both`, or `none`),
 `message_html`, and ordered `sms_messages` bubbles with `category` and plain-text
 `text`. Outreach includes both channels. Other replies use the agent's contextual
-channel decision. The UI previews each channel separately.
+channel decision. The outbound package adds `email_subject`; the agent does not generate it.
+The UI previews each channel separately.
 
 Email and SMS use separate history rows under the same `run_id`, saved atomically.
-All SMS bubbles are JSON in the existing `body` column; no schema migration is needed.
+All SMS bubbles are JSON in the existing `body` column. Email callbacks update the
+existing history row directly; outbound requires no additional table or migration.
 History readers support both structured bubbles and older plain-text SMS. Repeating
 an identical save does not duplicate rows. Follow-ups count once per run, with
 `last_channel_used=NULL` for both channels and the existing email/SMS enum unchanged.
@@ -276,7 +279,8 @@ one provider event ID on the first message, with subsequent messages stored sepa
 Email sender addresses and SMS phone numbers populate `sender_name`. Manual email input
 without a sender uses the deal client's email, failing clearly if unavailable. Manual SMS
 requires a sender number. Generated email drafts use `SASHA_SENDER_EMAIL` and delivery
-status `generated`; this code does not send messages. Timestamps are stored in UTC.
+status `generated`. With outbound enabled, FreshFlow handles delivery. Its email callback
+saves thread/message IDs on the matching history row. Timestamps are UTC.
 
 `POST /api/runs` accepts optional `incoming_message` metadata: `body`, `sender_name`,
 `message_type` (`EMAIL` or `SMS`), `subject`, `content_type`, `message_timestamp`,
@@ -507,7 +511,8 @@ The code only carries out decisions, ported from Sasha v3:
 Everything is stored in the Sasha database: the offers in `sasha_handoff_offers`, the reason in
 `sasha_deal_status`, and the client transition as a generated message in
 `sasha_conversation_history`. The ISA offer email is rebuilt from those rows, so nothing is kept in
-files and nothing is sent from this host. `GET /api/handoffs/<deal-id>` shows the deal's status,
+files. When outbound is enabled, the host hands the ISA offer to FreshFlow after creation;
+acceptance hands over the client transition with the ISA in CC. `GET /api/handoffs/<deal-id>` shows the deal's status,
 reason and offers with their emails; the run page shows the handoff panel.
 
 Database setup: apply `sql/20261015_0001_sasha_deal_status_handoff_reason.sql` and then
@@ -516,7 +521,7 @@ schema. If `sasha_handoff_isas` and `sasha_handoff_offers` are not there yet, ap
 `20260710_0001_create_sasha_handoff_tables` and `20260710_0003_add_handoff_offer_thread_id`, then
 add the ISAs to offer to.
 
-Not ported from v3: email sending (v3's SQS queue), the ISA-reply judge prompt, Slack alerts, the
+Not ported from v3: the ISA-reply judge prompt, Slack alerts, the
 code-only external-apparel, promo-goods, MTO and order-history checks, and handing a deal back to
 Sasha.
 
@@ -875,3 +880,78 @@ then set `SASHA_TEST_MYSQL_PORT` to its published localhost port. No CA file is 
 Run `python -m unittest tests.test_sasha_database -v`, then remove the container.
 These tests exercise actual commits, rollback, concurrent deduplication, metadata, and notes.
 Live agent/browser checks remain opt-in; mocked tests do not verify model output quality.
+
+## Outbound through FreshFlow
+
+The `outbound` package receives Sasha's final output, resolves recipients and email subjects,
+prepares SMS bubbles, and submits the production-compatible payloads to FreshFlow over SQS.
+It also handles existing ISA-offer and customer-transition emails. The agent container still
+chooses the content and channels; the host package handles the handoff.
+
+FreshFlow owns delivery after accepting the request. The POC has no delivery-status table,
+recovery worker, delivery polling, or retry script/API/UI. An immediate SQS submission error
+is reported in the run's `outbound` result and progress log, without automatically resending.
+Successful submission is reported as `submitted`; immediate submission failures use
+`outbound_failed`. These describe submission to FreshFlow, not customer delivery.
+
+### Enablement
+
+1. Install `requirements.txt` on the host (includes boto3 and its AWS login dependency).
+2. Configure the matching QA `SQS_QUEUE_URL`, `AWS_REGION`, `SASHA_SENDER_EMAIL`, and host AWS
+   credentials. `FP_ENVIRONMENT` and the configured databases must refer to that environment.
+3. Route FreshFlow's callback to this app's `POST /communication/thread-id` and forward the
+   outbound `traceId` as `trace_id`. Verify the route before enabling sending.
+4. Set `SASHA_OUTBOUND_ENABLED=true` and restart the app. Stored customer and ISA recipients
+   are used directly; there is no test-recipient override.
+
+Sending is disabled by default. Old drafts are not swept for sending. Disabling the setting
+stops new handoffs; it does not cancel requests already accepted by FreshFlow. Thread-ID
+callbacks remain available while sending is disabled.
+
+### Package boundary
+
+`OutboundService.submit_result(task, result, previous_notes=..., notes=...)` prepares the
+messages, saves the final drafts in existing conversation history, and submits the messages.
+It returns the prepared result and the immediate handoff outcome. `submit_email(EmailRequest(...))`
+handles ISA offers and customer transitions. `store_thread_id(callback)` saves callback IDs.
+
+Email uses production's `sasha-email-trigger` envelope; SMS uses `send-text-message` and SQS
+attributes for deal/account IDs. The optional `sasha_output_id` is null/omitted because POC
+UUIDs are not production workflow IDs. HTML/sign-offs are preserved without a second signature.
+SMS links are shortened before submission, and bubbles are submitted in order with a two-second
+pause between bubbles. Follow-up bookkeeping runs after a successful FreshFlow handoff.
+
+New outreach always uses `Fresh Prints here to help!`. All other customer emails reuse the
+customer-thread subject with a single `Re:` prefix, including emails that start a new thread.
+When no thread ID is available, the latest saved outbound email subject is still reused.
+If no email subject exists, the fallback is `Re: Fresh Prints here to help!`.
+ISA threads remain separate from customer threads.
+
+### Thread-ID callback
+
+The callback accepts `deal_id`, `thread_id`, and optional `message_id`, `trace_id`,
+`assignment_type`. Omit `assignment_type` for customer emails; use `handoff_offer` for ISA
+emails. The callback updates the matching conversation row or ISA offer, without monitoring
+delivery. It does not publish anything.
+
+Customer email traces use `sasha-poc-history-<id>`, where `<id>` is the existing
+`sasha_conversation_history.id`. ISA email traces use `sasha-poc-offer-<id>` and reference
+`sasha_handoff_offers.id`. The callback checks the deal and record type before updating
+`external_thread_id` / `external_message_id` on history, or `thread_id` on the ISA offer.
+No new table or schema migration is required. ISA emails stay outside customer conversation history.
+
+Without a trace, only an unambiguous email can be updated; ambiguous callbacks return 409.
+An already-known customer message ID or ISA thread ID can identify a duplicate. Unknown or
+deleted records return 404, malformed/type-mismatched traces return 422, and conflicting
+IDs return 409. History is committed before SQS submission so fast callbacks can be matched.
+
+### Validation
+
+Tests use mocked SQS and a disposable local MySQL instance:
+
+```bash
+.venv/bin/python -m unittest tests.test_outbound -v
+SASHA_TEST_MYSQL_PORT=33319 .venv/bin/python -m unittest tests.test_outbound_database -v
+```
+
+Before QA enablement, verify SQS access and callback reachability using designated QA deals.

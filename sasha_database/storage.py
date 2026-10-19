@@ -392,7 +392,7 @@ class SashaStorage:
 
     def record_outbound(self, deal_id: str, run_id: str, convo_type: str, body_html: str,
                         subject: str | None = None, delivery_status: str = "generated",
-                        external_thread_id: str | None = None) -> None:
+                        external_thread_id: str | None = None, prepare_outbound=None) -> None:
         """An outbound message produced outside an agent turn, such as the handoff transition."""
         deal_id = validate_deal_id(deal_id)
         validate_message_body(body_html)
@@ -400,6 +400,17 @@ class SashaStorage:
             raise ValueError("Invalid outbound message metadata")
         with self.transaction(self.settings) as connection:
             with connection.cursor() as cursor:
+                if prepare_outbound:
+                    self._lock_deal(cursor, deal_id)
+                    cursor.execute("SELECT id,body,subject FROM sasha_conversation_history WHERE deal_id=%s "
+                                   "AND run_id=%s AND direction='OUTBOUND' AND message_type='EMAIL' "
+                                   "AND deleted_at IS NULL FOR UPDATE", (deal_id, run_id))
+                    existing = cursor.fetchone()
+                    if existing:
+                        if existing["body"] != body_html or existing["subject"] != subject:
+                            raise ValueError("This source already saved a different email")
+                        prepare_outbound(cursor, {"EMAIL": existing["id"]})
+                        return
                 cursor.execute(
                     "INSERT INTO sasha_conversation_history "
                     "(deal_id,run_id,convo_type,direction,sender_name,message_type,subject,body,"
@@ -407,9 +418,11 @@ class SashaStorage:
                     "VALUES (%s,%s,%s,'OUTBOUND',%s,'EMAIL',%s,%s,'text/html',%s,%s,%s)",
                     (deal_id, run_id, convo_type, self.sender_email(), subject, body_html,
                      delivery_status, external_thread_id, utc_now()))
+                if prepare_outbound:
+                    prepare_outbound(cursor, {"EMAIL": cursor.lastrowid})
 
     def complete_run(self, deal_id, run_id, previous_notes, notes, message_html, convo_type,
-                     handoff_reason=None, deal_state=None, sms_messages=None):
+                     handoff_reason=None, deal_state=None, sms_messages=None, prepare_outbound=None):
         deal_id = validate_deal_id(deal_id)
         drafts = draft_rows(message_html, [] if sms_messages is None else sms_messages)
         if handoff_reason is not None:
@@ -424,12 +437,14 @@ class SashaStorage:
                 self._lock_deal(cursor, deal_id)
                 current_notes = self._notes(cursor, deal_id)
                 cursor.execute(
-                    "SELECT body,convo_type,message_type,content_type FROM sasha_conversation_history "
+                    "SELECT id,body,convo_type,message_type,content_type FROM sasha_conversation_history "
                     "WHERE deal_id=%s AND run_id=%s AND direction='OUTBOUND' AND deleted_at IS NULL",
                     (deal_id, run_id))
                 existing = cursor.fetchall()
                 if existing:
                     if same_drafts(existing, drafts, convo_type) and current_notes == notes:
+                        if prepare_outbound:
+                            prepare_outbound(cursor, {row["message_type"]: row["id"] for row in existing})
                         return
                     raise ValueError("This run already saved a different result")
                 if current_notes != previous_notes:
@@ -444,6 +459,7 @@ class SashaStorage:
                         "UPDATE sasha_deal_status SET status=%s,status_reason=%s "
                         "WHERE deal_id=%s AND status<>'handoff_needed'",
                         (deal_state["status"], deal_state["reason"], deal_id))
+                history_ids = {}
                 for draft in drafts:
                     cursor.execute(
                         "INSERT INTO sasha_conversation_history "
@@ -453,3 +469,6 @@ class SashaStorage:
                         (deal_id, run_id, convo_type,
                          sender if draft["message_type"] == "EMAIL" else "Sasha",
                          draft["message_type"], draft["body"], draft["content_type"], utc_now()))
+                    history_ids[draft["message_type"]] = cursor.lastrowid
+                if prepare_outbound:
+                    prepare_outbound(cursor, history_ids)

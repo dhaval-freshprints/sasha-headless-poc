@@ -1,7 +1,7 @@
 """Persistence boundaries around real runner orchestration, using a fake agent."""
 from dataclasses import replace
 import json
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 import unittest
 
 from tests import test_account_manager_agent_runner as fixtures
@@ -154,3 +154,40 @@ class RunnerPersistenceTests(unittest.TestCase):
         row = self.database.followups['303839']
         self.assertEqual(row['followup_count'], 1)
         self.assertIsNone(row['last_channel_used'])
+
+    def outbound_service(self):
+        service = Mock()
+        service.submit_result.side_effect = lambda task, result, **kwargs: (
+            replace(result, email_subject='Resolved subject'), {'enabled': True, 'status': 'submitted'})
+        return service
+
+    def test_enabled_runner_records_schedule_after_freshflow_handoff(self):
+        service = self.outbound_service()
+        with patch('account_manager_agent.runner.OutboundService.from_environment', return_value=service), \
+                self.output(convo_type='followup'), patch.object(self.runner, '_record_schedule') as schedule:
+            result = self.runner.run(replace(self.task, client_message=None, turn_type='follow_up', as_of_date='2026-10-19'))
+        self.assertEqual(result.email_subject, 'Resolved subject')
+        service.submit_result.assert_called_once()
+        schedule.assert_called_once()
+        self.assertEqual(self.runner.last_outbound['status'], 'submitted')
+        artifact = self.runner.last_run_directory / 'workspace' / 'outbound.json'
+        self.assertEqual(json.loads(artifact.read_text())['status'], 'submitted')
+
+    def test_submission_failure_preserves_draft_without_send_bookkeeping(self):
+        service = self.outbound_service()
+        service.submit_result.side_effect = lambda task, result, **kwargs: (
+            result, {'enabled': True, 'status': 'outbound_failed', 'error': 'PublishError'})
+        with patch('account_manager_agent.runner.OutboundService.from_environment', return_value=service), \
+                patch.object(self.runner, '_record_schedule') as schedule:
+            result = self.runner.run(self.task)
+        self.assertEqual(result.status, 'completed')
+        self.assertEqual(self.runner.last_outbound['status'], 'outbound_failed')
+        schedule.assert_not_called()
+
+    def test_opt_out_suppression_happens_before_outbound_handoff(self):
+        service = self.outbound_service()
+        self.database.statuses[self.task.deal_id] = 'opt_out'
+        with patch('account_manager_agent.runner.OutboundService.from_environment', return_value=service):
+            self.runner.run(self.task)
+        suppressed = service.submit_result.call_args.args[1]
+        self.assertEqual((suppressed.communication_channel, suppressed.message_html, suppressed.sms_messages), ('none', '', []))

@@ -102,6 +102,10 @@ async function main() {
     await page.frameLocator('#message-preview').getByText('Hello Alex.', { exact: true }).waitFor();
     assert.equal(await page.locator('#sms-preview-section').isVisible(), true);
 
+    run.result.email_subject = 'Your proof';
+    await page.reload();
+    await page.locator('#email-subject').getByText('Your proof', { exact: true }).waitFor();
+
     run = { ...run, status: 'failed', error_message: 'Fixture browser failure', result: { status: 'failed', message_html: '' } };
     await page.reload();
     await page.getByText('Fixture browser failure', { exact: true }).waitFor();

@@ -143,6 +143,8 @@ class SashaResult:
     sample_request: dict | None = None
     sample_update: dict | None = None
     deal_state: dict | None = None
+    email_subject: str = ""  # Set by the outbound module, outside the agent's result schema.
+
     def has_draft(self) -> bool:
         return bool(self.message_html.strip()) or bool(self.sms_messages)
 
@@ -163,10 +165,12 @@ class SashaResult:
             raise ValueError("Invalid isa_decision")
         if result.communication_channel not in {"email", "sms", "both", "none"}:
             raise ValueError("Invalid communication_channel")
-        for name in ("deal_id", "message_html", "notes", "handoff_reason", "failure_code", "failure_message"):
+        for name in ("deal_id", "message_html", "email_subject", "notes", "handoff_reason", "failure_code", "failure_message"):
             if not isinstance(getattr(result, name), str):
                 raise ValueError(f"Result {name} must be text")
         validate_sms_messages(result.sms_messages)
+        if len(result.email_subject) > 500:
+            raise ValueError("email_subject must contain at most 500 characters")
         if result.communication_channel != draft_channel(result.message_html, result.sms_messages):
             raise ValueError("communication_channel must match the generated drafts")
         if result.status == "failed" and result.has_draft():

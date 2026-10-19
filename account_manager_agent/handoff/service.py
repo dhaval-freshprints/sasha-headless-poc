@@ -16,6 +16,8 @@ from typing import Callable
 
 from sasha_database.handoff import HandoffOffers, Isa, Offer
 from sasha_database.storage import SashaStorage
+from outbound import EmailRequest, OutboundService
+from outbound.content import reply_subject
 
 from .selection import select_next_isa
 from .working_hours import is_offer_timed_out, is_working_time
@@ -46,10 +48,11 @@ def client_transition_body(person_name: str) -> str:
 
 
 class HandoffService:
-    def __init__(self, storage=None, offers=None, crm_factory: Callable | None = None):
+    def __init__(self, storage=None, offers=None, crm_factory: Callable | None = None, outbound=None):
         self.storage = storage or SashaStorage()
         self.offers = offers or HandoffOffers(self.storage.settings)
         self.crm_factory = crm_factory or _crm_from_environment
+        self.outbound = outbound or OutboundService.from_environment(self.storage)
 
     # --- offers ---
 
@@ -61,7 +64,13 @@ class HandoffService:
             outcome, offer, isa = self.offers.create_offer(deal_id, select_next_isa)
             if outcome != "created":
                 return {"outcome": outcome}
-            return {"outcome": "created", "offer_id": offer.id, "isa_email": isa.email, "isa_name": isa.full_name}
+            result = {"outcome": "created", "offer_id": offer.id, "isa_email": isa.email, "isa_name": isa.full_name}
+            if self.outbound:
+                reason = self.storage.deal_status(str(deal_id))[1]
+                request = EmailRequest(str(deal_id), f"handoff-offer-{offer.id}", "handoff_offer",
+                                       isa.email, offer_subject(deal_id), offer_body(isa, deal_id, reason), offer_id=offer.id)
+                result["outbound"] = self.outbound.submit_email(request)
+            return result
         except Exception as error:
             return {"outcome": "error", "error": type(error).__name__}
 
@@ -130,6 +139,14 @@ class HandoffService:
             result["assign_manager"] = "assigned" if ok else f"failed: {message}"
         if not client["email"]:
             return {**result, "client_transition": "not sent: client has no email"}
+        if self.outbound:
+            thread = self.outbound.repository.client_thread(deal_id)
+            subject = reply_subject(thread.get("subject")) or "Following up on your Fresh Prints order"
+            request = EmailRequest(deal_id, f"handoff-{offer.id}", "customer_transition", client["email"],
+                                   subject, client_transition_body(isa.full_name), thread.get("thread_id"), cc=(isa.email,))
+            result["outbound"] = self.outbound.submit_email(request)
+            result["client_transition"] = "saved"
+            return result
         thread = self.storage.latest_thread(deal_id)
         subject = thread["subject"] or "Following up on your Fresh Prints order"
         if thread["subject"] and not subject.lower().startswith("re:"):

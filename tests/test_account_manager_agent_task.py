@@ -103,7 +103,7 @@ class SashaResultTests(unittest.TestCase):
 
         result = SashaResult.from_json(json.dumps(value))
 
-        self.assertEqual(result.to_dict(), value)
+        self.assertEqual(result.to_dict(), {**value, "email_subject": ""})
 
     def test_outreach_and_client_response_use_the_same_result_shape(self):
         outreach_result = SashaResult(
@@ -117,9 +117,14 @@ class SashaResultTests(unittest.TestCase):
             message_html="<p>The price is shown here.</p>",
         )
 
-        expected_fields = set(SASHA_RESULT_JSON_SCHEMA["required"])
+        expected_fields = set(SASHA_RESULT_JSON_SCHEMA["required"]) | {"email_subject"}
         self.assertEqual(set(outreach_result.to_dict()), expected_fields)
         self.assertEqual(set(client_response_result.to_dict()), expected_fields)
+
+    def test_agent_schema_excludes_host_resolved_subject(self):
+        self.assertNotIn("email_subject", SASHA_RESULT_JSON_SCHEMA["required"])
+        self.assertNotIn("email_subject", SASHA_RESULT_JSON_SCHEMA["properties"])
+        self.assertFalse(SASHA_RESULT_JSON_SCHEMA["additionalProperties"])
 
 
 if __name__ == "__main__":

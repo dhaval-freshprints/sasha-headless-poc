@@ -82,7 +82,7 @@ def main() -> int:
         elapsed_seconds = time.perf_counter() - started_at
         minutes, seconds = divmod(int(elapsed_seconds + 0.5), 60)
         print(f"[timing] Total run: {minutes} min {seconds:02d} sec", file=sys.stderr)
-    print(json.dumps(result.to_dict(), indent=2))
+    print(json.dumps({**result.to_dict(), "outbound": getattr(runner, "last_outbound", None)}, indent=2))
     if runner.last_run_directory:
         print(f"Artifacts: {runner.last_run_directory}", file=sys.stderr)
     return 0 if result.status in {"completed", "handoff"} else 1

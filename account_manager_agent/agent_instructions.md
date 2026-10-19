@@ -42,6 +42,13 @@ For open sample orders, follow the samples skill's host-brokered Freshdesk tool:
 - Distinguish requested, attempted, verified, and drafted actions. A generated reply is not a sent message, a draft promise is not an active follow-up, and an attempted write is not verified completion.
 - Treat a request to forget or correct a note as a change to this notebook, not deletion of the conversation history. Notes do not schedule work.
 
+## Outbound messages
+
+The host hands final drafts to FreshFlow through its outbound package. Do not send email or
+SMS yourself. FreshFlow handles delivery; do not monitor delivery or regenerate messages to
+retry sending. The host saves email thread IDs from FreshFlow callbacks for later replies.
+Do not generate or return email subjects; the outbound package owns subject selection.
+
 ## Follow-up history
 
 - Preserve every prior stage/tactic entry under Current decisions across every turn, even when shortening other notes. Generated drafts count as used tactics in this POC.

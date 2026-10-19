@@ -28,7 +28,8 @@ from .notes import prepare_notes, saved_attachment_urls
 from .pricing import CostEstimate, CostReporter, estimate_cost
 from .progress import ProgressReporter
 from .sandbox import DockerSandbox, SandboxConfig
-from .sms_links import shorten_sms_messages
+from outbound.content import prepare_sms
+from outbound.service import OutboundService
 from .artwork import ArtworkExtractBroker, ArtworkSettings
 from .samples.broker import SampleFreshdeskBroker
 from .task import SASHA_RESULT_JSON_SCHEMA, SashaResult, SashaTask
@@ -278,6 +279,8 @@ class AccountManagerAgent:
         self.sample_service_factory = sample_service_factory
         self.last_sample: dict | None = None
         self.last_deal_state: dict | None = None
+        self.last_outbound = {"enabled": False, "status": "disabled"}
+        self.outbound = None
         self.crm_factory: Callable[[], Any] | None = None
         self.storage = None
         self.current_task = None
@@ -471,6 +474,8 @@ class AccountManagerAgent:
         self.last_handoff = None
         self.last_sample = None
         self.last_deal_state = None
+        self.last_outbound = {"enabled": False, "status": "disabled"}
+        self.outbound = None
         try:
             self.settings.application.validate_deal_url(task.deal_url)
         except ValueError as error:
@@ -481,6 +486,9 @@ class AccountManagerAgent:
         try:
             self.storage = self.storage_factory()
             self.storage.sender_email()
+            self.outbound = OutboundService.from_environment(self.storage, self.progress.report)
+            if self.outbound:
+                self.last_outbound = {"enabled": True, "status": "none"}
             messages = task.incoming_messages
             if not messages and task.client_message:
                 messages = (incoming_message(task.client_message, task.file_urls),)
@@ -518,17 +526,23 @@ class AccountManagerAgent:
                 ]))
                 updated = prepare_notes(notes, result.notes, urls,
                                         result.convo_type == "followup" and result.has_draft() and not handoff)
-                if result.sms_messages:
-                    result = replace(result, sms_messages=shorten_sms_messages(result.sms_messages, self.progress.report))
-                self.storage.complete_run(task.deal_id, task.run_id, notes, updated,
-                                          result.message_html, result.convo_type,
-                                          handoff_reason=result.handoff_reason if handoff else None,
-                                          deal_state=None if handoff else result.deal_state,
-                                          sms_messages=result.sms_messages)
+                if self.outbound:
+                    result, self.last_outbound = self.outbound.submit_result(
+                        task, result, previous_notes=notes, notes=updated)
+                else:
+                    if result.sms_messages:
+                        result = replace(result, sms_messages=prepare_sms(result.sms_messages, self.progress.report))
+                    self.storage.complete_run(task.deal_id, task.run_id, notes, updated,
+                                              result.message_html, result.convo_type,
+                                              handoff_reason=result.handoff_reason if handoff else None,
+                                              deal_state=None if handoff else result.deal_state,
+                                              sms_messages=result.sms_messages)
                 result = replace(result, notes=updated)
                 if not handoff:
                     applied = self._apply_deal_state(task.deal_id, result.deal_state) if result.deal_state else None
-                    self.last_deal_state = self._record_schedule(task, result, applied)
+                    self.last_deal_state = applied
+                    if self.last_outbound["status"] != "outbound_failed":
+                        self.last_deal_state = self._record_schedule(task, result, applied)
                 self.last_handoff = self._act_on_handoff(task, result, handoff_context)
                 if result.sample_update:
                     self.last_sample = {"update": self._sample_service().record_update(
@@ -539,6 +553,7 @@ class AccountManagerAgent:
                                  failure_message=str(error))
         if self.last_run_directory is not None:
             _write_json(self.last_run_directory / "workspace" / "result.json", result.to_dict())
+            _write_json(self.last_run_directory / "workspace" / "outbound.json", self.last_outbound)
         return result
 
     def _run_turn(

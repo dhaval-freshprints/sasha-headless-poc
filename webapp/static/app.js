@@ -530,6 +530,7 @@ function renderResult(run) {
   document.querySelector("#no-reply-needed").classList.toggle("hidden", !noReply);
   document.querySelector("#email-preview-section").classList.toggle("hidden", !message.trim());
   document.querySelector("#message-preview").srcdoc = message;
+  document.querySelector("#email-subject").textContent = run.result.email_subject || "";
   renderSmsBubbles(bubbles);
   document.querySelector("#result-json").textContent = JSON.stringify(run.result, null, 2);
 }

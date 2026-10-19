@@ -22,6 +22,7 @@ from account_manager_agent.task import normalize_client_message, validate_follow
 from sasha_database.storage import SashaStorage, validate_deal_id
 from sasha_database.connection import DatabaseError
 from sasha_database.messages import IncomingMessage, incoming_message
+from outbound.api import create_router as outbound_router
 
 from .deals import Deal, DealStore
 from .jobs import JobManager, WebRun
@@ -185,6 +186,8 @@ def create_app(
         inbound.shutdown()
 
     app = FastAPI(title="Account Manager", lifespan=lifespan)
+    app.include_router(outbound_router())
+
     @app.exception_handler(DatabaseError)
     async def database_error(_, error):
         return JSONResponse(status_code=503, content={"detail": str(error)})

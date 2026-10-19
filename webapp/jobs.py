@@ -58,6 +58,7 @@ class WebRun:
     handoff: dict[str, Any] | None = None  # What this run did about handing the deal to a person.
     sample: dict[str, Any] | None = None  # The free sample this run placed or updated.
     deal_state: dict[str, Any] | None = None  # Status change Account Manager decided, with its reason.
+    outbound: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -265,7 +266,8 @@ class JobManager:
         )
         self._change(run_id, handoff=getattr(runner, "last_handoff", None),
                      sample=getattr(runner, "last_sample", None),
-                     deal_state=getattr(runner, "last_deal_state", None))
+                     deal_state=getattr(runner, "last_deal_state", None),
+                     outbound=getattr(runner, "last_outbound", None))
 
     def _fail(self, run_id: str, message: str, started: float) -> None:
         self._change(
